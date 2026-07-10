@@ -1,0 +1,1537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>新宏大集团 CRM 项目需求文档 v1.0</title>
+  <style>
+    :root {
+      --primary: #1a3a5c;
+      --accent: #2563eb;
+      --accent-light: #eff6ff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --bg: #ffffff;
+      --section-bg: #f8fafc;
+      --tag-green: #dcfce7;
+      --tag-green-text: #166534;
+      --tag-blue: #dbeafe;
+      --tag-blue-text: #1e40af;
+      --tag-orange: #ffedd5;
+      --tag-orange-text: #9a3412;
+      --tag-red: #fee2e2;
+      --tag-red-text: #991b1b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.75;
+      font-size: 15px;
+    }
+
+    /* Cover */
+    .cover {
+      background: linear-gradient(135deg, #1a3a5c 0%, #2563eb 100%);
+      color: white;
+      padding: 80px 60px 60px;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .cover-label {
+      font-size: 12px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      opacity: 0.7;
+      margin-bottom: 16px;
+    }
+    .cover h1 {
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      line-height: 1.3;
+    }
+    .cover-meta {
+      display: flex;
+      gap: 32px;
+      margin-top: 32px;
+      font-size: 13px;
+      opacity: 0.8;
+    }
+    .cover-meta span { display: flex; flex-direction: column; gap: 4px; }
+    .cover-meta strong { font-size: 14px; opacity: 1; }
+
+    /* Layout */
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 40px 80px;
+    }
+
+    /* TOC */
+    .toc {
+      background: var(--section-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px 32px;
+      margin: 40px 0;
+    }
+    .toc h2 {
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .toc ol {
+      list-style: none;
+      counter-reset: toc;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 32px;
+    }
+    .toc li {
+      counter-increment: toc;
+      font-size: 14px;
+    }
+    .toc li::before {
+      content: counter(toc) ". ";
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .toc a { color: var(--text); text-decoration: none; }
+    .toc a:hover { color: var(--accent); }
+
+    /* Section */
+    .section {
+      margin-top: 56px;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 24px;
+      padding-bottom: 14px;
+      border-bottom: 2px solid var(--border);
+    }
+    .section-num {
+      background: var(--accent);
+      color: white;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .section-header h2 {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 28px 0 12px;
+    }
+    h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin: 20px 0 8px;
+    }
+
+    p { margin-bottom: 12px; }
+
+    /* Cards */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+      margin: 16px 0;
+    }
+    .card {
+      background: var(--section-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card-icon {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+    .card h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* Pain points */
+    .pain-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .pain-item {
+      display: flex;
+      gap: 14px;
+      background: var(--section-bg);
+      border: 1px solid var(--border);
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      padding: 16px 18px;
+      align-items: flex-start;
+    }
+    .pain-item .pain-num {
+      background: #f59e0b;
+      color: white;
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .pain-item .pain-title {
+      font-weight: 700;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+    .pain-item .pain-desc {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin: 0;
+      line-height: 1.6;
+    }
+
+    /* Acceptance criteria */
+    .criteria-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .criteria-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .criteria-card-header {
+      background: var(--primary);
+      color: white;
+      padding: 12px 16px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .criteria-card-body {
+      padding: 16px;
+    }
+    .criteria-card-body ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .criteria-card-body li {
+      font-size: 13px;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      line-height: 1.5;
+    }
+    .criteria-card-body li::before {
+      content: "✓";
+      color: #16a34a;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    /* Feature modules */
+    .module {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .module-header {
+      background: var(--primary);
+      color: white;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .module-header h3 {
+      color: white;
+      margin: 0;
+      font-size: 15px;
+    }
+    .module-tag {
+      font-size: 11px;
+      background: rgba(255,255,255,0.2);
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+    .module-body {
+      padding: 0;
+    }
+    .feature-row {
+      display: grid;
+      grid-template-columns: 180px 1fr 200px;
+      border-bottom: 1px solid var(--border);
+    }
+    .feature-row:last-child { border-bottom: none; }
+    .feature-row > div {
+      padding: 14px 16px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .feature-row > div:not(:last-child) {
+      border-right: 1px solid var(--border);
+    }
+    .feature-name {
+      font-weight: 600;
+      color: var(--primary);
+    }
+    .feature-value {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .feature-table-header {
+      background: var(--section-bg);
+      font-weight: 700;
+      font-size: 12px;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    /* Tags */
+    .tag {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .tag-green { background: var(--tag-green); color: var(--tag-green-text); }
+    .tag-blue { background: var(--tag-blue); color: var(--tag-blue-text); }
+    .tag-orange { background: var(--tag-orange); color: var(--tag-orange-text); }
+    .tag-red { background: var(--tag-red); color: var(--tag-red-text); }
+
+    /* Phase 2 */
+    .phase2-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    .phase2-item {
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+    .phase2-item h4 { margin: 0 0 6px; font-size: 14px; }
+    .phase2-item p { font-size: 13px; color: var(--text-muted); margin: 0; }
+
+    /* Architecture */
+    .arch-box {
+      background: var(--section-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px;
+      margin: 16px 0;
+      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      font-size: 13px;
+      line-height: 2;
+      color: var(--text);
+    }
+    .arch-box .layer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 4px 0;
+    }
+    .arch-box .layer-label {
+      background: var(--accent);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      min-width: 100px;
+      text-align: center;
+    }
+    .arch-box .arrow {
+      color: var(--text-muted);
+      font-size: 18px;
+    }
+    .arch-box .layer-desc {
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* Tech table */
+    table.tech-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+    table.tech-table th {
+      background: var(--primary);
+      color: white;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+    }
+    table.tech-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.6;
+    }
+    table.tech-table tr:nth-child(even) td { background: var(--section-bg); }
+    table.tech-table td:first-child { font-weight: 600; color: var(--primary); }
+
+    /* Risk table */
+    table.risk-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+    table.risk-table th {
+      background: #7f1d1d;
+      color: white;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 600;
+    }
+    table.risk-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      line-height: 1.6;
+    }
+    table.risk-table tr:nth-child(even) td { background: #fff5f5; }
+    table.risk-table td:first-child { font-weight: 600; }
+
+    /* Info box */
+    .info-box {
+      background: var(--accent-light);
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .info-box strong { color: var(--accent); }
+
+    /* Warning box */
+    .warn-box {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+
+    /* Channels */
+    .channel-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .channel-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 10px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      background: var(--section-bg);
+    }
+    .channel-item .ch-icon { font-size: 22px; margin-bottom: 6px; }
+
+    /* Timeline */
+    .timeline {
+      position: relative;
+      padding-left: 24px;
+      margin: 16px 0;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: var(--border);
+    }
+    .timeline-item {
+      position: relative;
+      margin-bottom: 20px;
+    }
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      left: -20px;
+      top: 6px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid white;
+      box-shadow: 0 0 0 2px var(--accent);
+    }
+    .timeline-item h4 { margin: 0 0 4px; font-size: 14px; }
+    .timeline-item p { font-size: 13px; color: var(--text-muted); margin: 0; }
+
+    /* Footer */
+    .footer {
+      margin-top: 60px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Edit mode */
+    .editor-toolbar {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 9999;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      max-width: min(720px, calc(100vw - 32px));
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.16);
+      backdrop-filter: blur(10px);
+    }
+    .editor-toolbar button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: white;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .editor-toolbar button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-light);
+    }
+    .editor-toolbar button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+      font-weight: 700;
+    }
+    .editor-toolbar button.primary:hover {
+      background: #1d4ed8;
+      color: white;
+    }
+    .editor-toolbar .status {
+      min-width: 150px;
+      color: var(--text-muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    body.edit-mode .editable-surface {
+      outline: 2px dashed rgba(37, 99, 235, 0.35);
+      outline-offset: -8px;
+    }
+    body.edit-mode .editable-surface [contenteditable="true"]:focus,
+    body.edit-mode .editable-surface:focus {
+      outline: 2px solid rgba(37, 99, 235, 0.75);
+      outline-offset: 4px;
+    }
+
+    @media print {
+      .editor-toolbar { display: none !important; }
+      .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .module-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+
+    @media (max-width: 720px) {
+      .editor-toolbar {
+        left: 12px;
+        right: 12px;
+        top: 12px;
+      }
+      .editor-toolbar .status {
+        width: 100%;
+        min-width: 0;
+      }
+      .cover {
+        padding-top: 130px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<div class="editor-toolbar" data-editor-toolbar>
+  <button type="button" class="primary" data-action="toggle-edit">开启编辑</button>
+  <button type="button" data-action="save-local">暂存</button>
+  <button type="button" data-action="export-html">导出 HTML</button>
+  <button type="button" data-action="export-text">下载文本</button>
+  <button type="button" data-action="print">打印/PDF</button>
+  <button type="button" data-action="reset">重置</button>
+  <span class="status" data-editor-status>未开启编辑</span>
+</div>
+
+<!-- Cover -->
+<div class="cover editable-surface" data-editable-key="cover">
+  <div class="cover-label">需求文档 · Requirement Document</div>
+  <h1>新宏大集团 CRM 项目<br>需求文档 v1.0</h1>
+  <div class="cover-meta">
+    <span><strong>版本</strong>v1.0</span>
+    <span><strong>更新日期</strong>2026-07-06</span>
+    <span><strong>一期交付目标</strong>2026-07-31</span>
+    <span><strong>状态</strong>对齐中</span>
+  </div>
+</div>
+
+<div class="container editable-surface" data-editable-key="container">
+
+  <!-- TOC -->
+  <div class="toc">
+    <h2>目录</h2>
+    <ol>
+      <li><a href="#s1">项目背景与目标</a></li>
+      <li><a href="#s2">用户痛点</a></li>
+      <li><a href="#s3">验收标准</a></li>
+      <li><a href="#s4">一期功能（7.31交付）</a></li>
+      <li><a href="#s5">二期迭代方向</a></li>
+      <li><a href="#s6">技术方案</a></li>
+      <li><a href="#s7">风险与注意事项</a></li>
+    </ol>
+  </div>
+
+  <!-- Section 1 -->
+  <div class="section" id="s1">
+    <div class="section-header">
+      <div class="section-num">1</div>
+      <h2>项目背景与目标</h2>
+    </div>
+
+    <h3>业务背景</h3>
+    <p>新宏大集团上海分公司销售部主要面向海外市场，客户分布在中东、美洲、欧洲、东南亚、非洲等地区，属于外贸 B2B 业务模式。化工产品询盘周期较长、客户单价较高，客户关系管理质量直接影响订单转化与客户复购。</p>
+
+    <p>当前销售团队通过官网智能客服、WhatsApp、Facebook、Instagram、LinkedIn 等多个获客与沟通渠道触达客户；企业邮箱通过 IMAP/SMTP 接入 CRM，用于沉淀既有邮件往来记录。跨时区、多平台的业务模式对销售跟进和客户信息管理提出了较高要求。</p>
+
+    <h3>主要沟通渠道</h3>
+    <div class="channel-grid">
+      <div class="channel-item">
+        <div class="ch-icon">🤖</div>
+        官网智能客服
+      </div>
+      <div class="channel-item">
+        <div class="ch-icon">💬</div>
+        WhatsApp
+      </div>
+      <div class="channel-item">
+        <div class="ch-icon">📘</div>
+        Facebook
+      </div>
+      <div class="channel-item">
+        <div class="ch-icon">📷</div>
+        Instagram
+      </div>
+      <div class="channel-item">
+        <div class="ch-icon">💼</div>
+        LinkedIn
+      </div>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);">企业邮箱不作为获客渠道展示，邮件往来通过 IMAP/SMTP 接入 CRM，用于归档既有客户沟通记录。</p>
+
+    <h3>项目目标</h3>
+    <p>建立一套统一的客户关系管理系统，将多渠道客户线索、沟通记录、商机跟进集中沉淀，让销售可以在一个系统内完成从线索到成交的全流程管理，同时为管理层提供实时可查的业务数据。</p>
+
+    <div class="info-box">
+      <strong>核心价值</strong>：客户数据资产化，沟通记录不再散落，销售离职不带走客户，管理层实时掌握业务进度。
+    </div>
+
+    <h3>交付节点</h3>
+    <div class="timeline">
+      <div class="timeline-item">
+        <h4>2026-07-06 · 需求对齐</h4>
+        <p>需求文档确认，功能范围锁定</p>
+      </div>
+      <div class="timeline-item">
+        <h4>2026-07-31 · 一期上线</h4>
+        <p>核心功能模块交付，多渠道沟通集成，官网智能客服接入，系统可正式使用</p>
+      </div>
+      <div class="timeline-item">
+        <h4>后续 · 二期迭代</h4>
+        <p>更多渠道扩展、Workflow 自动化、高级数据分析</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 2 -->
+  <div class="section" id="s2">
+    <div class="section-header">
+      <div class="section-num">2</div>
+      <h2>用户痛点</h2>
+    </div>
+
+    <ul class="pain-list">
+      <li class="pain-item">
+        <div class="pain-num">1</div>
+        <div>
+          <div class="pain-title">线索入口分散，没有统一管理</div>
+          <p class="pain-desc">询盘来自官网智能客服、WhatsApp、Facebook、Instagram、LinkedIn 等多个渠道，销售各自记录，无法汇总。线索容易被遗忘，也无法统计哪个渠道效果好。企业邮箱中的往来邮件通过 IMAP 同步归档，不作为主要获客渠道统计。</p>
+        </div>
+      </li>
+      <li class="pain-item">
+        <div class="pain-num">2</div>
+        <div>
+          <div class="pain-title">客户信息存在个人手里，离职即流失</div>
+          <p class="pain-desc">客户档案、沟通历史、报价记录分散在销售个人邮箱和聊天记录里，一旦销售离职，客户关系和跟进进度几乎归零。</p>
+        </div>
+      </li>
+      <li class="pain-item">
+        <div class="pain-num">3</div>
+        <div>
+          <div class="pain-title">跟进靠个人自觉，无节点提醒</div>
+          <p class="pain-desc">没有系统化的跟进节点管理，销售依赖自己记忆或个人便签，容易漏跟、晚跟。外贸时差大，错过回复窗口可能直接丢单。</p>
+        </div>
+      </li>
+      <li class="pain-item">
+        <div class="pain-num">4</div>
+        <div>
+          <div class="pain-title">多渠道沟通记录无法沉淀到客户档案</div>
+          <p class="pain-desc">WhatsApp 聊天记录、邮件往来、社媒私信分别在各自平台，销售需要在多个 App 之间切换才能了解客户全貌，接手客户时要重新了解背景。</p>
+        </div>
+      </li>
+      <li class="pain-item">
+        <div class="pain-num">5</div>
+        <div>
+          <div class="pain-title">管理层缺乏实时业务数据</div>
+          <p class="pain-desc">团队询盘量、商机转化率、各阶段客户数量等核心指标无法实时查看，需要靠销售手动汇报，数据滞后且不准确，难以快速发现问题。</p>
+        </div>
+      </li>
+      <li class="pain-item">
+        <div class="pain-num">6</div>
+        <div>
+          <div class="pain-title">官网获客无法自动进入业务流程</div>
+          <p class="pain-desc">官网访客咨询或留资后，需要人工手动录入 CRM，不仅效率低，也容易在时差窗口内漏掉真实意向客户。</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <!-- Section 3 -->
+  <div class="section" id="s3">
+    <div class="section-header">
+      <div class="section-num">3</div>
+      <h2>验收标准</h2>
+    </div>
+
+    <p>一期交付以下三个维度作为验收基准，三项均达标视为通过。</p>
+
+    <div class="criteria-grid">
+      <div class="criteria-card">
+        <div class="criteria-card-header">业务操作闭环</div>
+        <div class="criteria-card-body">
+          <ul>
+            <li>一线销售能在系统内完整完成「线索录入 → 自动归集 → 自动分配 → 跟进记录 → 报价 → 商机推进 → 成交 → 合同归档」全流程</li>
+            <li>无需依赖系统外 Excel 单独记录客户与商机信息</li>
+            <li>多渠道线索（官网智能客服 / WhatsApp / 社媒）均有统一入口进入 CRM</li>
+          </ul>
+        </div>
+      </div>
+      <div class="criteria-card">
+        <div class="criteria-card-header">管理数据可用</div>
+        <div class="criteria-card-body">
+          <ul>
+            <li>管理层可通过仪表盘实时查看团队询盘量、各阶段转化率、待跟进客户数、业绩完成进度等核心指标</li>
+            <li>数据与业务实际一致，无需等待销售手动汇报</li>
+            <li>可按时间、销售、渠道等维度筛选查看</li>
+          </ul>
+        </div>
+      </div>
+      <div class="criteria-card">
+        <div class="criteria-card-header">沟通自动沉淀</div>
+        <div class="criteria-card-body">
+          <ul>
+            <li>邮件往来自动同步至对应客户档案，无需人工录入</li>
+            <li>WhatsApp / 社媒 IM 沟通记录通过 Chatwoot 接入，自动归档到对应客户</li>
+            <li>官网智能客服会话结束后，客户信息与对话摘要自动写入 CRM</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 4 -->
+  <div class="section" id="s4">
+    <div class="section-header">
+      <div class="section-num">4</div>
+      <h2>一期功能（7.31 交付）</h2>
+    </div>
+
+    <div class="info-box">
+      本期功能以"跑通核心业务闭环"为目标，覆盖线索管理、客户管理、销售过程、多渠道沟通、官网接入、数据看板、系统管理七个模块。
+    </div>
+
+    <!-- Module 1 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>线索管理模块</h3>
+        <span class="module-tag">基础闭环</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">多方式导入</div>
+          <div>支持 Excel 批量导入、手动新建、官网表单自动归集、社媒渠道自动抓取线索</div>
+          <div class="feature-value">统一线索入口，替代线下 Excel 登记</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">线索基础操作</div>
+          <div>信息编辑、状态标记（新线索 / 跟进中 / 已转客户 / 已放弃）、初筛处理、备注记录</div>
+          <div class="feature-value">规范线索流转，有迹可查</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">线索自动分配</div>
+          <div>按区域 / 产品大类配置分配规则，支持手动调整和转派</div>
+          <div class="feature-value">减少分配环节人工干预</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">线索去重</div>
+          <div>按公司名 / 邮箱 / 电话三维度自动检测重复，提示合并或忽略</div>
+          <div class="feature-value">避免同一客户被多人重复跟进</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">线索转客户</div>
+          <div>线索确认意向后一键转为正式客户（People + Company + Opportunity）</div>
+          <div class="feature-value">线索到客户闭环打通</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 2 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>客户管理模块</h3>
+        <span class="module-tag">基础闭环</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">标准化客户档案</div>
+          <div>核心字段配置：公司信息、联系人信息、国家/地区、行业、来源渠道、感兴趣产品、意向等级、负责销售</div>
+          <div class="feature-value">建立公司级客户资产库</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">公司与联系人关联</div>
+          <div>一家公司下挂多个联系人，角色区分（采购 / 决策人 / 跟单员），支持从联系人跳转公司页</div>
+          <div class="feature-value">清晰呈现客户组织关系</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">客户自动去重</div>
+          <div>多维度查重（公司名 / 邮箱 / 电话），避免重复建档；重复时提醒合并</div>
+          <div class="feature-value">客户信息唯一一沉淀</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">客户分配与交接</div>
+          <div>支持手动分配、批量转移；销售离职时一键交接所有客户给指定接手人</div>
+          <div class="feature-value">客户不随人员流失</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">跟进记录 / 备注</div>
+          <div>记录每次沟通要点、客户需求、价格底线、特殊要求，支持附件上传</div>
+          <div class="feature-value">接手客户无需重新了解背景</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 3 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>销售过程管理模块</h3>
+        <span class="module-tag">基础闭环</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">商机阶段管理</div>
+          <div>自定义销售漏斗阶段（询价 → 报价 → 寄样 → 谈判 → 下单 → 付款 → 发货 → 归档），商机全流程状态管控，支持看板拖拽</div>
+          <div class="feature-value">跑通商机转化全流程，阶段可追溯</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">跟进提醒机制</div>
+          <div>设置下次跟进时间，到期自动推送提醒；支持按销售 / 阶段 / 优先级过滤待跟进列表</div>
+          <div class="feature-value">规范销售动作，不漏跟进</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">基础报价管理</div>
+          <div>关联产品主数据，快速生成标准报价单；报价版本可留存对比</div>
+          <div class="feature-value">成交过程留痕，合同档案统一</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">商机生命周期管理</div>
+          <div>创建、推进、成交、战败全节点留痕，战败原因记录</div>
+          <div class="feature-value">复盘丢单原因，优化转化</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">合同归档</div>
+          <div>商机成交后一键生成合同记录，基础信息自动带入，支持附件上传归档</div>
+          <div class="feature-value">合同档案统一管理，合规留存</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 4 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>多渠道沟通整合模块</h3>
+        <span class="module-tag">全量能力</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">企业邮箱集成</div>
+          <div>IMAP/SMTP 接入，收发双向邮件自动归档到对应客户时间线；新邮件增量同步，无需手动操作</div>
+          <div class="feature-value">邮件沟通记录自动沉淀，不用手动整理</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">WhatsApp 接入</div>
+          <div>通过 Chatwoot 接入 WhatsApp Business API；聊天记录自动归档到对应客户档案；销售可在 CRM 中查看会话摘要和跳转完整记录</div>
+          <div class="feature-value">WhatsApp 沟通不再游离在 CRM 之外</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">Facebook / Instagram 接入</div>
+          <div>通过 Chatwoot 接入 Facebook Messenger 和 Instagram DM；私信记录自动关联到对应客户</div>
+          <div class="feature-value">社媒私信统一管理，客户全貌可查</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">LinkedIn 接入</div>
+          <div>通过适配器接入 LinkedIn 私信（需单独验证 API 合规性）；聊天记录归档到客户档案</div>
+          <div class="feature-value">LinkedIn 开发客户记录不丢失</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">沟通时间轴</div>
+          <div>客户详情页展示全渠道沟通时间轴：邮件、WhatsApp、社媒私信统一按时间排列</div>
+          <div class="feature-value">客户对接信息全员同步，接手无断层</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">坐席回复</div>
+          <div>销售可在 CRM 联系人页内直接查看 Chatwoot 会话并回复（通过内嵌面板或跳转 Chatwoot），底层消息收发由 Chatwoot 承担</div>
+          <div class="feature-value">减少多平台切换，提升响应效率</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 5 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>官网智能客服接入模块</h3>
+        <span class="module-tag">一期交付</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">官网聊天窗口</div>
+          <div>官网嵌入 Chatwoot 聊天窗口（或 AI 客服入口），访客可直接发起对话</div>
+          <div class="feature-value">官网从展示页变成获客入口</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">AI 客服对话</div>
+          <div>AI 客服接收访客问题，检索知识库回答；答不了的问题转人工坐席；对接方式由 AI 客服方提供接口，中间层负责接收和写入</div>
+          <div class="feature-value">24 小时响应，不错过跨时区询盘</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">客户信息自动写入 CRM</div>
+          <div>会话中访客留下联系方式后，中间层自动提取姓名 / 邮箱 / 电话 / 公司 / 国家 / 感兴趣产品，写入 Twenty CRM 创建联系人 + 公司 + 商机</div>
+          <div class="feature-value">官网留资 0 人工录入</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">会话摘要归档</div>
+          <div>每次会话结束后，AI 自动生成对话摘要写入客户 Notes；完整会话链接保存在客户档案</div>
+          <div class="feature-value">官网咨询有迹可查，后续跟进有上下文</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">官网表单自动写入</div>
+          <div>官网询盘表单提交后，通过中间层 API 直接在 CRM 建客户 / 商机，字段自动映射</div>
+          <div class="feature-value">表单留资实时进 CRM，无需手动录入</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 6 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>数据看板模块</h3>
+        <span class="module-tag">核心维度</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">询盘转化漏斗</div>
+          <div>线索 → 有效线索 → 商机 → 成交全链路数据，各节点数量和转化率可视化</div>
+          <div class="feature-value">管理层实时掌握业务全貌，快速定位转化卡点</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">管理层核心仪表盘</div>
+          <div>团队询盘总量、转化率、待跟进客户数、业绩完成进度；支持按时间 / 销售 / 渠道筛选</div>
+          <div class="feature-value">不用等人工汇报，数据随时可查</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">渠道效果分析</div>
+          <div>各获客渠道（官网智能客服 / WhatsApp / 官网表单 / 社媒）线索量和转化率对比；邮件作为 IMAP 沟通归档单独统计</div>
+          <div class="feature-value">判断哪个渠道值得加大投入</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">销售个人看板</div>
+          <div>每个销售自己的线索数、商机数、待跟进数、本月业绩进度</div>
+          <div class="feature-value">销售自我管理，主管清晰掌握人员状态</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Module 7 -->
+    <div class="module">
+      <div class="module-header">
+        <h3>系统管理模块</h3>
+        <span class="module-tag">角色权限</span>
+      </div>
+      <div class="module-body">
+        <div class="feature-row feature-table-header">
+          <div>功能点</div>
+          <div>说明</div>
+          <div>业务价值</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">多角色配置</div>
+          <div>管理员 / 销售主管 / 销售代表 / 营销运营专员等标准角色；每个角色的功能权限和数据权限独立配置</div>
+          <div class="feature-value">权责边界清晰，数据安全</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">分级权限管控</div>
+          <div>销售只能看自己负责的客户；主管可查看本组全部；跨团队数据默认不可见</div>
+          <div class="feature-value">适配团队组织架构，隐私保护</div>
+        </div>
+        <div class="feature-row">
+          <div class="feature-name">账号全生命周期管理</div>
+          <div>账号创建、停用、权限调整；人员离职时自动触发客户交接流程</div>
+          <div class="feature-value">人员变动不影响业务连续性</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Section 5 -->
+  <div class="section" id="s5">
+    <div class="section-header">
+      <div class="section-num">5</div>
+      <h2>二期迭代方向</h2>
+    </div>
+
+    <p style="color:var(--text-muted);font-size:13px;margin-bottom:20px;">以下为一期验收通过后的规划方向，具体范围和优先级在一期交付后再对齐。</p>
+
+    <div class="phase2-grid">
+      <div class="phase2-item">
+        <h4>更多渠道扩展</h4>
+        <p>Telegram、Line 等渠道接入；LinkedIn 私信连接器稳定化；Slack 作为内部通知补充</p>
+      </div>
+      <div class="phase2-item">
+        <h4>Workflow 自动化</h4>
+        <p>线索自动分配规则细化；商机阶段推进自动触发任务；超期未跟进自动提醒升级</p>
+      </div>
+      <div class="phase2-item">
+        <h4>高级数据分析</h4>
+        <p>销售漏斗深度分析；客户 LTV 统计；区域 / 产品维度的业务分布报表</p>
+      </div>
+      <div class="phase2-item">
+        <h4>AI 能力深化</h4>
+        <p>AI 自动判断客户意向度并打标签；会话结束自动生成跟进建议；知识库持续扩展</p>
+      </div>
+      <div class="phase2-item">
+        <h4>营销自动化</h4>
+        <p>批量邮件营销工具集成（Mailchimp / SendGrid）；客户分层触达；复购提醒</p>
+      </div>
+      <div class="phase2-item">
+        <h4>移动端适配</h4>
+        <p>销售外出时手机端查客户、记跟进；核心功能移动可用</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 6 -->
+  <div class="section" id="s6">
+    <div class="section-header">
+      <div class="section-num">6</div>
+      <h2>技术方案</h2>
+    </div>
+
+    <h3>系统架构总览</h3>
+
+    <div class="arch-box">
+      <div class="layer">
+        <span class="layer-label" style="background:#6366f1;">渠道层</span>
+        <span style="color:var(--text-muted);font-size:12px;font-family:inherit;">官网智能客服 · WhatsApp · Facebook · Instagram · LinkedIn · 官网表单</span>
+      </div>
+      <div style="padding-left:50px;color:var(--text-muted);font-size:18px;">↓</div>
+      <div class="layer">
+        <span class="layer-label" style="background:#0891b2;">Chatwoot</span>
+        <span style="color:var(--text-muted);font-size:12px;font-family:inherit;">多渠道消息收发 · 坐席管理 · 会话上下文 · 附件存储 · webhook 通知</span>
+      </div>
+      <div style="padding-left:50px;color:var(--text-muted);font-size:18px;">↓</div>
+      <div class="layer">
+        <span class="layer-label" style="background:#d97706;">中间层服务</span>
+        <span style="color:var(--text-muted);font-size:12px;font-family:inherit;">webhook 接收 · 去重幂等 · 失败重试 · 字段映射 · AI摘要生成 · 写入CRM</span>
+      </div>
+      <div style="padding-left:50px;color:var(--text-muted);font-size:18px;">↓</div>
+      <div class="layer">
+        <span class="layer-label" style="background:#16a34a;">Twenty CRM</span>
+        <span style="color:var(--text-muted);font-size:12px;font-family:inherit;">客户主数据 · 商机管理 · 摘要 · 标签 · 会话链接 · 看板 · 内嵌会话面板</span>
+      </div>
+    </div>
+
+    <h3>各系统职责边界</h3>
+    <table class="tech-table">
+      <tr>
+        <th>系统</th>
+        <th>负责</th>
+        <th>不负责</th>
+      </tr>
+      <tr>
+        <td>Chatwoot</td>
+        <td>多渠道消息收发、人工坐席、会话上下文、附件、会话状态管理</td>
+        <td>CRM 主数据、商机管理、长期客户画像</td>
+      </tr>
+      <tr>
+        <td>Twenty CRM</td>
+        <td>联系人、公司、商机、任务、跟进记录、会话摘要、看板</td>
+        <td>直接实现各渠道协议、实时消息收发</td>
+      </tr>
+      <tr>
+        <td>中间层</td>
+        <td>webhook 处理、去重、重试、字段映射、摘要写入、官网表单接收</td>
+        <td>替代 Chatwoot 或 Twenty，不直接存储消息</td>
+      </tr>
+      <tr>
+        <td>AI 客服</td>
+        <td>对话、知识库检索、意向判断、信息抽取、转人工判断</td>
+        <td>直接写 CRM，由中间层统一处理写入</td>
+      </tr>
+      <tr>
+        <td>官网</td>
+        <td>嵌入聊天窗口、表单提交，调用中间层 API</td>
+        <td>保存 API Key、直接写数据库</td>
+      </tr>
+    </table>
+
+    <h3>部署方案</h3>
+    <table class="tech-table">
+      <tr>
+        <th>项目</th>
+        <th>方案</th>
+        <th>说明</th>
+      </tr>
+      <tr>
+        <td>服务器</td>
+        <td>Linux 云服务器（阿里云 / 腾讯云 / AWS）</td>
+        <td>公网部署是对接官网和多渠道的硬前提</td>
+      </tr>
+      <tr>
+        <td>容器化</td>
+        <td>Docker Compose</td>
+        <td>Twenty + Chatwoot + 中间层统一容器管理</td>
+      </tr>
+      <tr>
+        <td>域名 / HTTPS</td>
+        <td>独立域名 + SSL 证书</td>
+        <td>Chatwoot webhook、官网回调必须 HTTPS</td>
+      </tr>
+      <tr>
+        <td>数据库</td>
+        <td>PostgreSQL 16</td>
+        <td>Twenty 和 Chatwoot 各自独立数据库</td>
+      </tr>
+      <tr>
+        <td>队列</td>
+        <td>Redis</td>
+        <td>Twenty 后台任务、邮件同步、消息队列</td>
+      </tr>
+      <tr>
+        <td>备份</td>
+        <td>每日自动 pg_dump，存储到对象存储</td>
+        <td>数据无价，备份是唯一后悔药</td>
+      </tr>
+    </table>
+
+    <h3>多渠道接入方案</h3>
+    <table class="tech-table">
+      <tr>
+        <th>渠道</th>
+        <th>接入方式</th>
+        <th>成熟度</th>
+      </tr>
+      <tr>
+        <td>企业邮箱（邮件归档）</td>
+        <td>IMAP/SMTP，Twenty 原生支持，增量同步；用于沟通记录沉淀，不作为获客渠道</td>
+        <td><span class="tag tag-green">已验证</span></td>
+      </tr>
+      <tr>
+        <td>WhatsApp</td>
+        <td>WhatsApp Business API → Chatwoot → 中间层 → CRM</td>
+        <td><span class="tag tag-blue">方案成熟</span></td>
+      </tr>
+      <tr>
+        <td>Facebook</td>
+        <td>Facebook Messenger → Chatwoot → 中间层 → CRM</td>
+        <td><span class="tag tag-blue">方案成熟</span></td>
+      </tr>
+      <tr>
+        <td>Instagram</td>
+        <td>Instagram DM → Chatwoot → 中间层 → CRM</td>
+        <td><span class="tag tag-blue">方案成熟</span></td>
+      </tr>
+      <tr>
+        <td>LinkedIn</td>
+        <td>LinkedIn API 自定义适配器 → Chatwoot → 中间层 → CRM</td>
+        <td><span class="tag tag-orange">需单独验证</span></td>
+      </tr>
+      <tr>
+        <td>官网智能客服</td>
+        <td>AI 客服 webhook → 中间层 → CRM；Chatwoot 承载会话窗口</td>
+        <td><span class="tag tag-blue">方案设计完成</span></td>
+      </tr>
+      <tr>
+        <td>官网表单</td>
+        <td>表单 POST → 中间层 API → CRM 建档</td>
+        <td><span class="tag tag-blue">方案成熟</span></td>
+      </tr>
+    </table>
+
+    <h3>中间层核心能力要求</h3>
+    <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">中间层是整个方案的稳定性关键，必须具备以下能力：</p>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">🔁</div>
+        <h4>幂等去重</h4>
+        <p>webhook 可能重复发送，中间层必须保证同一条消息只写入 CRM 一次</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔄</div>
+        <h4>失败重试</h4>
+        <p>网络波动写入失败时自动重试，死信队列记录失败日志，不漏同步</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔗</div>
+        <h4>客户绑定</h4>
+        <p>Chatwoot contact/conversation 与 Twenty contact 的稳定绑定关系维护</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🤖</div>
+        <h4>摘要生成</h4>
+        <p>会话结束后调用 LLM 生成摘要、提取结构化信息，写入客户 Notes</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔒</div>
+        <h4>安全隔离</h4>
+        <p>Twenty API Key、Chatwoot Token 均由中间层保管，不暴露给官网前端</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📦</div>
+        <h4>字段映射</h4>
+        <p>各渠道数据结构标准化，统一映射到 Twenty 字段，支持灵活配置</p>
+      </div>
+    </div>
+
+    <h3>CRM 扩展字段（需在 Twenty 中新增）</h3>
+    <table class="tech-table">
+      <tr>
+        <th>对象</th>
+        <th>新增字段</th>
+      </tr>
+      <tr>
+        <td>联系人（People）</td>
+        <td>来源渠道、WhatsApp 号码、Chatwoot Contact ID、最近会话时间、最近会话摘要、感兴趣产品、意向等级、主要沟通渠道</td>
+      </tr>
+      <tr>
+        <td>渠道身份（新增对象）</td>
+        <td>关联联系人、渠道类型、外部用户 ID、渠道显示名、头像、Chatwoot Inbox ID</td>
+      </tr>
+      <tr>
+        <td>会话索引（新增对象）</td>
+        <td>关联联系人、渠道类型、Chatwoot Conversation ID、会话状态、负责人、最后消息时间、摘要、完整会话 URL</td>
+      </tr>
+      <tr>
+        <td>商机（Opportunities）</td>
+        <td>来源渠道、感兴趣产品、需求描述</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Section 7 -->
+  <div class="section" id="s7">
+    <div class="section-header">
+      <div class="section-num">7</div>
+      <h2>风险与注意事项</h2>
+    </div>
+
+    <table class="risk-table">
+      <tr>
+        <th>风险项</th>
+        <th>说明</th>
+        <th>应对建议</th>
+      </tr>
+      <tr>
+        <td>公网部署是前提</td>
+        <td>当前 CRM 运行在本地 localhost，官网、Chatwoot webhook、多渠道接入均无法连接</td>
+        <td>优先完成公网服务器部署，这是所有后续工作的硬前提</td>
+      </tr>
+      <tr>
+        <td>LinkedIn 接入不稳定</td>
+        <td>LinkedIn 私信 API 限制较多，不是 Chatwoot 的稳定原生渠道</td>
+        <td>单独做技术可行性验证，不作为一期 block 项；先用手动记录过渡</td>
+      </tr>
+      <tr>
+        <td>WhatsApp 规则限制</td>
+        <td>WhatsApp Business API 有 24 小时客服窗口规则，超时需使用消息模板</td>
+        <td>使用官方 Business API，不走个人号灰色方案；提前了解模板审核流程</td>
+      </tr>
+      <tr>
+        <td>webhook 重复写入</td>
+        <td>渠道 webhook 在网络异常时可能重复发送，导致 CRM 重复建档</td>
+        <td>中间层必须实现幂等逻辑，以 external_id 作为唯一键</td>
+      </tr>
+      <tr>
+        <td>网易邮箱限流</td>
+        <td>网易企业邮箱对第三方 IMAP 有严格频率限制，反复重连会触发封锁</td>
+        <td>现在邮件同步正常，不要随意断开重连；触发限流后等 15-30 分钟冷却</td>
+      </tr>
+      <tr>
+        <td>AI 客服信息抽取不完整</td>
+        <td>AI 从对话中抽取的客户信息可能不完整或有误</td>
+        <td>第一阶段保守设定：有邮箱或电话才写入；销售定期抽检 AI 写入的数据质量</td>
+      </tr>
+      <tr>
+        <td>CRM 数据膨胀</td>
+        <td>如果把完整聊天记录和附件全量存入 Twenty，会拖慢系统</td>
+        <td>CRM 只存摘要、标签和 Chatwoot 会话链接；完整记录保留在 Chatwoot</td>
+      </tr>
+    </table>
+
+    <div class="warn-box">
+      <strong>重要原则</strong>：Chatwoot 直接裸写 Twenty 不可取。所有外部数据必须经过中间层写入 CRM，中间层是稳定性的唯一保障。
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>新宏大集团 CRM 项目需求文档 v1.0 · 2026-07-06</span>
+    <span>下次更新：渠道接入方案确认后</span>
+  </div>
+
+</div>
+<script>
+  (function () {
+    const storageKey = "xhd-crm-requirement-v1-editable-20260706-channel";
+    const surfaces = Array.from(document.querySelectorAll("[data-editable-key]"));
+    const toolbar = document.querySelector("[data-editor-toolbar]");
+    const status = document.querySelector("[data-editor-status]");
+    const editButton = document.querySelector("[data-action='toggle-edit']");
+    const originalContent = Object.fromEntries(
+      surfaces.map((surface) => [surface.dataset.editableKey, surface.innerHTML])
+    );
+
+    let isEditing = false;
+
+    function nowText() {
+      const date = new Date();
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+
+    function setStatus(message) {
+      status.textContent = message;
+    }
+
+    function setEditing(nextValue) {
+      isEditing = nextValue;
+      document.body.classList.toggle("edit-mode", isEditing);
+      surfaces.forEach((surface) => {
+        surface.contentEditable = String(isEditing);
+        surface.spellcheck = false;
+      });
+      editButton.textContent = isEditing ? "关闭编辑" : "开启编辑";
+      setStatus(isEditing ? "编辑中：可直接点正文修改" : "已关闭编辑");
+    }
+
+    function currentContent() {
+      return Object.fromEntries(
+        surfaces.map((surface) => [surface.dataset.editableKey, surface.innerHTML])
+      );
+    }
+
+    function applyContent(content) {
+      surfaces.forEach((surface) => {
+        const value = content[surface.dataset.editableKey];
+        if (typeof value === "string") {
+          surface.innerHTML = value;
+        }
+      });
+    }
+
+    function saveLocal() {
+      localStorage.setItem(storageKey, JSON.stringify({
+        savedAt: new Date().toISOString(),
+        content: currentContent()
+      }));
+      setStatus(`已暂存：${nowText()}`);
+    }
+
+    function loadLocal() {
+      const raw = localStorage.getItem(storageKey);
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.content) {
+          applyContent(parsed.content);
+          setStatus("已恢复上次暂存内容");
+        }
+      } catch (error) {
+        setStatus("暂存内容读取失败");
+      }
+    }
+
+    function download(filename, mimeType, content) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportHtml() {
+      const wasEditing = isEditing;
+      setEditing(false);
+      const html = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+      download("新宏大CRM项目需求文档v1.0-已编辑.html", "text/html;charset=utf-8", html);
+      if (wasEditing) setEditing(true);
+      setStatus(`已导出 HTML：${nowText()}`);
+    }
+
+    function exportText() {
+      const text = surfaces.map((surface) => surface.innerText.trim()).join("\n\n");
+      download("新宏大CRM项目需求文档v1.0-文本.txt", "text/plain;charset=utf-8", text);
+      setStatus(`已下载文本：${nowText()}`);
+    }
+
+    function resetContent() {
+      const ok = confirm("确认重置为文件初始内容？这会清除浏览器暂存的修改。");
+      if (!ok) return;
+      localStorage.removeItem(storageKey);
+      applyContent(originalContent);
+      setStatus("已重置为初始内容");
+    }
+
+    toolbar.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const action = button.dataset.action;
+      if (action === "toggle-edit") setEditing(!isEditing);
+      if (action === "save-local") saveLocal();
+      if (action === "export-html") exportHtml();
+      if (action === "export-text") exportText();
+      if (action === "print") window.print();
+      if (action === "reset") resetContent();
+    });
+
+    document.addEventListener("keydown", (event) => {
+      const isSave = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s";
+      if (!isSave) return;
+      event.preventDefault();
+      saveLocal();
+    });
+
+    surfaces.forEach((surface) => {
+      surface.addEventListener("input", () => {
+        setStatus("有未导出的修改");
+      });
+    });
+
+    loadLocal();
+  })();
+</script>
+</body>
+</html>

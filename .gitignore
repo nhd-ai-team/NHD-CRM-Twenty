@@ -1,0 +1,32 @@
+.DS_Store
+.claude/
+
+# Local secrets and runtime config
+.env
+.env.*
+!.env.example
+
+# Database/file backups and local runtime data
+backup/
+*.dump
+*.tgz
+*.tar
+*.tar.gz
+
+# Dependency/build outputs
+node_modules/
+dist/
+build/
+coverage/
+.next/
+twenty/front-build-output/
+twenty/infra/build/
+
+# Logs and temp files
+*.log
+logs/
+tmp/
+.cache/
+
+# Preserved nested repository metadata
+.embedded-git/

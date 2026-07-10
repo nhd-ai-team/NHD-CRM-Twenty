@@ -1,0 +1,221 @@
+name: twenty
+
+services:
+  server:
+    image: twentycrm/twenty:${TAG:-latest}
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    # 不直接暴露，由 twenty-portal nginx 代理（保持 localhost:3000 入口不变）
+    environment:
+      NODE_PORT: 3000
+      PG_DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@${PG_DATABASE_HOST:-db}:${PG_DATABASE_PORT:-5432}/default
+      SERVER_URL: ${SERVER_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DISABLE_DB_MIGRATIONS: ${DISABLE_DB_MIGRATIONS}
+      DISABLE_CRON_JOBS_REGISTRATION: ${DISABLE_CRON_JOBS_REGISTRATION}
+
+      STORAGE_TYPE: ${STORAGE_TYPE}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION}
+      STORAGE_S3_NAME: ${STORAGE_S3_NAME}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT}
+
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY}
+      APP_SECRET: ${APP_SECRET:-}
+
+      HTTP_PROXY: http://host.docker.internal:7890
+      HTTPS_PROXY: http://host.docker.internal:7890
+      NO_PROXY: localhost,127.0.0.1,db,redis,server,worker,chatwoot-web,middleware
+      NODE_USE_ENV_PROXY: "1"
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: curl --fail http://localhost:3000/healthz
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: always
+
+  worker:
+    image: twentycrm/twenty:${TAG:-latest}
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    command: ["yarn", "worker:prod"]
+    environment:
+      PG_DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@${PG_DATABASE_HOST:-db}:${PG_DATABASE_PORT:-5432}/default
+      SERVER_URL: ${SERVER_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+
+      STORAGE_TYPE: ${STORAGE_TYPE}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION}
+      STORAGE_S3_NAME: ${STORAGE_S3_NAME}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT}
+
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY}
+      APP_SECRET: ${APP_SECRET:-}
+
+      HTTP_PROXY: http://host.docker.internal:7890
+      HTTPS_PROXY: http://host.docker.internal:7890
+      NO_PROXY: localhost,127.0.0.1,db,redis,server,worker,chatwoot-web,middleware
+      NODE_USE_ENV_PROXY: "1"
+
+    depends_on:
+      db:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    restart: always
+
+  db:
+    image: postgres:16
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${PG_DATABASE_NAME:-default}
+      POSTGRES_PASSWORD: ${PG_DATABASE_PASSWORD:-postgres}
+      POSTGRES_USER: ${PG_DATABASE_USER:-postgres}
+    healthcheck:
+      test: pg_isready -U ${PG_DATABASE_USER:-postgres} -h localhost -d postgres
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  redis:
+    image: redis
+    restart: always
+    command: ["--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Chatwoot 专用数据库（带 pgvector）────────────────────────────────────
+  chatwoot-db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: ${PG_DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_DATABASE_PASSWORD:-postgres}
+    volumes:
+      - chatwoot-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U ${PG_DATABASE_USER:-postgres} -h localhost -d chatwoot
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  # ── Chatwoot ──────────────────────────────────────────────────────────────
+  chatwoot-web:
+    image: chatwoot/chatwoot:latest
+    command: bundle exec rails s -p 3000 -b 0.0.0.0
+    ports:
+      - "3001:3000"
+    environment:
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@chatwoot-db:5432/chatwoot
+      REDIS_URL: redis://redis:6379
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      FRONTEND_URL: http://localhost:3001
+      DEFAULT_LOCALE: zh_CN
+      FORCE_SSL: "false"
+      ENABLE_ACCOUNT_SIGNUP: "false"
+      SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
+    depends_on:
+      chatwoot-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chatwoot-init:
+        condition: service_completed_successfully
+    restart: always
+
+  chatwoot-worker:
+    image: chatwoot/chatwoot:latest
+    command: bundle exec sidekiq -C config/sidekiq.yml
+    environment:
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@chatwoot-db:5432/chatwoot
+      REDIS_URL: redis://redis:6379
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
+    depends_on:
+      chatwoot-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chatwoot-init:
+        condition: service_completed_successfully
+    restart: always
+
+  # 初始化：跑数据库迁移（只需成功一次）
+  chatwoot-init:
+    image: chatwoot/chatwoot:latest
+    command: bundle exec rails db:chatwoot_prepare
+    environment:
+      SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+      DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@chatwoot-db:5432/chatwoot
+      REDIS_URL: redis://redis:6379
+      RAILS_ENV: production
+    depends_on:
+      chatwoot-db:
+        condition: service_healthy
+    restart: "no"
+
+  # ── Twenty 门户（注入客服侧边栏按钮，接管 3000 端口）───────────────────
+  twenty-portal:
+    image: nginx:alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./nginx/twenty-portal.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/chatwoot-inject.js:/etc/nginx/chatwoot-inject.js:ro
+    depends_on:
+      - server
+    restart: always
+
+  # ── Chatwoot 反向代理（去掉 X-Frame-Options 允许 iframe 嵌入）────────────
+  chatwoot-proxy:
+    image: nginx:alpine
+    ports:
+      - "3004:80"
+    volumes:
+      - ./nginx/chatwoot-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - chatwoot-web
+    restart: always
+
+  # ── 中间层同步服务 ────────────────────────────────────────────────────────
+  middleware:
+    build: ./middleware
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      TWENTY_API_URL: http://server:3000
+      TWENTY_API_KEY: ${TWENTY_API_KEY:-}
+      CHATWOOT_BASE_URL: http://chatwoot-web:3000
+      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN:-}
+      WEBHOOK_SECRET: ${MIDDLEWARE_WEBHOOK_SECRET}
+    depends_on:
+      - server
+      - chatwoot-web
+    restart: always
+
+volumes:
+  db-data:
+  server-local-data:
+  chatwoot-db-data:

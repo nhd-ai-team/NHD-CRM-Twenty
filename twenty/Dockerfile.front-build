@@ -1,0 +1,18 @@
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# 需要整个 monorepo 因为 front 依赖本地 packages
+COPY packages/eslint-plugin-twenty ./packages/eslint-plugin-twenty
+COPY front/package.json front/yarn.lock ./front/
+
+# 安装 front 依赖（带本地包）
+WORKDIR /app/front
+RUN yarn install --network-timeout 300000
+
+# 复制 front 源码并构建
+COPY front .
+RUN DISABLE_ESLINT_PLUGIN=true GENERATE_SOURCEMAP=false yarn build
+
+FROM scratch AS export
+COPY --from=builder /app/front/build /
