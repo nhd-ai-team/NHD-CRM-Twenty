@@ -54,11 +54,20 @@
     return nr ? Math.min(nr.getBoundingClientRect().right, 300) : 240;
   }
 
+  function applyIframeSize(iframe) {
+    var left = getSidebarLeft();
+    iframe.style.position = 'fixed';
+    iframe.style.top = '0';
+    iframe.style.left = left + 'px';
+    // Must use explicit width/height — right:0/bottom:0 doesn't stretch iframes reliably
+    iframe.style.width = (window.innerWidth - left) + 'px';
+    iframe.style.height = window.innerHeight + 'px';
+  }
+
   function showChat() {
     sessionStorage.setItem(ACTIVE_KEY, '1');
     var iframe = getOrCreateIframe();
-    var left = getSidebarLeft();
-    iframe.style.left = left + 'px';
+    applyIframeSize(iframe);
     iframe.style.display = 'block';
     setNavActive(true);
   }
@@ -210,6 +219,15 @@
     // Pre-create iframe (keeps it warm; won't load until shown)
     getOrCreateIframe();
   }
+
+  // ── resize: keep iframe filling the content area ──────────────────────────
+
+  window.addEventListener('resize', function () {
+    var iframe = document.getElementById(IFRAME_ID);
+    if (iframe && iframe.style.display !== 'none') {
+      applyIframeSize(iframe);
+    }
+  });
 
   // ── boot ──────────────────────────────────────────────────────────────────
 
