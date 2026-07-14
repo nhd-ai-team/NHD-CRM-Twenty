@@ -48,23 +48,39 @@ function PlaceholderTab({ label }) {
   )
 }
 
-// ContactPanel renders as a fixed overlay — never takes horizontal layout space.
-// Wide viewports (≥900px): shows inline-like on the right edge without backdrop.
-// Narrow viewports (<900px): shows with a semi-transparent backdrop; click backdrop to close.
-export function ContactPanel({ conv, open = true, onClose }) {
+// ContactPanel:
+//   inline=true  → plain flex column (3rd column in the layout, no fixed positioning)
+//   inline=false → position:fixed right-side overlay with optional backdrop
+export function ContactPanel({ conv, open = true, onClose, inline = false }) {
   const [activeTab, setActiveTab] = useState('资料')
 
   if (!open) return null
 
-  const isNarrow = typeof window !== 'undefined' && window.innerWidth < 900
   const c = conv ? conv.contact : null
   const channelLabel = conv
     ? (conv.channel === 'whatsapp' ? 'WhatsApp' : conv.channel === 'website' ? '官网聊天' : conv.channel)
     : ''
 
+  const panelStyle = inline
+    ? {
+        width: 260, flexShrink: 0,
+        borderLeft: '1px solid var(--border)',
+        background: 'var(--bg-secondary)',
+        display: 'flex', flexDirection: 'column',
+        height: '100%',
+      }
+    : {
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 280,
+        borderLeft: '1px solid var(--border)',
+        background: 'var(--bg-secondary)',
+        display: 'flex', flexDirection: 'column',
+        zIndex: 50,
+        boxShadow: '-4px 0 16px rgba(0,0,0,.08)',
+      }
+
   return (
     <>
-      {isNarrow && (
+      {!inline && (
         <div
           onClick={onClose}
           style={{
@@ -74,14 +90,7 @@ export function ContactPanel({ conv, open = true, onClose }) {
         />
       )}
 
-      <div style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 280,
-        borderLeft: '1px solid var(--border)',
-        background: 'var(--bg-secondary)',
-        display: 'flex', flexDirection: 'column',
-        zIndex: 50,
-        boxShadow: '-4px 0 16px rgba(0,0,0,.08)',
-      }}>
+      <div style={panelStyle}>
         {/* Tab bar */}
         <div style={{
           display: 'flex', borderBottom: '1px solid var(--border)',

@@ -5,6 +5,16 @@ import { ContactPanel } from './components/ContactPanel'
 import { ConvertToLeadDrawer } from './components/ConvertToLeadDrawer'
 import { useConversations } from './hooks/useConversations'
 
+// Layout breakpoints (iframe width)
+// wide   ≥700: 3-column inline (sidebar | chat | contact)
+// medium 500–699: 2-column inline (sidebar | chat), contact as toggle overlay
+// narrow <500: sidebar as drawer overlay, chat full width, contact as toggle overlay
+function getLayout(w) {
+  if (w >= 700) return 'wide'
+  if (w >= 500) return 'medium'
+  return 'narrow'
+}
+
 export default function App() {
   const {
     filtered, selected, selectedId, selectConversation,
@@ -15,45 +25,52 @@ export default function App() {
   } = useConversations()
 
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [contactOpen, setContactOpen] = useState(() => window.innerWidth >= 900)
-  // 窄 iframe (<500px) 默认收起会话列表，用汉堡按钮展开
-  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 500)
+  const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
+  const [sidebarOpen, setSidebarOpen] = useState(false) // only used in narrow mode
+  const [contactOpen, setContactOpen] = useState(false) // only used in medium mode overlay
 
   useEffect(() => {
-    function handleResize() {
-      const w = window.innerWidth
-      setContactOpen(w >= 900)
-      setSidebarOpen(w >= 500)
+    function onResize() {
+      const l = getLayout(window.innerWidth)
+      setLayout(l)
+      if (l !== 'narrow') setSidebarOpen(false)
     }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  const isNarrow = layout === 'narrow'
+  const isWide   = layout === 'wide'
 
   return (
     <div style={{
-      display: 'flex', height: '100vh', width: '100vw', overflow: 'hidden',
+      display: 'flex', height: '100vh', overflow: 'hidden',
       background: 'var(--bg-primary)', color: 'var(--text-primary)',
       fontFamily: 'var(--font-sans)',
     }}>
-      {/* 会话列表：宽屏内嵌，窄屏作为 overlay */}
-      {window.innerWidth < 500 && sidebarOpen && (
+
+      {/* Narrow: backdrop for sidebar drawer */}
+      {isNarrow && sidebarOpen && (
         <div
           onClick={() => setSidebarOpen(false)}
           style={{ position: 'fixed', inset: 0, zIndex: 48, background: 'rgba(0,0,0,.3)' }}
         />
       )}
+
+      {/* ConversationSidebar — inline on wide/medium, drawer on narrow */}
       <div style={{
-        position: window.innerWidth < 500 ? 'fixed' : 'relative',
+        position: isNarrow ? 'fixed' : 'relative',
         top: 0, left: 0, bottom: 0,
-        zIndex: window.innerWidth < 500 ? 49 : 'auto',
-        transform: window.innerWidth < 500 && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
+        zIndex: isNarrow ? 49 : 'auto',
+        transform: isNarrow && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
         transition: 'transform .2s ease',
-        display: 'flex', flexShrink: 0,
+        flexShrink: 0,
+        display: 'flex',
       }}>
         <ConversationSidebar
           conversations={filtered}
           selectedId={selectedId}
-          onSelect={(id) => { selectConversation(id); if (window.innerWidth < 500) setSidebarOpen(false) }}
+          onSelect={(id) => { selectConversation(id); if (isNarrow) setSidebarOpen(false) }}
           activeChannel={activeChannel}
           setActiveChannel={setActiveChannel}
           activeStatus={activeStatus}
@@ -63,19 +80,26 @@ export default function App() {
         />
       </div>
 
+      {/* ChatPanel — always takes remaining flex space */}
       <ChatPanel
         conv={selected}
         onSend={sendMessage}
         onTakeover={(action) => setTakeover(selected?.id, action)}
         onClose={() => closeConversation(selected?.id)}
         onConvertLead={() => setDrawerOpen(true)}
+        layout={layout}
         contactOpen={contactOpen}
         onToggleContact={() => setContactOpen(o => !o)}
-        sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen(o => !o)}
       />
 
-      <ContactPanel conv={selected} open={contactOpen} onClose={() => setContactOpen(false)} />
+      {/* ContactPanel — inline 3rd column on wide, overlay toggle on medium/narrow */}
+      <ContactPanel
+        conv={selected}
+        inline={isWide}
+        open={isWide || contactOpen}
+        onClose={() => setContactOpen(false)}
+      />
 
       {drawerOpen && (
         <ConvertToLeadDrawer
