@@ -1,6 +1,6 @@
 # CRM 开发计划
 
-> 最后更新：2026-07-14
+> 最后更新：2026-07-14（会话工作台 UI 完成，已嵌入 Twenty 侧边栏）
 > 当前分支：main
 
 ---
@@ -34,9 +34,9 @@
 | Chatwoot 解耦 | ✅ 完成 | docker-compose / nginx / middleware 均已清理 |
 | 公网访问 | ⚠️ 临时 | cloudflared 临时 URL，重启会变，域名待购买 |
 | CRM 自定义字段 | 🔲 待做 | 外贸字段、商机阶段、成员权限 |
-| Evolution API 接入 | 🔲 待做 | 未开始 |
-| 官网 Chatbot Widget | 🔲 待做 | 未开始 |
-| CRM 会话工作台 UI | 🔲 待做 | 未开始 |
+| Evolution API 接入 | 🔲 待做 | 未开始，等 Phase 1 公网域名 |
+| 官网 Chatbot Widget | 🔲 待做 | 由其他同事负责 |
+| CRM 会话工作台 UI | ✅ 完成 | React+Vite，mock 数据，嵌入 Twenty 侧边栏，`/chat/` 路径 |
 
 ---
 
@@ -53,6 +53,53 @@
 | 实时推送 | SSE（Server-Sent Events） | 比 WebSocket 简单，单向推送够用 |
 | 公网方案 | cloudflared + Cloudflare 企业账号 | Mac mini 无公网 IP，Tunnel 稳定，企业账号固定域名 |
 | 前端框架 | React + Vite | 会话工作台 UI 有一定交互复杂度 |
+
+---
+
+## 架构概览
+
+```
+浏览器（销售 / 管理员）
+  │
+  ▼
+localhost:3000  ←─ nginx（twenty-portal 容器）
+  │
+  ├─ /          → Twenty CRM（server 容器，:3000）
+  ├─ /ws        → Twenty WebSocket（server 容器）
+  ├─ /chat/     → 对话工作台（chat-ui 容器，:3003，Vite 开发服务器）
+  │    ├─ /chat/__vite_hmr → HMR WebSocket（开发热重载）
+  │    └─ /@vite/@react-refresh → Vite 内部依赖
+  ├─ /conv-api/ → 对话服务 API（middleware 容器，:3002）[Phase 3+]
+  ├─ /ws/widget → Widget WebSocket（middleware 容器）[Phase 3-B]
+  ├─ /widget.js → 官网嵌入脚本（nginx 静态文件）[Phase 3-B]
+  ├─ /admin     → 账号配置页面（nginx 静态文件）[Phase 4]
+  └─ /api/      → middleware REST API（middleware 容器）[Phase 3+]
+         │
+         ├─ PostgreSQL（db 容器）
+         │    ├─ schema: default（Twenty 数据）
+         │    ├─ schema: conv（对话服务数据）[Phase 3 新建]
+         │    └─ database: evolution（Evolution API）[Phase 3-A 新建]
+         ├─ Redis（redis 容器）
+         └─ Evolution API（evolution-api 容器，:8080）[Phase 3-A]
+```
+
+### 会话工作台嵌入方案（已完成）
+
+**嵌入方式**：nginx 同源路径（`/chat/`），通过 Twenty 数据库注入导航菜单项。不使用 iframe，不修改 Twenty 源码。
+
+**访问路径**：`http://localhost:3000/chat/`（生产：`https://crm.[域名]/chat/`）
+
+**Twenty 侧边栏导航**：直接写入 `core.navigationMenuItem` 表（`type=LINK`，`icon=IconMessages`，`color=purple`），Twenty 前端自动渲染为侧边栏入口。
+
+**生产切换**（当前开发模式用 Vite 热重载，上线前执行）：
+```bash
+# 在 chat-ui/ 目录
+npm run build          # 产出 dist/
+# docker-compose.yml 中改为 nginx:alpine 静态服务，挂载 dist/
+# 去掉 /@vite/@react-refresh 的 nginx location 块
+```
+
+**主题同步**：`useTheme.js` hook 读取 Twenty 存入 `localStorage` 的颜色方案（尝试 `colorScheme`、`twenty-color-scheme`、`theme` 三个键），写入 `<html data-theme>` 属性，与 Twenty 深色 / 浅色模式同步切换。
 
 ---
 
@@ -514,85 +561,138 @@ location /admin-api/ {
 
 ---
 
-## Phase 5 · CRM 会话工作台 UI
+## Phase 5 · CRM 会话工作台 UI ✅ UI 已完成（mock 数据），待接真实 API
 
 **目标**：销售在 `/chat` 页面查看所有渠道会话、回复、接管，从 Twenty 联系人记录页一键跳转。
 
-### 架构
+### 已完成（2026-07-14）
 
-```
-销售访问 /chat（React 应用）
-  → 拉取会话列表（GET /conv-api/conversations）
-  → SSE 订阅实时消息（GET /conv-api/events）
-  → 发送消息（POST /conv-api/conversations/:id/messages）
-    → middleware → Evolution API（WhatsApp）
-    → middleware → WebSocket → Widget（官网）
-  → 接管（POST /conv-api/conversations/:id/takeover）
-```
+**技术栈**：React 18 + Vite 5 + Tailwind CSS v4 + lucide-react + date-fns
 
-### 页面结构
-
+**文件结构**（`chat-ui/src/`）：
 ```
-/chat
-├── 左侧面板（会话列表）
-│   ├── 渠道筛选 Tab（全部 / WhatsApp / 官网）
-│   ├── 状态筛选（全部 / 待处理 / 人工接管 / 已关闭）
-│   └── 会话卡片（渠道图标 + 客户名 + 最后消息预览 + 时间 + 未读角标）
-└── 右侧面板（会话详情）
-    ├── 顶部：客户名 + 渠道标签 + 接管状态 + 跳转 Twenty 联系人链接
-    ├── 消息时间线（客户=左，客服=右，AI=灰，系统=居中小字）
-    ├── 接管 / 结束接管 按钮
-    └── 输入框 + 发送（Ctrl/Cmd+Enter 快捷键）
+data/mock.js                  ← 6 条 mock 会话（WhatsApp×5 + 官网×1），Phase 3 后替换为 API 调用
+hooks/useTheme.js             ← 同步 Twenty localStorage 颜色方案
+hooks/useConversations.js     ← 会话状态管理（筛选/发送/接管/关闭）
+components/ChannelIcon.jsx    ← WhatsApp / 官网 / Facebook / Instagram SVG 图标
+components/ConversationSidebar.jsx ← 左栏：渠道 Tab、搜索、状态筛选、会话卡片
+components/ChatPanel.jsx      ← 中栏：消息气泡、输入工具栏、操作栏
+components/ContactPanel.jsx   ← 右栏：联系人信息、资料/话术/物料/翻译 Tab
+components/ConvertToLeadDrawer.jsx ← 「转为线索」侧滑抽屉（预填联系人信息）
+App.jsx                       ← 三栏布局组装
+main.jsx                      ← 入口，挂载 useTheme
+index.css                     ← Twenty 兼容 CSS 变量（亮/暗双主题）
 ```
 
-### 对话服务接口（middleware 实现）
+**已实现功能**：
+- 三栏布局（左 320px 固定 / 中弹性 / 右 300px 固定）
+- 渠道 Tab 过滤（全部 / WhatsApp / 官网）+ 未读数角标
+- 状态过滤（全部 / 未读 / 进行中 / 人工接管 / 已关闭）
+- 联系人搜索（姓名 / 电话 / 最后消息）
+- 消息气泡（客户左、客服右紫、AI 右淡紫、系统居中）
+- 输入栏：Enter 发送、Shift+Enter 换行、语言选择器占位
+- 操作栏：接管 / 释放接管 / 结束会话 / 转为线索 / AI 回复配置（占位）
+- 「转为线索」抽屉：预填姓名/电话/公司，提交后 console.log（Phase 3 接真实 API）
+- 右栏：联系人资料、渠道类型、建档状态标签、编辑/查看 CRM/转为线索按钮
+- 深色 / 浅色主题自动跟随 Twenty
+
+**当前限制（Phase 3 对接后解除）**：
+- 数据来自 `mock.js`，刷新后重置
+- 发送的消息不会真正送出到 WhatsApp / 官网
+- 「转为线索」不会在 Twenty 创建联系人
+- 无 SSE 实时推送（新消息不自动出现）
+
+### Phase 3 后需补充的 API 对接工作
 
 ```
-GET  /api/conversations                   - 会话列表（支持 channel / status 筛选）
+useConversations.js 中将 useState(CONVERSATIONS) 替换为：
+
+useEffect(() => {
+  fetch('/conv-api/conversations')
+    .then(r => r.json()).then(setConversations)
+}, [])
+
+// SSE 实时推送
+useEffect(() => {
+  const es = new EventSource('/conv-api/events')
+  es.onmessage = e => {
+    const event = JSON.parse(e.data)
+    if (event.type === 'new_message') { /* append message */ }
+    if (event.type === 'new_conversation') { /* prepend conv */ }
+  }
+  return () => es.close()
+}, [])
+
+// sendMessage 中将 mock 逻辑改为：
+await fetch(`/conv-api/conversations/${convId}/messages`, {
+  method: 'POST',
+  body: JSON.stringify({ content: text }),
+  headers: { 'Content-Type': 'application/json' },
+})
+
+// ConvertToLeadDrawer 提交改为：
+await fetch('/conv-api/leads', {
+  method: 'POST',
+  body: JSON.stringify({ convId: conv.id, ...form }),
+  headers: { 'Content-Type': 'application/json' },
+})
+```
+
+### 对话服务接口（middleware 实现，Phase 3）
+
+```
+GET  /api/conversations                   - 会话列表（channel / status 筛选）
 GET  /api/conversations/:id/messages      - 消息历史
-POST /api/conversations/:id/messages      - 发送消息
+POST /api/conversations/:id/messages      - 发送消息（转发至 Evolution API / Widget WS）
 POST /api/conversations/:id/takeover      - 接管（action: takeover | release）
-GET  /api/stats/unread                    - 未读数（侧边栏角标用）
+POST /api/leads                           - 从会话创建 Twenty 联系人（转为线索）
 GET  /api/events                          - SSE 实时推送（新消息 / 状态变化）
 ```
 
-### nginx 更新（Phase 5）
+### Twenty 侧边栏导航（已完成）
 
-```nginx
-location /chat {
-    alias /etc/nginx/html/chat/;
+已通过 SQL 插入 `core.navigationMenuItem`：
+- 名称：对话工作台
+- 图标：IconMessages（Twenty 内置图标集）
+- 颜色：purple
+- 链接：`/chat/`
+- 位置：7（在现有菜单项末尾）
+
+### 生产部署切换
+
+```bash
+# 当前：Vite 开发服务器（chat-ui 容器）
+# 生产：nginx 静态文件
+
+# 1. 本机构建
+cd chat-ui && npm run build   # → dist/
+
+# 2. docker-compose.yml 中 chat-ui 服务改为：
+chat-ui:
+  image: nginx:alpine
+  volumes:
+    - ./chat-ui/dist:/usr/share/nginx/html/chat:ro
+  restart: always
+
+# 3. nginx/twenty-portal.conf 中 /chat/ 块改为：
+location /chat/ {
+    alias /path/to/chat-ui/dist/;
     try_files $uri /chat/index.html;
 }
-location /conv-api/ {
-    proxy_pass http://middleware:3002/api/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-}
-location /conv-api/events {
-    proxy_pass http://middleware:3002/api/events;
-    proxy_http_version 1.1;
-    proxy_set_header Connection '';
-    proxy_buffering off;
-    chunked_transfer_encoding on;
-}
-```
-
-### Twenty 集成
-
-Twenty People 记录页新增 Link 类型字段：
-
-```
-字段名：会话工作台
-字段类型：Link
-值：https://crm.[域名]/chat?contact_id={{record.id}}
+# 删除 /@vite/@react-refresh 的 location 块
 ```
 
 ### 验收标准
-- [ ] `/chat` 显示 WhatsApp + 官网两个渠道的会话
-- [ ] 实时收到新消息（SSE，无需刷新）
-- [ ] 发送消息 → 对应渠道客户收到
-- [ ] 接管后状态标签变为"人工接管"
-- [ ] Twenty 联系人页"会话工作台"链接跳转到对应会话
+- [x] `/chat/` 显示会话列表（mock 数据）
+- [x] 渠道 / 状态 / 搜索筛选正常
+- [x] 发送消息显示在气泡列表（mock）
+- [x] 接管 / 释放 / 结束 状态切换正常
+- [x] 「转为线索」抽屉打开、预填、提交
+- [x] Twenty 侧边栏出现「对话工作台」入口
+- [x] `localhost:3000/chat/` 通过 nginx 访问正常
+- [ ] 接真实 API（Phase 3 完成后）
+- [ ] SSE 实时推送（Phase 3 完成后）
+- [ ] Twenty 联系人页链接跳转到对应会话（Phase 3 完成后）
 
 ---
 
@@ -694,37 +794,51 @@ META_VERIFY_TOKEN=<自定义验证 Token>
 
 ---
 
-## 目标文件结构
+## 文件结构（当前实际状态）
 
 ```
 ai crm/
-├── docker-compose.yml          ← Phase 3 新增 evolution-api 服务
-├── .env
-├── DEV_PLAN.md
+├── docker-compose.yml              ← 当前服务：server/worker/db/redis/twenty-portal/middleware/chat-ui
+├── .env                            ← 不提交 git（含 TWENTY_API_KEY 等敏感信息）
+├── DEV_PLAN.md                     ← 本文件
 ├── nginx/
-│   ├── twenty-portal.conf      ← 按阶段逐步扩展路由
-│   └── _archive/
-├── middleware/                 ← 对话服务扩展在此
-│   ├── index.js
-│   ├── db/
-│   │   └── migrations/
-│   │       ├── 001_conv_schema.sql
-│   │       └── 002_website_visitor_id.sql
-│   ├── routes/
-│   │   ├── whatsapp.js         ← Phase 3-A
-│   │   ├── widget.js           ← Phase 3-B（WebSocket 处理）
-│   │   ├── conversations.js    ← Phase 5（供 /chat 前端调用）
-│   │   ├── admin.js            ← Phase 4
-│   │   ├── meta.js             ← Phase 6
-│   │   └── leads.js            ← Phase 7
+│   ├── twenty-portal.conf          ← 已含 /chat/ 路由
+│   └── _archive/                   ← 归档旧 chatwoot 配置
+├── middleware/
+│   ├── index.js                    ← 已清理 Chatwoot，含 /health + /api/leads 占位
 │   └── package.json
-├── widget/                     ← Phase 3-B，官网嵌入 JS
-│   ├── src/
-│   │   └── widget.js
-│   └── package.json
-├── chat-ui/                    ← Phase 5，会话工作台前端
-│   ├── src/
-│   └── package.json
-└── admin-ui/                   ← Phase 4，账号配置页面
+├── chat-ui/                        ← ✅ 已完成，React+Vite 会话工作台
+│   ├── Dockerfile.dev              ← 开发容器（npm run dev，热重载）
+│   ├── vite.config.js              ← base: '/chat/'，host: true，HMR 路径
+│   ├── package.json
+│   └── src/
+│       ├── index.css               ← Twenty CSS 变量（亮/暗）
+│       ├── main.jsx                ← 入口 + useTheme
+│       ├── App.jsx                 ← 三栏布局
+│       ├── data/mock.js            ← 6 条 mock 会话（Phase 3 后替换）
+│       ├── hooks/
+│       │   ├── useTheme.js
+│       │   └── useConversations.js
+│       └── components/
+│           ├── ChannelIcon.jsx
+│           ├── ConversationSidebar.jsx
+│           ├── ChatPanel.jsx
+│           ├── ContactPanel.jsx
+│           └── ConvertToLeadDrawer.jsx
+│
+│   ── 以下为后续阶段规划 ──────────────────────────────────────────────
+│
+├── middleware/routes/              ← Phase 3+ 逐步新增
+│   ├── whatsapp.js                 ← Phase 3-A（Evolution API Webhook）
+│   ├── widget.js                   ← Phase 3-B（WebSocket 处理）
+│   ├── conversations.js            ← Phase 5 API（供 /chat 前端调用）
+│   ├── admin.js                    ← Phase 4
+│   ├── meta.js                     ← Phase 6
+│   └── leads.js                    ← Phase 7（现已有占位）
+├── middleware/db/migrations/
+│   ├── 001_conv_schema.sql         ← Phase 3（contacts/conversations/messages/audit_log）
+│   └── 002_website_visitor_id.sql  ← Phase 3-B
+├── widget/                         ← Phase 3-B，官网嵌入 JS（其他同事负责）
+└── admin-ui/                       ← Phase 4，账号配置页面
     └── index.html
 ```
