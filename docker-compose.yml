@@ -105,6 +105,7 @@ services:
       - "3000:80"
     volumes:
       - ./nginx/twenty-portal.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/inject:/etc/nginx/inject:ro
     depends_on:
       - server
     restart: always

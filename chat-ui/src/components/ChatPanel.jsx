@@ -4,7 +4,7 @@ import { zhCN } from 'date-fns/locale'
 import {
   MoreHorizontal, UserCheck, UserX, XCircle, UserPlus,
   Send, Smile, Paperclip, Image, File, Languages, Mic,
-  Settings, Bot,
+  Settings, Bot, PanelRightOpen, PanelRightClose,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -126,7 +126,7 @@ function btnStyle(variant) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead }) {
+export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, contactOpen, onToggleContact }) {
   const [input, setInput] = useState('')
   const [lang, setLang] = useState('中文')
   const bottomRef = useRef(null)
@@ -175,9 +175,16 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead }) 
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{conv.contact.company}</div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
           <button style={{ ...btnStyle('ghost'), padding: '4px 8px', fontSize: 11 }}>
             <Settings size={12} /> AI 配置
+          </button>
+          <button
+            onClick={onToggleContact}
+            title={contactOpen ? '收起联系人信息' : '展开联系人信息'}
+            style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: contactOpen ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 4 }}
+          >
+            {contactOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
           </button>
           <button style={{ padding: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}>
             <MoreHorizontal size={16} />

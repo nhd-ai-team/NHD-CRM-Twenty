@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ConversationSidebar } from './components/ConversationSidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { ContactPanel } from './components/ContactPanel'
@@ -15,6 +15,16 @@ export default function App() {
   } = useConversations()
 
   const [drawerOpen, setDrawerOpen] = useState(false)
+  // 宽屏(≥900px)默认展开右栏，窄屏默认收起
+  const [contactOpen, setContactOpen] = useState(() => window.innerWidth >= 900)
+
+  useEffect(() => {
+    function handleResize() {
+      setContactOpen(window.innerWidth >= 900)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   return (
     <div style={{
@@ -40,9 +50,11 @@ export default function App() {
         onTakeover={(action) => setTakeover(selected?.id, action)}
         onClose={() => closeConversation(selected?.id)}
         onConvertLead={() => setDrawerOpen(true)}
+        contactOpen={contactOpen}
+        onToggleContact={() => setContactOpen(o => !o)}
       />
 
-      <ContactPanel conv={selected} />
+      <ContactPanel conv={selected} open={contactOpen} onClose={() => setContactOpen(false)} />
 
       {drawerOpen && (
         <ConvertToLeadDrawer

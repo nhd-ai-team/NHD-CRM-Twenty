@@ -103,7 +103,7 @@ function ConvCard({ conv, isSelected, onSelect }) {
 export function ConversationSidebar({ conversations, selectedId, onSelect, activeChannel, setActiveChannel, activeStatus, setActiveStatus, search, setSearch }) {
   return (
     <div style={{
-      width: 320, flexShrink: 0, borderRight: '1px solid var(--border)',
+      width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
       background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', height: '100%',
     }}>
       {/* Channel tabs */}
