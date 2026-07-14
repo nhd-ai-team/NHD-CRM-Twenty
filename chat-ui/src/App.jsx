@@ -15,12 +15,15 @@ export default function App() {
   } = useConversations()
 
   const [drawerOpen, setDrawerOpen] = useState(false)
-  // 宽屏(≥900px)默认展开右栏，窄屏默认收起
   const [contactOpen, setContactOpen] = useState(() => window.innerWidth >= 900)
+  // 窄 iframe (<500px) 默认收起会话列表，用汉堡按钮展开
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 500)
 
   useEffect(() => {
     function handleResize() {
-      setContactOpen(window.innerWidth >= 900)
+      const w = window.innerWidth
+      setContactOpen(w >= 900)
+      setSidebarOpen(w >= 500)
     }
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
@@ -32,17 +35,33 @@ export default function App() {
       background: 'var(--bg-primary)', color: 'var(--text-primary)',
       fontFamily: 'var(--font-sans)',
     }}>
-      <ConversationSidebar
-        conversations={filtered}
-        selectedId={selectedId}
-        onSelect={selectConversation}
-        activeChannel={activeChannel}
-        setActiveChannel={setActiveChannel}
-        activeStatus={activeStatus}
-        setActiveStatus={setActiveStatus}
-        search={search}
-        setSearch={setSearch}
-      />
+      {/* 会话列表：宽屏内嵌，窄屏作为 overlay */}
+      {window.innerWidth < 500 && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 48, background: 'rgba(0,0,0,.3)' }}
+        />
+      )}
+      <div style={{
+        position: window.innerWidth < 500 ? 'fixed' : 'relative',
+        top: 0, left: 0, bottom: 0,
+        zIndex: window.innerWidth < 500 ? 49 : 'auto',
+        transform: window.innerWidth < 500 && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
+        transition: 'transform .2s ease',
+        display: 'flex', flexShrink: 0,
+      }}>
+        <ConversationSidebar
+          conversations={filtered}
+          selectedId={selectedId}
+          onSelect={(id) => { selectConversation(id); if (window.innerWidth < 500) setSidebarOpen(false) }}
+          activeChannel={activeChannel}
+          setActiveChannel={setActiveChannel}
+          activeStatus={activeStatus}
+          setActiveStatus={setActiveStatus}
+          search={search}
+          setSearch={setSearch}
+        />
+      </div>
 
       <ChatPanel
         conv={selected}
@@ -52,6 +71,8 @@ export default function App() {
         onConvertLead={() => setDrawerOpen(true)}
         contactOpen={contactOpen}
         onToggleContact={() => setContactOpen(o => !o)}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen(o => !o)}
       />
 
       <ContactPanel conv={selected} open={contactOpen} onClose={() => setContactOpen(false)} />

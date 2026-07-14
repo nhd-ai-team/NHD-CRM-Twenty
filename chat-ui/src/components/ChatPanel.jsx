@@ -4,7 +4,7 @@ import { zhCN } from 'date-fns/locale'
 import {
   MoreHorizontal, UserCheck, UserX, XCircle, UserPlus,
   Send, Smile, Paperclip, Image, File, Languages, Mic,
-  Settings, Bot, PanelRightOpen, PanelRightClose,
+  Settings, Bot, PanelRightOpen, PanelRightClose, Menu,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -126,7 +126,7 @@ function btnStyle(variant) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, contactOpen, onToggleContact }) {
+export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, contactOpen, onToggleContact, sidebarOpen, onToggleSidebar }) {
   const [input, setInput] = useState('')
   const [lang, setLang] = useState('中文')
   const bottomRef = useRef(null)
@@ -136,8 +136,13 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, co
   }, [conv?.messages])
 
   if (!conv) return (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-      从左侧选择一个会话
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: 12 }}>
+      {window.innerWidth < 500 && (
+        <button onClick={onToggleSidebar} style={{ ...btnStyle('accent'), fontSize: 13, padding: '8px 18px' }}>
+          <Menu size={15} /> 选择会话
+        </button>
+      )}
+      {window.innerWidth >= 500 && <span>从左侧选择一个会话</span>}
     </div>
   )
 
@@ -176,6 +181,15 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, co
           )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          {/* 窄屏下显示汉堡菜单切换会话列表 */}
+          {window.innerWidth < 500 && (
+            <button
+              onClick={onToggleSidebar}
+              style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', borderRadius: 4 }}
+            >
+              <Menu size={16} />
+            </button>
+          )}
           <button style={{ ...btnStyle('ghost'), padding: '4px 8px', fontSize: 11 }}>
             <Settings size={12} /> AI 配置
           </button>
