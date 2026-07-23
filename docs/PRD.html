@@ -1,0 +1,1124 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>新宏大 AI 智能 CRM · 产品需求文档 v1.0</title>
+<style>
+:root {
+  --c-red:         #E1262B;
+  --gray-10:       #F5F5F5;
+  --gray-20:       #E0E0E0;
+  --gray-30:       #BDBDBD;
+  --gray-40:       #999999;
+  --gray-50:       #757575;
+  --gray-60:       #5C5C5C;
+  --gray-70:       #424242;
+  --gray-80:       #2E2E2E;
+  --gray-90:       #1C1C1C;
+  --gray-100:      #0F0F0F;
+  --bg-page:       #FFFFFF;
+  --bg-surface:    #F5F5F5;
+  --bg-surface-2:  #E0E0E0;
+  --border-subtle: #E0E0E0;
+  --border-mid:    #BDBDBD;
+  --text-primary:  #0F0F0F;
+  --text-secondary:#5C5C5C;
+  --text-tertiary: #999999;
+  --accent:        #E1262B;
+  --font: 'MiSans VF','PingFang SC','Microsoft YaHei UI','Microsoft YaHei',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --content-max: 1160px;
+  --sidebar-w: 220px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-page:#0F0F0F; --bg-surface:#1C1C1C; --bg-surface-2:#2E2E2E;
+    --border-subtle:#2E2E2E; --border-mid:#424242;
+    --text-primary:#F5F5F5; --text-secondary:#BDBDBD; --text-tertiary:#757575;
+  }
+}
+:root[data-theme="dark"] {
+  --bg-page:#0F0F0F; --bg-surface:#1C1C1C; --bg-surface-2:#2E2E2E;
+  --border-subtle:#2E2E2E; --border-mid:#424242;
+  --text-primary:#F5F5F5; --text-secondary:#BDBDBD; --text-tertiary:#757575;
+}
+:root[data-theme="light"] {
+  --bg-page:#FFFFFF; --bg-surface:#F5F5F5; --bg-surface-2:#E0E0E0;
+  --border-subtle:#E0E0E0; --border-mid:#BDBDBD;
+  --text-primary:#0F0F0F; --text-secondary:#5C5C5C; --text-tertiary:#999999;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{
+  font-family:var(--font);
+  background:var(--bg-page);
+  color:var(--text-primary);
+  font-size:14px;
+  line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* Topbar */
+.topbar {
+  position:fixed; top:0; left:0; right:0; z-index:100;
+  height:52px;
+  background:rgba(255,255,255,0.92);
+  border-bottom:1px solid var(--border-subtle);
+  backdrop-filter:blur(12px);
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 32px;
+}
+[data-theme="dark"] .topbar { background:rgba(15,15,15,0.92); }
+.topbar-brand {
+  display:flex; align-items:center; gap:10px;
+  font-size:13px; font-weight:600; letter-spacing:0.03em;
+  color:var(--text-primary);
+}
+.topbar-brand .dot{color:var(--accent);}
+.topbar-meta{font-size:12px;color:var(--text-tertiary);letter-spacing:0.02em;}
+.topbar-badge{
+  display:inline-block; padding:2px 8px;
+  background:var(--accent); color:#fff;
+  font-size:11px; font-weight:700; letter-spacing:0.05em;
+  margin-left:8px;
+}
+
+/* Layout */
+.layout {
+  display:grid;
+  grid-template-columns:var(--sidebar-w) 1fr;
+  max-width:var(--content-max);
+  margin:0 auto;
+  padding-top:52px;
+  min-height:100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  position:sticky; top:52px; height:calc(100vh - 52px);
+  overflow-y:auto; padding:32px 0;
+  border-right:1px solid var(--border-subtle);
+}
+.sidebar::-webkit-scrollbar{width:4px;}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border-mid);}
+.toc-label{
+  font-size:10px; font-weight:700; letter-spacing:0.12em;
+  text-transform:uppercase; color:var(--text-tertiary);
+  padding:0 20px 8px;
+}
+.toc-item{
+  display:block; padding:6px 20px;
+  font-size:12.5px; color:var(--text-secondary);
+  text-decoration:none; line-height:1.4;
+  border-left:2px solid transparent;
+  transition:color 0.15s, border-color 0.15s;
+}
+.toc-item:hover{color:var(--text-primary);border-left-color:var(--border-mid);}
+.toc-item.active{color:var(--accent);border-left-color:var(--accent);font-weight:600;}
+
+/* Main */
+.main{padding:48px 56px 96px;min-width:0;}
+
+/* Cover */
+.cover{
+  padding:48px 0 56px;
+  border-bottom:2px solid var(--text-primary);
+  margin-bottom:56px;
+}
+.cover-eyebrow{
+  font-size:11px;font-weight:700;letter-spacing:0.14em;
+  text-transform:uppercase;color:var(--text-tertiary);margin-bottom:16px;
+}
+.cover-title{
+  font-size:32px;font-weight:700;line-height:1.2;
+  text-wrap:balance;margin-bottom:8px;
+}
+.cover-title em{color:var(--accent);font-style:normal;}
+.cover-sub{font-size:15px;color:var(--text-secondary);margin-bottom:32px;}
+.cover-meta-row{display:flex;gap:32px;flex-wrap:wrap;}
+.cover-meta-item{font-size:12px;}
+.cover-meta-item .k{color:var(--text-tertiary);letter-spacing:0.04em;}
+.cover-meta-item .v{font-weight:600;color:var(--text-primary);margin-left:6px;}
+
+/* Section */
+.section{margin-bottom:64px;scroll-margin-top:72px;}
+.section-header{
+  display:flex;align-items:baseline;gap:12px;
+  margin-bottom:28px;padding-bottom:12px;
+  border-bottom:1px solid var(--border-subtle);
+}
+.section-num{font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--accent);text-transform:uppercase;flex-shrink:0;}
+.section-title{font-size:20px;font-weight:700;}
+.section-title-en{font-size:11px;font-weight:400;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);margin-left:4px;}
+
+/* Sub */
+.sub{margin-bottom:36px;}
+.sub-title{font-size:14px;font-weight:700;margin-bottom:12px;padding-left:10px;border-left:3px solid var(--accent);}
+.sub-title-sm{font-size:13px;font-weight:600;color:var(--text-secondary);margin:20px 0 8px;letter-spacing:0.02em;}
+
+/* Body text */
+p{margin-bottom:12px;color:var(--text-secondary);max-width:68ch;}
+p:last-child{margin-bottom:0;}
+
+/* Tables */
+.table-wrap{overflow-x:auto;margin:16px 0;}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
+th{
+  background:var(--bg-surface);text-align:left;
+  font-weight:700;font-size:11px;letter-spacing:0.06em;
+  text-transform:uppercase;color:var(--text-tertiary);
+  padding:10px 14px;border-bottom:2px solid var(--border-mid);
+}
+td{padding:11px 14px;border-bottom:1px solid var(--border-subtle);color:var(--text-secondary);vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:var(--bg-surface);}
+td strong{color:var(--text-primary);font-weight:600;}
+td.center{text-align:center;}
+td.muted{color:var(--text-tertiary);}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;}
+.badge-done  {background:#DCFCE7;color:#166534;}
+.badge-todo  {background:var(--bg-surface-2);color:var(--text-tertiary);}
+.badge-wip   {background:#FEF3C7;color:#92400E;}
+.badge-block {background:#FEE2E2;color:#991B1B;}
+.badge-later {background:var(--bg-surface);color:var(--text-tertiary);border:1px solid var(--border-mid);}
+.badge-na    {background:var(--bg-surface-2);color:var(--text-tertiary);text-decoration:line-through;}
+[data-theme="dark"] .badge-done {background:#14532D;color:#86EFAC;}
+[data-theme="dark"] .badge-wip  {background:#451A03;color:#FCD34D;}
+[data-theme="dark"] .badge-block{background:#450A0A;color:#FCA5A5;}
+
+/* Callout */
+.callout{padding:14px 16px;margin:16px 0;border-left:3px solid var(--border-mid);background:var(--bg-surface);font-size:13px;color:var(--text-secondary);}
+.callout.red {border-left-color:var(--accent);background:#FFF5F5;}
+.callout.note{border-left-color:#3B82F6;background:#EFF6FF;}
+.callout.green{border-left-color:#16A34A;background:#F0FDF4;}
+[data-theme="dark"] .callout.red  {background:#1C0A0A;}
+[data-theme="dark"] .callout.note {background:#0C1A2E;}
+[data-theme="dark"] .callout.green{background:#052E16;}
+.callout strong{color:var(--text-primary);}
+
+/* Plain list (acceptance criteria) */
+.plainlist{list-style:none;margin:10px 0;}
+.plainlist li{position:relative;padding:6px 0 6px 16px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-secondary);}
+.plainlist li:last-child{border-bottom:none;}
+.plainlist li::before{content:'';position:absolute;left:0;top:14px;width:6px;height:6px;background:var(--accent);}
+
+/* Checklist */
+.checklist{list-style:none;margin:10px 0;}
+.checklist li{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-secondary);}
+.checklist li:last-child{border-bottom:none;}
+.chk{width:16px;height:16px;border:1.5px solid var(--border-mid);flex-shrink:0;margin-top:2px;}
+.chk.done{background:var(--accent);border-color:var(--accent);display:flex;align-items:center;justify-content:center;}
+.chk.done::after{content:'✓';color:#fff;font-size:10px;font-weight:700;}
+
+/* Phase rows */
+.phases{display:flex;flex-direction:column;}
+.phase-row{display:grid;grid-template-columns:100px 1fr 140px 130px;gap:16px;align-items:start;padding:16px 0;border-bottom:1px solid var(--border-subtle);}
+.phase-label{font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);padding-top:2px;}
+.phase-title{font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:4px;}
+.phase-desc{font-size:12px;color:var(--text-secondary);}
+.phase-dep{font-size:12px;color:var(--text-tertiary);}
+
+/* Arch diagram */
+.arch-diagram{background:var(--bg-surface);padding:28px 24px;font-size:12.5px;line-height:2;font-family:var(--font);color:var(--text-secondary);margin:16px 0;overflow-x:auto;}
+.arch-box{padding:4px 12px;border:1px solid var(--border-mid);background:var(--bg-page);font-size:12px;font-weight:500;color:var(--text-primary);white-space:nowrap;}
+.arch-box.accent{border-color:var(--accent);color:var(--accent);font-weight:700;}
+.arch-group{padding:12px 16px;border:1px solid var(--border-subtle);margin:8px 0;}
+.arch-group.accent-border{border-color:var(--accent);}
+.arch-group-label{font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:8px;}
+.arch-group-label.accent{color:var(--accent);}
+.arch-items{display:flex;gap:8px;flex-wrap:wrap;}
+
+/* Feature grid */
+.feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:1px;background:var(--border-subtle);margin:16px 0;}
+.feature-card{background:var(--bg-page);padding:16px;}
+.feature-card-title{font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:6px;}
+.feature-card-desc{font-size:12px;color:var(--text-secondary);line-height:1.6;}
+
+/* Stage pills */
+.stages{display:flex;gap:0;flex-wrap:wrap;margin:12px 0;align-items:center;}
+.stage-pill{padding:7px 13px;border:1px solid var(--border-mid);background:var(--bg-surface);font-size:12px;font-weight:600;color:var(--text-secondary);margin:2px;}
+.stage-arrow{padding:0 4px;color:var(--text-tertiary);font-size:12px;align-self:center;}
+
+/* Print */
+@media print{
+  .topbar,.sidebar,.save-btn{display:none;}
+  .layout{display:block;padding-top:0;}
+  .main{padding:24mm;}
+}
+
+/* Responsive */
+@media (max-width:768px){
+  .layout{grid-template-columns:1fr;}
+  .sidebar{display:none;}
+  .main{padding:32px 20px 64px;}
+  .phase-row{grid-template-columns:1fr 1fr;}
+  .cover-title{font-size:24px;}
+}
+
+</style>
+</head>
+<body>
+
+
+
+
+
+<header class="topbar">
+  <div class="topbar-brand">
+    NEW HONGDA <span class="dot">·</span> 新宏大集团
+    <span class="topbar-badge">INTERNAL</span>
+  </div>
+  <div class="topbar-meta">AI 智能 CRM · PRD v1.0 · 2026-07-15</div>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="toc-label">目录 · Contents</div>
+    <a class="toc-item" href="#s0">01 · 文档信息</a>
+    <a class="toc-item" href="#s1">02 · 产品背景与现状</a>
+    <a class="toc-item" href="#s1b">03 · 核心问题定义</a>
+    <a class="toc-item" href="#s2">04 · 产品目标与验收标准</a>
+    <a class="toc-item" href="#s3">05 · 系统全景</a>
+    <a class="toc-item" href="#s4">06 · CRM 核心功能</a>
+    <a class="toc-item active" href="#s5">07 · 渠道接入规划</a>
+    <a class="toc-item" href="#s6">08 · 对话工作台</a>
+    <a class="toc-item" href="#s7">09 · AI 能力层</a>
+    <a class="toc-item" href="#s8">10 · 管理员后台</a>
+    <a class="toc-item" href="#s9">11 · 分阶段交付计划</a>
+    <a class="toc-item" href="#s11">12 · 关键风险</a>
+    <a class="toc-item" href="#s10">13 · 当前不做</a>
+  </nav>
+
+  <main class="main">
+
+    <!-- Cover -->
+    <div class="cover">
+      <div class="cover-eyebrow">Product Requirements Document</div>
+      <h1 class="cover-title">新宏大 <em>AI 智能 CRM</em><br>产品需求文档</h1>
+      <div class="cover-sub">统一多渠道客户沟通 · 销售全流程在 CRM 内完成</div>
+      <div class="cover-meta-row">
+        <div class="cover-meta-item"><span class="k">版本</span><span class="v">v1.0</span></div>
+        <div class="cover-meta-item"><span class="k">创建日期</span><span class="v">2026-07-15</span></div>
+        <div class="cover-meta-item"><span class="k">核心工作台</span><span class="v">Twenty CRM</span></div>
+        <div class="cover-meta-item"><span class="k">v1.0 目标</span><span class="v">2026-07-31</span></div>
+        <div class="cover-meta-item"><span class="k">评审对象</span><span class="v">业务方 · 销售团队 · 运营团队</span></div>
+      </div>
+    </div>
+
+    <!-- S0 -->
+    <section class="section" id="s0">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2 class="section-title">文档信息<span class="section-title-en">Document Info</span></h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td style="width:180px;"><strong>产品阶段</strong></td><td>多渠道 AI 智能 CRM v1.0（MVP）</td></tr>
+            <tr><td><strong>版本定位</strong></td><td>多渠道对话中间层 + AI 智能客服能力层 + Twenty CRM 销售闭环</td></tr>
+            <tr><td><strong>创建日期</strong></td><td>2026-07-15</td></tr>
+            <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
+            <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
+            <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
+            <tr><td><strong>主线决策</strong></td><td>不使用 Chatwoot（个人账号无法接入）；自研对话中间层 + Evolution API / Meta Graph API 直连渠道；Twenty CRM 为唯一销售工作台</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- S1 -->
+    <section class="section" id="s1">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2 class="section-title">产品背景与现状<span class="section-title-en">Background</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">业务背景</div>
+        <p>新宏大集团上海分公司销售团队主要面向化工装备制造行业的海外客户，覆盖亚洲、欧洲、南美、中东等多个市场。客户沟通渠道分散，来自 WhatsApp、Instagram、Facebook 、LinkedIn个人账号及官网客服，形成多条平行沟通链路，难以统一管理和沉淀。</p>
+        <p>官网正由供应商（Human Made）进行整体重构；官网询盘表单接入由供应商负责，当前处于测试阶段。官网客服 Widget 由我方独立自研，不依赖官网供应商。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">现有 CRM 现状（询盘云）</div>
+        <p>当前在用询盘云 CRM，涵盖联系人管理、商机跟进、邮件归档、任务管理等完整功能，同时已接入 WhatsApp、Instagram、Facebook 和官网客服四个渠道（LinkedIn 因个人账号限制无法接入）。销售团队认为询盘云功能有一定冗余，但当前仍在正常使用中。</p>
+        <p>本次升级目标为引入更适配业务场景的 CRM 平台，同时强化多渠道对话管理与 AI 辅助能力，实现更完整的销售沟通和线索管理闭环。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">当前痛点与核心需求</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>痛点</th><th>具体表现</th><th>影响</th></tr></thead>
+            <tbody>
+              <tr><td><strong>渠道孤岛</strong></td><td>WhatsApp、Instagram、Facebook、官网客服各自独立，消息分散在不同 App</td><td>销售需多端切换，容易漏消息</td></tr>
+              <tr><td><strong>客户信息割裂</strong></td><td>对话记录与 CRM 客户档案无关联，换人跟进时信息断层</td><td>客户重复沟通，跟进效率低</td></tr>
+              <tr><td><strong>销售流程碎片化</strong></td><td>查消息在手机 App，记录在 CRM，商机推进在表格，三套系统并存</td><td>关键节点遗漏，无法系统追溯</td></tr>
+              <tr><td><strong>商机阶段判断依赖人工</strong></td><td>销售需手动评估客户意向并更新商机阶段，耗时且主观</td><td>数据更新滞后，主管难以掌握真实进展</td></tr>
+              <tr><td><strong>AI 能力缺失</strong></td><td>官网客服常见问题靠人工逐一回复，重复劳动多</td><td>首次响应慢，销售精力分散</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- S1B -->
+    <section class="section" id="s1b">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <h2 class="section-title">核心问题定义<span class="section-title-en">First Principles</span></h2>
+      </div>
+      <p>系统要解决的底层问题不是「官网访客如何提问」，而是「分散在多个平台的客户沟通如何统一承接、可控回复、随时接管、沉淀进 CRM」。</p>
+      <div class="table-wrap" style="margin-top:16px;">
+        <table>
+          <thead><tr><th>基础问题</th><th>产品回答</th></tr></thead>
+          <tbody>
+            <tr><td><strong>客户从哪里来</strong></td><td>WhatsApp、Instagram、Facebook、LinkedIn、官网、邮件</td></tr>
+            <tr><td><strong>多渠道消息如何统一承接</strong></td><td>自研对话中间层统一会话模型，所有渠道消息标准化为同一种会话事件</td></tr>
+            <tr><td><strong>AI 如何跨渠道介入</strong></td><td>AI 智能客服作为中间层订阅者，按渠道级 AI 模式（关闭 / 建议 / 自动）+ 时段策略介入</td></tr>
+            <tr><td><strong>人工如何随时接管</strong></td><td>销售在 CRM 内嵌对话工作台一键接管，接管后 AI 立即停止自动回复</td></tr>
+            <tr><td><strong>销售如何形成闭环</strong></td><td>Twenty CRM 承载客户、联系人、公司、商机、任务；会话一键转线索、AI 推断商机阶段</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout" style="margin-top:16px;"><strong>成功标准不是</strong>「某个渠道能收发消息」，<strong>而是</strong>「多个客户沟通渠道被统一接入、AI 可控介入、可人工接管、可沉淀进 CRM」。</div>
+    </section>
+
+    <!-- S2 -->
+    <section class="section" id="s2">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <h2 class="section-title">产品目标与验收标准<span class="section-title-en">Goals &amp; Acceptance</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">产品目标</div>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="feature-card-title">统一工作台</div>
+            <div class="feature-card-desc">以 Twenty CRM 为唯一工作台，销售所有操作均在 CRM 内完成，无需切换 App</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-card-title">多渠道统一收件</div>
+            <div class="feature-card-desc">WhatsApp、Instagram、Facebook、官网客服、邮件统一汇入 CRM，渠道可见</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-card-title">客户信息自动沉淀</div>
+            <div class="feature-card-desc">会话与联系人、公司、商机、任务自动关联，对话历史可追溯</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-card-title">AI 智能客服</div>
+            <div class="feature-card-desc">官网客服低中优先级问题 AI 自动回复，高优先级转人工，销售聚焦高价值客户</div>
+          </div>
+          <div class="feature-card">
+            <div class="feature-card-title">AI 商机阶段判断</div>
+            <div class="feature-card-desc">AI 基于聊天记录自动分析客户意向，推断当前应处于哪个商机阶段并提示销售</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">v1.0 验收标准（2026-07-31）</div>
+        <div class="callout note"><strong>核心原则：</strong>用户前端使用体验上，所有事情都可以在 CRM 中完成，无需切换至外部 App 或系统。</div>
+
+        <div class="sub-title-sm">① 上下游渠道打通</div>
+        <ul class="plainlist">
+          <li>WhatsApp 消息可在 CRM 对话工作台收发（核心，必须达成）</li>
+          <li>官网客服 Widget 消息可在 CRM 收发</li>
+          <li>Instagram DM 消息可在 CRM 收发</li>
+          <li>Facebook Messenger 消息可在 CRM 收发</li>
+          <li>邮件归档正常，客户邮件同步显示在联系人时间线</li>
+          <li>官网询盘表单留资自动创建 CRM 联系人（People）记录（供应商已完成接入）；来源渠道、意向等级、所属国家、感兴趣产品等字段需销售手动维护</li>
+          <li>各渠道消息显示渠道来源标识，可按渠道筛选</li>
+        </ul>
+
+        <div class="sub-title-sm">② CRM 工作台体验</div>
+        <ul class="plainlist">
+          <li>销售全部操作（查看对话、回复、接管、客户管理、商机跟进）均可在 CRM 内完成</li>
+          <li>对话工作台支持按渠道、状态、关键词搜索</li>
+          <li>消息支持发送与展示文字、图片、链接</li>
+          <li>实时推送：新消息自动出现，无需手动刷新</li>
+        </ul>
+
+        <div class="sub-title-sm">③ 客户数据沉淀</div>
+        <ul class="plainlist">
+          <li>会话可关联到 CRM 联系人 / 公司 / 商机</li>
+          <li>一键「转为线索」自动在 CRM 创建联系人和商机</li>
+          <li>客户最近会话时间、摘要自动写入联系人档案</li>
+          <li>AI 自动推断商机阶段建议并提示销售确认</li>
+        </ul>
+
+        <div class="sub-title-sm">④ AI 智能客服（全渠道 · 可配置）</div>
+        <ul class="plainlist">
+          <li>AI 智能客服作为中间层接入所有渠道（WhatsApp / Instagram / Facebook / 官网 Widget）LinkedIn暂不在第一阶段（7.31）上线</li><li>每个渠道可独立配置 AI 模式：关闭 / 建议（AI 起草，人工确认发送）/ 自动回复</li>
+          <li>支持按时间段自动开启 AI（如下班时间、周末自动接管）</li>
+          <li>低 / 中优先级问题 AI 自动识别并回复；高优先级自动流转人工，AI 停止介入</li>
+          <li>人工接管后 AI 停止对该会话自动回复</li>
+          <li>所有 AI 回复记录可在 CRM 查看和审计</li>
+        </ul>
+
+        <div class="sub-title-sm">⑤ 管理与权限</div>
+        <ul class="plainlist">
+          <li>管理员可在后台查看各渠道账号连接状态</li>
+          <li>角色权限分级（老板 / 管理员 / 销售主管 / 销售）</li>
+          <li>管理员可配置 AI 开关、服务时间、兜底话术</li>
+        </ul>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">成功标准</div>
+        <div class="callout red">v1.0 成功定义：销售团队可用 Twenty CRM 完成从多渠道客户消息接收 → AI 分流（官网）→ 人工回复 → 商机创建 → 阶段推进的完整工作流，全程无需打开询盘云或其他独立 App 处理日常客户沟通。</div>
+      </div>
+    </section>
+
+    <!-- S3 -->
+    <section class="section" id="s3">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <h2 class="section-title">系统全景<span class="section-title-en">System Overview</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">架构概览（业务视角）</div>
+        <div class="arch-diagram">
+          <div class="arch-group">
+            <div class="arch-group-label">上游渠道 · Channels</div>
+            <div class="arch-items">
+              <div class="arch-box">Website Widget（官网客服）</div>
+              <div class="arch-box">WhatsApp</div>
+              <div class="arch-box">Facebook</div>
+              <div class="arch-box">Instagram</div>
+              <div class="arch-box" style="color:var(--text-tertiary);">LinkedIn（本期不做）</div>
+              <div class="arch-box">邮件</div>
+              <div class="arch-box">官网询盘表单</div>
+            </div>
+          </div>
+          <div style="text-align:center;color:var(--text-tertiary);padding:6px 0;font-size:18px;">↓</div>
+          <div class="arch-group">
+            <div class="arch-group-label">渠道连接层 · Channel Adapter</div>
+            <div class="arch-items">
+              <div class="arch-box">Website Channel Adapter（WebSocket）</div>
+              <div class="arch-box">Social Channel Connector（Evolution API / Meta Graph API）</div>
+              <div class="arch-box">IMAP/SMTP（邮件）</div>
+              <div class="arch-box">表单 API（供应商已接入）</div>
+            </div>
+          </div>
+          <div style="text-align:center;color:var(--text-tertiary);padding:6px 0;font-size:18px;">↓</div>
+          <div class="arch-group">
+            <div class="arch-group-label">社媒对话服务 · Conversation Service（中间层）</div>
+            <div class="arch-items">
+              <div class="arch-box">会话状态机</div>
+              <div class="arch-box">消息主记录</div>
+              <div class="arch-box">人工接管</div>
+              <div class="arch-box">回复路由</div>
+              <div class="arch-box">审计主日志</div>
+              <div class="arch-box">CRM Sync</div>
+              <div class="arch-box">AI Adapter</div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;text-align:center;color:var(--text-tertiary);padding:6px 0;font-size:13px;">
+            <div>AI Adapter ↓</div><div>CRM Sync ↓</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div class="arch-group">
+              <div class="arch-group-label">智能客服能力层 · AI Layer</div>
+              <div class="arch-items">
+                <div class="arch-box">知识库服务 / RAGFlow POC</div>
+                <div class="arch-box">模型网关（OpenRouter）</div>
+                <div class="arch-box">敏感词 / 兜底 / 多语言</div>
+                <div class="arch-box">渠道 AI 模式 + 时段策略</div>
+                <div class="arch-box">商机阶段判断</div>
+              </div>
+            </div>
+            <div class="arch-group accent-border">
+              <div class="arch-group-label accent">CRM 统一工作台 · Twenty CRM</div>
+              <div class="arch-items">
+                <div class="arch-box accent">会话列表</div>
+                <div class="arch-box accent">会话详情</div>
+                <div class="arch-box accent">人工回复</div>
+                <div class="arch-box accent">客户 / 联系人 / 商机 / 任务关联</div>
+                <div class="arch-box accent">审计查询</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">各层职责边界</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>模块</th><th>核心职责</th><th>明确不做</th></tr></thead>
+            <tbody>
+              <tr><td><strong>渠道连接层</strong></td><td>接入各平台、接收外部消息、发送消息回渠道、标准化消息格式</td><td>不做 AI 决策、不做 CRM UI</td></tr>
+              <tr><td><strong>社媒对话服务</strong></td><td>保存消息主记录、维护会话状态机、管理人工接管状态、调度 AI</td><td>不直接实现 CRM 销售流程、不管理渠道账号原始连接</td></tr>
+              <tr><td><strong>智能客服能力层</strong></td><td>RAG 检索、模型调用、商机阶段判断、敏感词判断、兜底</td><td>不承载渠道接入、不是消息主库</td></tr>
+              <tr><td><strong>CRM 统一工作台</strong></td><td>对话查看与回复、接管、客户/商机/任务关联、审计视图、AI 配置入口</td><td>不做多渠道协议接入、不做消息网关、不做模型编排</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">统一消息事件模型</div>
+        <p>所有渠道消息进入中间层前必须标准化为同一种会话事件，避免各渠道形成孤岛。P0 优先完整支持文字 / 图片 / 链接，但数据模型预留文件、语音和平台原始 metadata。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>字段</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>channel</strong></td><td>whatsapp / instagram / facebook / linkedin / 客服 / form（email会直接导入存储</td></tr>
+              <tr><td><strong>conversationId</strong></td><td>中间层内部会话 ID</td></tr>
+              <tr><td><strong>externalConversationId</strong></td><td>渠道侧会话 / 线程 ID</td></tr>
+              <tr><td><strong>messageId / externalMessageId</strong></td><td>内部消息 ID / 渠道消息 ID（幂等去重依据）</td></tr>
+              <tr><td><strong>senderType</strong></td><td>customer / agent / ai / system</td></tr>
+              <tr><td><strong>contentType</strong></td><td>text / image / link / file / audio（P0 优先前三种）</td></tr>
+              <tr><td><strong>content / metadata</strong></td><td>消息内容；页面 URL、平台用户 ID、渠道原始 payload 等</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- S4 -->
+    <section class="section" id="s4">
+      <div class="section-header">
+        <span class="section-num">06</span>
+        <h2 class="section-title">CRM 核心功能<span class="section-title-en">CRM Features · Twenty</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">基础客户数据管理</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>功能</th><th>说明</th><th>外贸应用场景</th></tr></thead>
+            <tbody>
+              <tr><td><strong>联系人（People）</strong></td><td>姓名、邮箱、电话、职位、所属公司等</td><td>记录采购负责人、技术联系人、财务联系人，避免信息散落个人手机</td></tr>
+              <tr><td><strong>公司（Companies）</strong></td><td>公司名、官网、行业、地址、关联联系人</td><td>按公司查看历史沟通、商机和任务，判断客户价值</td></tr>
+              <tr><td><strong>商机（Opportunities）</strong></td><td>金额、阶段、预计成交时间、关联联系人</td><td>针对每个潜在订单建立商机，实时掌握整体进展</td></tr>
+              <tr><td><strong>任务（Tasks）</strong></td><td>待办事项，关联联系人 / 公司 / 商机</td><td>「明天发报价」「下周跟进样品」等跟进提醒，降低漏跟进风险</td></tr>
+              <tr><td><strong>备注（Notes）</strong></td><td>富文本备注，关联到任意 CRM 记录</td><td>客户需求、付款习惯、时区偏好、会议结论等长期沉淀</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">自定义扩展字段（外贸专用）</div>
+        <div class="callout">CRM 字段内容需与用户端进一步对齐后确认，当前以下字段仅为初步规划，<strong>暂照搬询盘云中的字段</strong>。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>字段</th><th>类型</th><th>写入方式</th></tr></thead>
+            <tbody>
+              <tr><td>来源渠道</td><td>选择（WhatsApp / 官网 / Instagram / Facebook / 邮件 / 表单 / 其他）</td><td>系统自动 / 手动</td></tr>
+              <tr><td>所属洲 / 国家</td><td>选择</td><td>手动</td></tr>
+              <tr><td>意向等级</td><td>选择（A 高意向 / B 跟进中 / C 观望 / 无效）</td><td>AI 推荐 + 销售评定</td></tr>
+              <tr><td>感兴趣产品</td><td>文本</td><td>手动 / AI 摘要（远期）</td></tr>
+              <tr><td>最近会话时间</td><td>日期时间</td><td>对话服务自动写入</td></tr>
+              <tr><td>最近会话摘要</td><td>文本</td><td>对话服务自动写入</td></tr>
+              <tr><td>WhatsApp 号码</td><td>电话</td><td>对话服务同步</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">商机阶段（需跟用户对齐）</div>
+        <div class="stages">
+          <div class="stage-pill">线索</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">询价</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">报价</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">寄样</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">谈判</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">已下单</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">已付款</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">已发货</div><div class="stage-arrow">→</div>
+          <div class="stage-pill" style="color:var(--text-primary);">已成交</div>
+          <div class="stage-arrow">|</div>
+          <div class="stage-pill" style="color:var(--text-tertiary);">丢单</div>
+        </div>
+        <p style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">AI 将基于每条会话的聊天记录自动推断当前客户应处于哪个阶段，并提示销售确认更新。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">视图与仪表盘</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>功能</th><th>说明</th><th>典型用途</th></tr></thead>
+            <tbody>
+              <tr><td><strong>表格视图</strong></td><td>按行列查看数据，字段自定义显示</td><td>批量查看客户清单、联系方式、最近跟进时间</td></tr>
+              <tr><td><strong>看板视图</strong></td><td>按阶段拖拽管理商机</td><td>直观看商机在各阶段的分布，找出卡点</td></tr>
+              <tr><td><strong>日历视图</strong></td><td>按日期查看带时间字段的记录</td><td>安排客户会议、报价截止日期、跨时区跟进节点</td></tr>
+              <tr><td><strong>仪表盘（Dashboard）</strong></td><td>自由配置图表、视图、外部页面嵌入</td><td>销售例会看板：本月新增线索、商机阶段分布、重点客户列表</td></tr>
+              <tr><td><strong>收藏视图</strong></td><td>常用视图一键直达</td><td>「今日跟进」「本月高意向」「待回复客户」</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">关联与数据打通</div>
+        <p>联系人 ↔ 公司 ↔ 商机 ↔ 任务支持多对多关联。邮件归档（Gmail / Outlook / IMAP）同步后，客户邮件自动显示在联系人时间线。对话工作台的会话可关联到 CRM 联系人和商机，形成完整客户档案。官网询盘表单留资（供应商已完成接入）自动创建 CRM 联系人（People）记录；来源渠道、意向等级、所属国家、感兴趣产品等 4 个字段暂需销售手动录入维护。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">权限管理</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>角色</th><th>数据范围</th><th>权限说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>老板</strong></td><td>全量只读 + 全量查看</td><td>可查看所有数据和报表；通常不直接操作业务数据</td></tr>
+              <tr><td><strong>管理员</strong></td><td>全量访问</td><td>系统配置、字段管理、权限管理、账号管理</td></tr>
+              <tr><td><strong>销售主管</strong></td><td>团队全部数据</td><td>可查看团队成员所有客户、商机、对话；系统设置受限</td></tr>
+              <tr><td><strong>销售</strong></td><td>自己负责的客户</td><td>报价、利润等敏感字段不可见；仅操作自己的数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">自动化（Workflows）</div>
+        <div class="callout red"><strong>⚠ 费用说明：</strong>Twenty CRM 的 Workflows 自动化功能在当前版本中为付费功能，使用前需确认订阅计划是否覆盖该能力，或评估是否通过自建 middleware 实现等效逻辑。</div>
+        <p>典型自动化场景：新线索创建后自动建跟进任务；商机进入「谈判」阶段后自动提醒主管；报价发出 3 天未回复后自动提醒销售跟进；AI 判断商机阶段变更后触发字段更新。</p>
+      </div>
+    </section>
+
+    <!-- S5 -->
+    <section class="section" id="s5">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <h2 class="section-title">渠道接入规划<span class="section-title-en">Channel Integration</span></h2>
+      </div>
+
+      <div class="callout green"><strong>测试策略：</strong>所有渠道先以个人账号测试能否跑通，验证基本消息收发后再评估是否升级企业账号。企业账号升级方案待后续单独评估，不纳入 v1.0 范围。</div>
+
+      <div class="sub" style="margin-top:20px;">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>渠道</th><th>账号类型</th><th>接入方案</th><th>v1.0 目标</th><th>前置条件</th></tr></thead>
+            <tbody>
+              <tr>
+                <td><strong>WhatsApp</strong></td>
+                <td>个人号</td>
+                <td>Evolution API（开源自托管，Baileys 协议）</td>
+                <td><span class="badge badge-done">✓ 核心必达</span></td>
+                <td>有历史记录的老号（建议 6 个月以上）；本地测试可先用临时 cloudflared URL，无需购买域名</td>
+              </tr>
+              <tr>
+                <td><strong>官网客服 Widget</strong></td>
+                <td>自研</td>
+                <td>WebSocket 实时通信，供应商官网嵌入一行 JS 脚本</td>
+                <td><span class="badge badge-done">✓ 核心必达</span></td>
+                <td>供应商官网嵌入脚本标签；需稳定公网域名</td>
+              </tr>
+              <tr>
+                <td><strong>Instagram</strong></td>
+                <td>个人号（需切专业账号）</td>
+                <td>Meta Graph API，Webhook 接收 DM</td>
+                <td><span class="badge badge-wip">目标 7.31</span></td>
+                <td>账号切换为专业账号（设置内免费操作，可逆）</td>
+              </tr>
+              <tr>
+                <td><strong>Facebook</strong></td>
+                <td>个人号（需主页）</td>
+                <td>Meta Graph API，Webhook 接收主页消息</td>
+                <td><span class="badge badge-wip">目标 7.31</span></td>
+                <td>创建 Facebook 主页，申请 Messenger 权限</td>
+              </tr>
+              <tr>
+                <td><strong>邮件</strong></td>
+                <td>Gmail / Outlook / IMAP</td>
+                <td>Twenty CRM 原生邮件同步，客户邮件归档到联系人时间线</td>
+                <td><span class="badge badge-done">✓ 已支持</span></td>
+                <td>连接邮箱账号授权</td>
+              </tr>
+              <tr>
+                <td><strong>官网询盘表单</strong></td>
+                <td>—</td>
+                <td>供应商负责接入，留资数据通过 API 写入 CRM</td>
+                <td><span class="badge badge-wip">测试中</span></td>
+                <td>供应商完成表单接入开发并通过测试</td>
+              </tr>
+              <tr>
+                <td><strong>LinkedIn</strong></td>
+                <td>个人号</td>
+                <td>无成熟开源接入方案（官方 API 不开放私信）</td>
+                <td><span class="badge badge-na">本期不做</span></td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">各渠道消息能力</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>消息类型</th><th>WhatsApp</th><th>Instagram</th><th>Facebook</th><th>官网 Widget</th><th>邮件</th></tr></thead>
+            <tbody>
+              <tr><td>文字</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td></tr>
+              <tr><td>图片</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td></tr>
+              <tr><td>链接</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td><td class="center">✓</td></tr>
+              <tr><td>文件</td><td class="center">✓</td><td class="center">部分</td><td class="center">✓</td><td class="center">待定</td><td class="center">✓</td></tr>
+              <tr><td>语音</td><td class="center">✓</td><td class="center">—</td><td class="center">—</td><td class="center">—</td><td class="center">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">P0 优先保证文字、图片、链接三种类型全渠道支持。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">WhatsApp 本地测试说明</div>
+        <div class="callout note"><strong>WhatsApp 可先于域名购买前测试：</strong>Evolution API 通过 Webhook 接收消息；本地测试阶段可使用现有 cloudflared 临时 URL 作为 Webhook 地址，无需购买固定域名。域名购买后将临时 URL 替换为固定域名即可，无需重新配置逻辑。官网 Widget 和 Meta Graph API 才需要稳定域名。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>风险</th><th>说明</th><th>规避策略</th></tr></thead>
+            <tbody>
+              <tr><td>封号风险</td><td>新号短期内大量发送新对话容易被限制</td><td>使用有 6 个月以上历史记录的老号</td></tr>
+              <tr><td>登录方式</td><td>不支持账号密码，需扫码或配对码绑定</td><td>管理员后台提供二维码扫码页面</td></tr>
+              <tr><td>发送频率</td><td>大量新建对话无回复触发风控</td><td>以被动接收为主，主动发送间隔 ≥ 10 秒</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- S6 -->
+    <section class="section" id="s6">
+      <div class="section-header">
+        <span class="section-num">08</span>
+        <h2 class="section-title">对话工作台功能规格<span class="section-title-en">Conversation Workspace</span></h2>
+      </div>
+
+      <p>对话工作台嵌入 Twenty CRM 侧边栏，以独立 React 应用运行于 <code>/chat/</code> 路径，与 CRM 同源，主题跟随 Twenty 深色 / 浅色自动切换。整体为三栏布局：左侧对话列表 · 中间聊天窗口 · 右侧固定 AI 助手 + 联系人信息面板。</p>
+
+      <div class="sub" style="margin-top:20px;">
+        <div class="sub-title">8.1 对话列表（左栏）</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>功能点</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>多渠道统一展示</strong></td><td>WhatsApp、Instagram、Facebook、官网客服、LinkedIn均在同一列表，以渠道图标区分</td></tr>
+              <tr><td><strong>按渠道筛选</strong></td><td>Tab 切换：全部 / WhatsApp / Instagram / Facebook / 官网</td></tr>
+              <tr><td><strong>按状态筛选</strong></td><td>进行中 / 未读 / 人工接管 / 已关闭</td></tr>
+              <tr><td><strong>关键词搜索</strong></td><td>按联系人姓名、电话号码、最后消息内容搜索</td></tr>
+              <tr><td><strong>实时更新</strong></td><td>新消息通过 SSE 推送，自动出现在列表顶部，未读角标实时更新</td></tr>
+              <tr><td><strong>会话卡片</strong></td><td>联系人头像、姓名、渠道图标、最后消息预览、时间戳、未读数</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">8.2 聊天窗口（中栏）</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>功能点</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>消息时间线</strong></td><td>气泡样式区分：客户消息（左）/ 销售回复（右，品牌色）/ AI 回复（右，浅色标注）/ 系统消息（居中灰色）</td></tr>
+              <tr><td><strong>发送文字</strong></td><td>Enter 发送，Shift + Enter 换行，支持中英文输入法</td></tr>
+              <tr><td><strong>发送图片</strong></td><td>上传本地图片，发送前预览，支持粘贴截图</td></tr>
+              <tr><td><strong>发送链接</strong></td><td>链接自动识别并展示预览卡片</td></tr>
+              <tr><td><strong>消息内搜索</strong></td><td>在当前会话内按关键词搜索历史消息，高亮定位结果</td></tr>
+              <tr><td><strong>接管 / 释放接管</strong></td><td>一键切换人工接管状态，接管后 AI 停止自动回复</td></tr>
+              <tr><td><strong>结束会话</strong></td><td>标记会话为已关闭，不再触发 AI 回复</td></tr>
+              <tr><td><strong>操作日志</strong></td><td>接管、释放、关闭等操作显示在时间线中，可追溯</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">8.3 右侧面板（固定展示）</div>
+        <p>右侧面板<strong>固定显示在对话工作台右侧</strong>，包含 AI 助手和联系人信息两组内容，通过 Tab 切换。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tab</th><th>内容</th><th>阶段</th></tr></thead>
+            <tbody>
+              <tr><td><strong>资料</strong></td><td>联系人姓名、渠道来源、公司、时区、意向等级、商机阶段建议（AI 推断）、最近会话摘要；关联 CRM 客户 / 商机 / 任务；「转为线索」一键创建 CRM 记录</td><td>v1.0</td></tr>
+              <tr><td><strong>话术</strong></td><td>预设话术库，销售可点击插入输入框（静态版本）</td><td>v1.0</td></tr>
+              <tr><td><strong>智能物料</strong></td><td>根据对话内容匹配产品资料推荐</td><td>远期</td></tr>
+              <tr><td><strong>翻译</strong></td><td>会话内容多语言翻译（AI 销售助手能力）</td><td>v1.1+</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- S7 -->
+    <section class="section" id="s7">
+      <div class="section-header">
+        <span class="section-num">09</span>
+        <h2 class="section-title">AI 能力层<span class="section-title-en">AI Layer</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">9.1 AI 智能客服（全渠道中间层 · v1.0 上线）</div>
+        <div class="callout note"><strong>定位：</strong>AI 智能客服是一个<strong>中间层服务</strong>——一边通过渠道连接层接入 WhatsApp、Instagram、Facebook、LinkedIn、官网 Widget 等全部渠道，一边对接 CRM（会话、联系人、商机）。每个渠道可独立配置 AI 模式，且支持按时间段自动开启（如下班后 / 周末自动接管）。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>AI 模式</th><th>行为</th><th>建议适用渠道</th></tr></thead>
+            <tbody>
+              <tr><td><strong>关闭</strong></td><td>纯人工回复，AI 不介入</td><td>任意渠道</td></tr>
+              <tr><td><strong>建议模式</strong></td><td>AI 起草回复放入输入框，销售确认后手动发送</td><td>WhatsApp 个人号（降低封号风险）、重点客户会话</td></tr>
+              <tr><td><strong>自动回复</strong></td><td>低 / 中优先级问题 AI 直接回复，高优先级转人工</td><td>官网 Widget、非工作时段的社媒渠道</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>要素</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>触发条件</strong></td><td>客户发送消息且当前会话未被人工接管，且该渠道 AI 模式为「自动回复」（含时段策略命中）</td></tr>
+              <tr><td><strong>模型</strong></td><td>OpenRouter API（Claude 模型）</td></tr>
+              <tr><td><strong>低 / 中优先级</strong></td><td>AI 自动识别意图 → 检索知识库 → 生成回复 → 通过对应渠道发送给客户</td></tr>
+              <tr><td><strong>高优先级</strong></td><td>报价、投诉、复杂定制需求等 → 标记转人工，AI 不介入，通知销售处理</td></tr>
+              <tr><td><strong>人工接管后</strong></td><td>AI 立即停止回复，已生成未发送的内容不得发出</td></tr>
+              <tr><td><strong>服务时间外</strong></td><td>按配置发送兜底话术，提示客户联系方式或等待时间</td></tr>
+              <tr><td><strong>无法回答时</strong></td><td>触发兜底话术，引导客户留下联系方式</td></tr>
+              <tr><td><strong>全程可审计</strong></td><td>所有 AI 回复记录时间戳、模型版本、检索命中内容，可在 CRM 查看</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">人工接管规则</div>
+        <ul class="checklist">
+          <li><span class="chk"></span>会话一旦被人工接管，AI 不再对该会话自动回复</li>
+          <li><span class="chk"></span>AI 正在生成回复时发生接管，未发送的 AI 结果不得发出</li>
+          <li><span class="chk"></span>人工可手动释放接管恢复 AI；v1.0 不做自动恢复</li>
+          <li><span class="chk"></span>重复事件、重复接管、重复回复必须幂等，不产生重复消息</li>
+        </ul>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">AI 配置归属原则</div>
+        <p>渠道级 AI 模式、时段策略、服务时间、兜底话术、敏感词等运行时配置，<strong>使用入口在 CRM / 管理后台可见，但能力归属、配置存储和生效逻辑属于 AI 智能客服中间层</strong>。Twenty 不负责这些配置的底层存储与运行时判断，避免与 CRM 核心能力耦合。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">9.2 AI 商机阶段判断（v1.0 上线）</div>
+        <p>AI 在每次会话更新后，基于完整聊天记录分析客户的意向表达、询价深度、决策进度等信号，自动推断当前客户应处于哪个商机阶段（如询价、报价、谈判等），并在右侧面板「资料」Tab 以建议形式展示。销售确认后手动更新 CRM 商机阶段，或选择忽略建议。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>信号维度</th><th>判断依据示例</th></tr></thead>
+            <tbody>
+              <tr><td>询价深度</td><td>客户询问产品规格、最小起订量、交货期 → 倾向询价阶段</td></tr>
+              <tr><td>价格讨论</td><td>客户开始比价、询问折扣、讨论付款方式 → 倾向报价 / 谈判阶段</td></tr>
+              <tr><td>样品请求</td><td>客户主动要求寄样 → 倾向寄样阶段</td></tr>
+              <tr><td>决策信号</td><td>客户提及内部审批、合同条款 → 倾向谈判阶段</td></tr>
+              <tr><td>消极信号</td><td>长时间未回复、明确拒绝 → 提示丢单或观望</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">9.3 AI 销售助手（v1.1+，暂不急）</div>
+        <p>固定在对话工作台右侧面板，辅助人工销售使用，不主动发送消息。包括话术建议、多语言翻译、智能物料推荐等功能。销售遇到沟通卡点时主动参考，确认后手动发出。</p>
+      </div>
+    </section>
+
+    <!-- S8 -->
+    <section class="section" id="s8">
+      <div class="section-header">
+        <span class="section-num">10</span>
+        <h2 class="section-title">管理员后台<span class="section-title-en">Admin Panel</span></h2>
+      </div>
+
+      <p>管理员专用页面（<code>/admin</code>），供管理员配置渠道连接和 AI 策略，不对普通销售开放。</p>
+
+      <div class="table-wrap" style="margin-top:16px;">
+        <table>
+          <thead><tr><th>功能</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><strong>渠道账号状态</strong></td><td>显示 WhatsApp / Instagram / Facebook /LinkedIn 账号连接状态（绿色已连接 / 红色断线）</td></tr>
+            <tr><td><strong>WhatsApp 扫码绑定</strong></td><td>断线后展示二维码，管理员用手机扫码重新绑定，页面每 5 秒自动刷新状态</td></tr>
+            <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置 AI 模式（关闭 / 建议 / 自动回复），实时生效</td></tr>
+            <tr><td><strong>AI 时段策略</strong></td><td>按时间段自动切换 AI 模式，如工作时间「建议模式」、下班后和周末自动切「自动回复」</td></tr>
+            <tr><td><strong>服务时间配置</strong></td><td>设置 AI 有效响应时段，服务时间外自动发送兜底话术</td></tr>
+            <tr><td><strong>兜底话术配置</strong></td><td>AI 无法回答时的默认回复内容，支持多语言版本</td></tr>
+          </tbody>
+        </table><br></div>
+    </section>
+
+    <!-- S9 -->
+    <section class="section" id="s9">
+      <div class="section-header">
+        <span class="section-num">11</span>
+        <h2 class="section-title">分阶段交付计划<span class="section-title-en">Delivery Phases</span></h2>
+      </div>
+
+      <div class="callout red" style="margin-bottom:20px;"><strong>主线策略：</strong>WhatsApp（临时 URL 即可）→ 中间层 → AI 层，三个阶段串行推进、不依赖域名；域名购买与之并行，域名到位后官网 Widget 和 Meta 渠道再上。这样即使域名延迟，核心链路照样先跑通。</div>
+
+      <div class="phases">
+        <div class="phase-row" style="border-top:1px solid var(--border-subtle);">
+          <div class="phase-label">Phase 1</div>
+          <div>
+            <div class="phase-title">WhatsApp 端到端跑通</div>
+            <div class="phase-desc">Evolution API Docker 部署，用现有 cloudflared 临时 URL 配置 Webhook，老号扫码绑定，完成消息收发端到端验证。<strong>当前可立即开始，不依赖域名。</strong></div>
+          </div>
+          <div><span class="badge badge-todo">立即可做</span></div>
+          <div class="phase-dep">需准备老号</div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 2</div>
+          <div>
+            <div class="phase-title">对话服务中间层核心</div>
+            <div class="phase-desc">conv DB schema、统一消息模型、会话状态机（进行中 / 接管 / 关闭）、人工接管逻辑、SSE 实时推送；对话工作台接真实 API 替换 mock 数据（先只挂 WhatsApp 渠道）。这是全渠道和 AI 的公共底座。</div>
+          </div>
+          <div><span class="badge badge-todo">等 Phase 1</span></div>
+          <div class="phase-dep">依赖 Phase 1 链路</div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 3</div>
+          <div>
+            <div class="phase-title">AI 智能客服层</div>
+            <div class="phase-desc">OpenRouter（Claude）接入、意图 / 优先级分类、知识库 RAG、渠道级 AI 模式（关闭 / 建议 / 自动）与时段策略引擎。WhatsApp 先以「建议模式」上线验证质量，再逐步放开自动回复。</div>
+          </div>
+          <div><span class="badge badge-todo">等 Phase 2</span></div>
+          <div class="phase-dep">依赖中间层</div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 4</div>
+          <div>
+            <div class="phase-title">管理后台 + AI 商机阶段判断</div>
+            <div class="phase-desc">渠道账号状态、WhatsApp 扫码绑定、AI 渠道开关 / 时段策略 / 兜底话术配置 UI；AI 基于聊天记录推断商机阶段并在右侧面板展示建议。</div>
+          </div>
+          <div><span class="badge badge-todo">等 Phase 3</span></div>
+          <div class="phase-dep">依赖 Phase 3</div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 5</div>
+          <div>
+            <div class="phase-title">域名 + 官网 Widget 上线</div>
+            <div class="phase-desc">购买域名并配置 Cloudflare Tunnel 获得稳定公网 HTTPS；官网 Widget 正式接入（AI 自动回复模式），Webhook 从临时 URL 切换为固定域名。域名购买可与 Phase 1–3 并行推进。</div>
+          </div>
+          <div><span class="badge badge-block">依赖购买域名</span></div>
+          <div class="phase-dep">可并行启动</div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">Phase 6</div>
+          <div>
+            <div class="phase-title">Instagram + Facebook 接入</div>
+            <div class="phase-desc">Meta Graph API Webhook 接入 Instagram DM 和 Facebook 主页消息，复用中间层与 AI 层，AI 渠道开关同样生效，对话工作台新增渠道 Tab。</div>
+          </div>
+          <div><span class="badge badge-wip">目标 7.31</span></div>
+          <div class="phase-dep">依赖域名 + Meta 权限</div>
+        </div>
+        <div class="phase-row">
+          <div class="phase-label">并行 / 后续</div>
+          <div>
+            <div class="phase-title">CRM 配置对齐 · AI 销售助手</div>
+            <div class="phase-desc">CRM 自定义字段、商机阶段、成员权限配置（待与用户端对齐，随时可做，不阻塞主线）；话术建议、多语言翻译等 AI 销售助手能力为 v1.1+。</div>
+          </div>
+          <div><span class="badge badge-later">并行 / v1.1+</span></div>
+          <div class="phase-dep">不阻塞主线</div>
+        </div>
+      </div>
+
+      <div class="sub" style="margin-top:32px;">
+        <div class="sub-title">待确认前置事项</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>待确认项</th><th>影响范围</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>准备 WhatsApp 老号（6 个月以上历史记录）</td><td>Phase 1 测试</td><td><span class="badge badge-block">待准备</span></td></tr>
+              <tr><td>2</td><td>购买域名并托管至 Cloudflare DNS</td><td>官网 Widget、Meta API、正式上线</td><td><span class="badge badge-block">待购买</span></td></tr>
+              <tr><td>3</td><td>Instagram 账号切换为专业账号</td><td>Phase 5</td><td><span class="badge badge-todo">待操作</span></td></tr>
+              <tr><td>4</td><td>Facebook 主页确认 / 创建，申请 Messenger 权限</td><td>Phase 5</td><td><span class="badge badge-todo">待确认</span></td></tr>
+              <tr><td>5</td><td>CRM 自定义字段内容与用户端对齐</td><td>Phase 2 配置</td><td><span class="badge badge-later">暂不急</span></td></tr>
+              <tr><td>6</td><td>官网询盘表单接入（供应商负责）</td><td>已自动创建 People 记录；4 个字段待销售手动维护规范确认</td><td><span class="badge badge-done">✓ 已支持</span></td></tr>
+              <tr><td>7</td><td>Twenty Workflows 付费方案确认</td><td>自动化功能是否使用 Twenty 原生能力</td><td><span class="badge badge-todo">待评估</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- S11 RISKS -->
+    <section class="section" id="s11">
+      <div class="section-header">
+        <span class="section-num">12</span>
+        <h2 class="section-title">关键风险<span class="section-title-en">Key Risks</span></h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>风险</th><th>说明</th><th>处理策略</th></tr></thead>
+          <tbody>
+            <tr><td><strong>WhatsApp 个人号封号</strong></td><td>非官方协议（Baileys），高频主动发送或新号易触发风控</td><td>用 6 个月以上老号；默认「建议模式」；自动回复限频、以被动接收为主</td></tr>
+            <tr><td><strong>渠道 API 限制</strong></td><td>Meta 平台有审核、账号权限、Webhook 校验等限制</td><td>不承诺全渠道一次性上线，Instagram / Facebook 放 Phase 6</td></tr>
+            <tr><td><strong>AI 误发消息</strong></td><td>事件重复、状态不同步可能导致人工接管后 AI 仍回复</td><td>会话级回复模式状态机、幂等去重、接管优先原则</td></tr>
+            <tr><td><strong>客户跨平台身份重复</strong></td><td>同一客户可能来自多个渠道</td><td>v1.0 按渠道独立 Contact，身份合并后续再做</td></tr>
+            <tr><td><strong>域名延迟</strong></td><td>官网 Widget 与 Meta Webhook 依赖稳定公网域名</td><td>主线（WhatsApp → 中间层 → AI）用临时 URL 先行，域名并行采购</td></tr>
+            <tr><td><strong>平台凭证安全</strong></td><td>多平台 token、Webhook 密钥增多</td><td>凭证仅存服务端环境变量，不入 git、不暴露前端；权限分级与审计日志</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- S10 -->
+    <section class="section" id="s10">
+      <div class="section-header">
+        <span class="section-num">13</span>
+        <h2 class="section-title">当前明确不做<span class="section-title-en">Out of Scope · v1.0</span></h2>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><strong>LinkedIn 渠道接入</strong></td><td>个人账号无成熟接入路径（官方 API 不开放私信），本期不做</td></tr>
+            <tr><td><strong>企业账号升级</strong></td><td>WhatsApp / Instagram / Facebook 企业方案待后续单独评估，v1.0 以个人号测试跑通WhatsApp为准</td></tr>
+            <tr><td><strong>群发 / 营销消息</strong></td><td>个人号频繁主动发送有封号风险，不做批量营销</td></tr>
+            <tr><td><strong>多坐席复杂排班</strong></td><td>当前团队规模不需要，后续视情况扩展</td></tr>
+            <tr><td><strong>跨渠道客户身份自动合并</strong></td><td>同一客户在多平台的身份合并逻辑复杂，P0 按渠道独立处理</td></tr>
+            <tr><td><strong>完整工单系统</strong></td><td>非当前核心诉求</td></tr>
+            <tr><td><strong>AI 销售助手（话术 / 翻译）</strong></td><td>右侧面板 v1.0 静态展示，功能接入为 v1.1+</td></tr>
+            <tr><td><strong>WhatsApp 个人号默认 AI 自动发送</strong></td><td>个人号 AI 高频自动发送有封号风险，WhatsApp 默认为「建议模式」，自动回复由管理员按需开启并限频</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div style="padding:32px 0;border-top:1px solid var(--border-subtle);color:var(--text-tertiary);font-size:12px;letter-spacing:0.04em;">
+      © NEW HONGDA 新宏大集团 · 内部文件 · 创建日期 2026-07-15 · 未经授权不得对外传播
+    </div>
+
+  </main>
+</div>
+
+<script>
+// TOC scroll highlight
+const tocItems = document.querySelectorAll('.toc-item');
+const sections = document.querySelectorAll('.section[id]');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      tocItems.forEach(i => i.classList.remove('active'));
+      const a = document.querySelector(`.toc-item[href="#${e.target.id}"]`);
+      if (a) a.classList.add('active');
+    }
+  });
+}, { rootMargin: '-60px 0px -70% 0px' });
+sections.forEach(s => obs.observe(s));
+
+// Theme sync
+function syncTheme() {
+  const k = localStorage.getItem('twenty-color-scheme') ||
+            localStorage.getItem('colorScheme') ||
+            localStorage.getItem('theme');
+  if (k === 'dark') document.documentElement.setAttribute('data-theme','dark');
+  else if (k === 'light') document.documentElement.setAttribute('data-theme','light');
+}
+syncTheme();
+window.addEventListener('storage', syncTheme);
+
+</script>
+
+
+</body></html>

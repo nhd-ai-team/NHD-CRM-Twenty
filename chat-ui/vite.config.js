@@ -8,6 +8,7 @@ export default defineConfig({
   server: {
     port: 3003,
     host: true,
+    allowedHosts: ['crm.chinanhd.com', 'localhost'],
     hmr: { path: '/chat/__vite_hmr' },
   },
 })

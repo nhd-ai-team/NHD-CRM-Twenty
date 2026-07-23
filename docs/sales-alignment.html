@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>新宏大 AI 智能 CRM · 产品对齐说明（销售团队）</title>
+<style>
+:root {
+  --c-red:         #E1262B;
+  --gray-10:       #F5F5F5;
+  --gray-20:       #E0E0E0;
+  --gray-30:       #BDBDBD;
+  --gray-40:       #999999;
+  --gray-50:       #757575;
+  --gray-60:       #5C5C5C;
+  --gray-70:       #424242;
+  --gray-80:       #2E2E2E;
+  --gray-90:       #1C1C1C;
+  --gray-100:      #0F0F0F;
+  --bg-page:       #FFFFFF;
+  --bg-surface:    #F5F5F5;
+  --bg-surface-2:  #E0E0E0;
+  --border-subtle: #E0E0E0;
+  --border-mid:    #BDBDBD;
+  --text-primary:  #0F0F0F;
+  --text-secondary:#5C5C5C;
+  --text-tertiary: #999999;
+  --accent:        #E1262B;
+  --font: 'MiSans VF','PingFang SC','Microsoft YaHei UI','Microsoft YaHei',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --content-max: 1160px;
+  --sidebar-w: 220px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-page:#0F0F0F; --bg-surface:#1C1C1C; --bg-surface-2:#2E2E2E;
+    --border-subtle:#2E2E2E; --border-mid:#424242;
+    --text-primary:#F5F5F5; --text-secondary:#BDBDBD; --text-tertiary:#757575;
+  }
+}
+:root[data-theme="dark"] {
+  --bg-page:#0F0F0F; --bg-surface:#1C1C1C; --bg-surface-2:#2E2E2E;
+  --border-subtle:#2E2E2E; --border-mid:#424242;
+  --text-primary:#F5F5F5; --text-secondary:#BDBDBD; --text-tertiary:#757575;
+}
+:root[data-theme="light"] {
+  --bg-page:#FFFFFF; --bg-surface:#F5F5F5; --bg-surface-2:#E0E0E0;
+  --border-subtle:#E0E0E0; --border-mid:#BDBDBD;
+  --text-primary:#0F0F0F; --text-secondary:#5C5C5C; --text-tertiary:#999999;
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{
+  font-family:var(--font);
+  background:var(--bg-page);
+  color:var(--text-primary);
+  font-size:14px;
+  line-height:1.7;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* Topbar */
+.topbar {
+  position:fixed; top:0; left:0; right:0; z-index:100;
+  height:52px;
+  background:rgba(255,255,255,0.92);
+  border-bottom:1px solid var(--border-subtle);
+  backdrop-filter:blur(12px);
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 32px;
+}
+[data-theme="dark"] .topbar { background:rgba(15,15,15,0.92); }
+.topbar-brand {
+  display:flex; align-items:center; gap:10px;
+  font-size:13px; font-weight:600; letter-spacing:0.03em;
+  color:var(--text-primary);
+}
+.topbar-brand .dot{color:var(--accent);}
+.topbar-meta{font-size:12px;color:var(--text-tertiary);letter-spacing:0.02em;}
+.topbar-badge{
+  display:inline-block; padding:2px 8px;
+  background:var(--accent); color:#fff;
+  font-size:11px; font-weight:700; letter-spacing:0.05em;
+  margin-left:8px;
+}
+
+/* Layout */
+.layout {
+  display:grid;
+  grid-template-columns:var(--sidebar-w) 1fr;
+  max-width:var(--content-max);
+  margin:0 auto;
+  padding-top:52px;
+  min-height:100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  position:sticky; top:52px; height:calc(100vh - 52px);
+  overflow-y:auto; padding:32px 0;
+  border-right:1px solid var(--border-subtle);
+}
+.sidebar::-webkit-scrollbar{width:4px;}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border-mid);}
+.toc-label{
+  font-size:10px; font-weight:700; letter-spacing:0.12em;
+  text-transform:uppercase; color:var(--text-tertiary);
+  padding:0 20px 8px;
+}
+.toc-item{
+  display:block; padding:6px 20px;
+  font-size:12.5px; color:var(--text-secondary);
+  text-decoration:none; line-height:1.4;
+  border-left:2px solid transparent;
+  transition:color 0.15s, border-color 0.15s;
+}
+.toc-item:hover{color:var(--text-primary);border-left-color:var(--border-mid);}
+.toc-item.active{color:var(--accent);border-left-color:var(--accent);font-weight:600;}
+
+/* Main */
+.main{padding:48px 56px 96px;min-width:0;}
+
+/* Cover */
+.cover{
+  padding:48px 0 56px;
+  border-bottom:2px solid var(--text-primary);
+  margin-bottom:56px;
+}
+.cover-eyebrow{
+  font-size:11px;font-weight:700;letter-spacing:0.14em;
+  text-transform:uppercase;color:var(--text-tertiary);margin-bottom:16px;
+}
+.cover-title{
+  font-size:32px;font-weight:700;line-height:1.2;
+  text-wrap:balance;margin-bottom:8px;
+}
+.cover-title em{color:var(--accent);font-style:normal;}
+.cover-sub{font-size:15px;color:var(--text-secondary);margin-bottom:32px;max-width:60ch;}
+.cover-meta-row{display:flex;gap:32px;flex-wrap:wrap;}
+.cover-meta-item{font-size:12px;}
+.cover-meta-item .k{color:var(--text-tertiary);letter-spacing:0.04em;}
+.cover-meta-item .v{font-weight:600;color:var(--text-primary);margin-left:6px;}
+
+/* Section */
+.section{margin-bottom:64px;scroll-margin-top:72px;}
+.section-header{
+  display:flex;align-items:baseline;gap:12px;
+  margin-bottom:28px;padding-bottom:12px;
+  border-bottom:1px solid var(--border-subtle);
+}
+.section-num{font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--accent);text-transform:uppercase;flex-shrink:0;}
+.section-title{font-size:20px;font-weight:700;}
+.section-title-en{font-size:11px;font-weight:400;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-tertiary);margin-left:4px;}
+
+/* Sub */
+.sub{margin-bottom:36px;}
+.sub-title{font-size:14px;font-weight:700;margin-bottom:12px;padding-left:10px;border-left:3px solid var(--accent);}
+.sub-title-sm{font-size:13px;font-weight:600;color:var(--text-secondary);margin:20px 0 8px;letter-spacing:0.02em;}
+
+/* Body text */
+p{margin-bottom:12px;color:var(--text-secondary);max-width:68ch;}
+p:last-child{margin-bottom:0;}
+
+/* Tables */
+.table-wrap{overflow-x:auto;margin:16px 0;}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;}
+th{
+  background:var(--bg-surface);text-align:left;
+  font-weight:700;font-size:11px;letter-spacing:0.06em;
+  text-transform:uppercase;color:var(--text-tertiary);
+  padding:10px 14px;border-bottom:2px solid var(--border-mid);
+}
+td{padding:11px 14px;border-bottom:1px solid var(--border-subtle);color:var(--text-secondary);vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:var(--bg-surface);}
+td strong{color:var(--text-primary);font-weight:600;}
+td.center{text-align:center;}
+td.muted{color:var(--text-tertiary);}
+
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:11px;font-weight:600;letter-spacing:0.04em;white-space:nowrap;}
+.badge-done  {background:#DCFCE7;color:#166534;}
+.badge-todo  {background:var(--bg-surface-2);color:var(--text-tertiary);}
+.badge-wip   {background:#FEF3C7;color:#92400E;}
+.badge-block {background:#FEE2E2;color:#991B1B;}
+.badge-later {background:var(--bg-surface);color:var(--text-tertiary);border:1px solid var(--border-mid);}
+.badge-na    {background:var(--bg-surface-2);color:var(--text-tertiary);text-decoration:line-through;}
+[data-theme="dark"] .badge-done {background:#14532D;color:#86EFAC;}
+[data-theme="dark"] .badge-wip  {background:#451A03;color:#FCD34D;}
+[data-theme="dark"] .badge-block{background:#450A0A;color:#FCA5A5;}
+
+/* Callout */
+.callout{padding:14px 16px;margin:16px 0;border-left:3px solid var(--border-mid);background:var(--bg-surface);font-size:13px;color:var(--text-secondary);}
+.callout.red {border-left-color:var(--accent);background:#FFF5F5;}
+.callout.note{border-left-color:#3B82F6;background:#EFF6FF;}
+.callout.green{border-left-color:#16A34A;background:#F0FDF4;}
+[data-theme="dark"] .callout.red  {background:#1C0A0A;}
+[data-theme="dark"] .callout.note {background:#0C1A2E;}
+[data-theme="dark"] .callout.green{background:#052E16;}
+.callout strong{color:var(--text-primary);}
+
+/* Plain list */
+.plainlist{list-style:none;margin:10px 0;}
+.plainlist li{position:relative;padding:6px 0 6px 16px;border-bottom:1px solid var(--border-subtle);font-size:13px;color:var(--text-secondary);}
+.plainlist li:last-child{border-bottom:none;}
+.plainlist li::before{content:'';position:absolute;left:0;top:14px;width:6px;height:6px;background:var(--accent);}
+
+/* Confirm block — 需要销售确认的钩子 */
+.confirm{
+  margin:18px 0;padding:16px 18px;
+  border:1px dashed var(--accent);
+  background:var(--bg-surface);
+}
+.confirm-label{
+  font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;
+  color:var(--accent);margin-bottom:8px;
+}
+.confirm-q{font-size:13px;color:var(--text-primary);font-weight:600;line-height:1.6;}
+.edit-hint{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  margin:16px 0;padding:10px 14px;
+  background:var(--bg-surface);border-left:3px solid #3B82F6;
+  font-size:12.5px;color:var(--text-secondary);
+}
+[data-theme="dark"] .edit-hint{background:#0C1A2E;}
+.edit-hint button{
+  font-family:var(--font);font-size:12px;font-weight:600;
+  color:var(--accent);background:none;
+  border:1px solid var(--border-mid);border-radius:4px;
+  padding:4px 10px;cursor:pointer;
+}
+.edit-hint button:hover{border-color:var(--accent);}
+@media print{
+  .edit-hint{display:none;}
+}
+
+/* Feature grid */
+.feature-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:1px;background:var(--border-subtle);margin:16px 0;}
+.feature-card{background:var(--bg-page);padding:16px;}
+.feature-card-title{font-size:13px;font-weight:700;color:var(--text-primary);margin-bottom:6px;}
+.feature-card-desc{font-size:12px;color:var(--text-secondary);line-height:1.6;}
+
+/* Stage pills */
+.stages{display:flex;gap:0;flex-wrap:wrap;margin:12px 0;align-items:center;}
+.stage-pill{padding:7px 13px;border:1px solid var(--border-mid);background:var(--bg-surface);font-size:12px;font-weight:600;color:var(--text-secondary);margin:2px;}
+.stage-arrow{padding:0 4px;color:var(--text-tertiary);font-size:12px;align-self:center;}
+
+/* Print */
+@media print{
+  .topbar,.sidebar{display:none;}
+  .layout{display:block;padding-top:0;}
+  .main{padding:24mm;}
+}
+
+/* Responsive */
+@media (max-width:768px){
+  .layout{grid-template-columns:1fr;}
+  .sidebar{display:none;}
+  .main{padding:32px 20px 64px;}
+  .cover-title{font-size:24px;}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-brand">
+    NEW HONGDA <span class="dot">·</span> 新宏大集团
+    <span class="topbar-badge">销售对齐</span>
+  </div>
+  <div class="topbar-meta">AI 智能 CRM · 产品对齐说明 · 2026-07-19</div>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="toc-label">目录 · Contents</div>
+    <a class="toc-item" href="#s1">01 · 这份文档想跟你确认什么</a>
+    <a class="toc-item" href="#s2">02 · 我们理解的你们的困扰</a>
+    <a class="toc-item" href="#s3">03 · 第一版你会拿到什么</a>
+    <a class="toc-item" href="#s4">04 · 基础 CRM 功能</a>
+    <a class="toc-item" href="#s5">05 · 多渠道接入</a>
+    <a class="toc-item" href="#s6">06 · AI 能力</a>
+    <a class="toc-item" href="#s7">07 · 权限配置</a>
+    <a class="toc-item" href="#s8">08 · 需要你确认的几件事</a>
+    <a class="toc-item" href="#s9">09 · 第一版暂时不做的</a>
+  </nav>
+
+  <main class="main">
+
+    <!-- Cover -->
+    <div class="cover">
+      <div class="cover-eyebrow">产品对齐说明 · 面向销售团队</div>
+      <h1 class="cover-title">新宏大 <em>AI 智能 CRM</em><br>产品对齐说明</h1>
+      <div class="cover-sub">这份文档只有一个目的：请你确认，我们当前正在做的产品——它的现状和方向，是不是你们真正需要的。不讲技术、不画大饼，只讲第一版你会拿到什么。</div>
+      <div class="cover-meta-row">
+        <div class="cover-meta-item"><span class="k">文档日期</span><span class="v">2026-07-19</span></div>
+        <div class="cover-meta-item"><span class="k">第一版交付</span><span class="v">2026-07-31</span></div>
+        <div class="cover-meta-item"><span class="k">对齐对象</span><span class="v">销售团队 · 销售主管</span></div>
+        <div class="cover-meta-item"><span class="k">你要做的</span><span class="v">逐节确认 · 提出不符之处</span></div>
+      </div>
+    </div>
+
+    <div class="edit-hint">
+      <span id="editHintText">✏️ 点「编辑全文」后，正文任意文字都可直接修改；改完点「保存到本地」下载修改后的完整文档。</span>
+      <button type="button" id="editToggle">✏️ 编辑全文</button>
+      <button type="button" id="saveLocal">💾 保存到本地</button>
+    </div>
+
+    <!-- S1 -->
+    <section class="section" id="s1">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <h2 class="section-title">这份文档想跟你确认什么<span class="section-title-en">Purpose</span></h2>
+      </div>
+
+      <p style="font-size:15px;color:var(--text-primary);font-weight:600;max-width:70ch;">一句话：我们想确认，正在给你们做的这套 AI 智能 CRM，它的<em style="color:var(--accent);font-style:normal;">现状</em>和<em style="color:var(--accent);font-style:normal;">开发方向</em>，是不是和你们平时干活真正需要的东西对得上。</p>
+
+      <p style="margin-top:16px;">展开来看，主要就是下面四块，请你分别判断"符合 / 不符合 / 需要调整"：</p>
+      <ul class="plainlist">
+        <li><strong>基础 CRM 功能</strong>——客户、公司、商机、任务这些日常记录，字段和用法对不对你们的习惯</li>
+        <li><strong>多渠道接入</strong>——WhatsApp、官网客服、Instagram、Facebook、邮件这五个渠道，够不够覆盖你们平时接客户的场景，有没有遗漏的</li>
+        <li><strong>AI 客服</strong>——官网等渠道的常见问题让 AI 先顶、重要的转人工，这是第一版的<em style="color:var(--accent);font-style:normal;">必须项</em></li>
+        <li><strong>权限配置</strong>——谁能看谁的客户、哪些字段该保密，分级对不对</li>
+      </ul>
+
+      <div class="callout note"><strong>关于时间：</strong>第一版要在 <strong>7 月 31 日</strong>交付，现在距离交付不到半个月。所以这一版我们聚焦"<strong>把该打通的渠道打通、把基础用起来</strong>"，AI 相关的能力会保守推进、先做到可用可控。这份文档里写的，就是这一版你实际会拿到的东西——不多承诺、不写还没打算做的。</div>
+
+      <div class="confirm">
+        <div class="confirm-label">请你确认</div>
+        <div class="confirm-q">这四块是不是你们最关心的？有没有哪一块其实对你们不重要，或者有重要的东西没被列进来？</div>
+      </div>
+    </section>
+
+    <!-- S2 -->
+    <section class="section" id="s2">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <h2 class="section-title">我们理解的你们的困扰<span class="section-title-en">Your Pain Points</span></h2>
+      </div>
+      <p>先把我们理解到的你们现在的麻烦列出来，请你看看准不准。如果这些不是你们真正头疼的，那后面做的东西方向可能就偏了。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>困扰</th><th>现在的样子</th></tr></thead>
+          <tbody>
+            <tr><td><strong>消息分散、容易漏</strong></td><td>WhatsApp、Instagram、Facebook、官网客服各在各的 App，要来回切，客户消息容易看漏、回晚</td></tr>
+            <tr><td><strong>客户信息散、换人接不上</strong></td><td>聊天记录在手机、客户资料在 CRM，换人跟进时接手的人不知道之前聊过什么，客户被重复问</td></tr>
+            <tr><td><strong>三套系统并行</strong></td><td>看消息在手机、记录在 CRM、商机进度在表格，同一个客户的事分散在几个地方，容易漏节点</td></tr>
+            <tr><td><strong>商机阶段全靠手动判断</strong></td><td>客户到哪一步、该不该推进，全靠自己判断和手填，主管也不容易看到真实进展</td></tr>
+            <tr><td><strong>常见问题重复回</strong></td><td>官网客服很多是重复的常见问题，靠人一条条回，占用精力、首次响应也慢</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="confirm">
+        <div class="confirm-label">请你确认</div>
+        <div class="confirm-q">这几条是不是你们日常最头疼的？哪一条最影响你们？有没有更重要但这里没写到的困扰？</div>
+      </div>
+    </section>
+
+    <!-- S3 -->
+    <section class="section" id="s3">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <h2 class="section-title">第一版（7月31日）你会拿到什么<span class="section-title-en">What v1.0 Delivers</span></h2>
+      </div>
+
+      <p>说清楚一点：第一版的核心目标，是让你们<strong>在一个界面里，把多个渠道的客户消息收发、把客户和商机记下来</strong>，不用再开一堆 App。</p>
+      <p>因为时间只有半个月，这一版我们把力气集中在"渠道接进来 + 基础 CRM 用起来 + AI 客服顶常见问题 + 权限分好"这几件事上。其中 AI 里只有<strong>AI 客服</strong>是必须项，其他 AI 能力属于加分项。下面几节分别讲清楚具体是什么样。</p>
+
+      <div class="callout red"><strong>一句话理解第一版：</strong>你打开 CRM，几个渠道的客户消息都在这里收发；聊完一键存成客户和商机；简单的常见问题可以让 AI 先顶一下，重要客户你随时自己接管。就这些——扎实、能用，而不是一步到位。</div>
+    </section>
+
+    <!-- S4 -->
+    <section class="section" id="s4">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <h2 class="section-title">基础 CRM 功能<span class="section-title-en">CRM Basics</span></h2>
+      </div>
+
+      <p>基础的客户管理能力，和你们现在习惯的差不多，都在一个系统里：</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-card-title">联系人 / 公司</div>
+          <div class="feature-card-desc">采购、技术、财务对接人，以及所属公司，集中记录，不再散在个人手机里</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-title">商机</div>
+          <div class="feature-card-desc">每个潜在订单建一条商机，金额、阶段、预计成交时间一目了然</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-title">任务 / 备注</div>
+          <div class="feature-card-desc">"明天发报价""下周跟样品"等提醒，加上客户长期偏好记录，减少漏跟进</div>
+        </div>
+        <div class="feature-card">
+          <div class="feature-card-title">多种视图</div>
+          <div class="feature-card-desc">表格看清单、看板按阶段拖商机、日历排跟进、仪表盘看整体，例会直接用</div>
+        </div>
+      </div>
+
+      <div class="callout"><strong>字段先照搬现有 CRM：</strong>客户要记哪些信息（来源渠道、国家、意向等级、感兴趣产品等），第一版<strong>先照搬你们现在询盘云里用的那套</strong>，不重新发明，尽量贴近你们已有的习惯。具体保留哪些、要不要增减，见第 08 节请你确认。</div>
+    </section>
+
+    <!-- S5 -->
+    <section class="section" id="s5">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <h2 class="section-title">多渠道接入<span class="section-title-en">Channels</span></h2>
+      </div>
+
+      <p>这是第一版的<strong>重点</strong>。目标是把下面这些渠道的消息，统一收进 CRM 的同一个对话界面里，收发都在这里，不用再切 App。</p>
+
+      <div class="callout note"><strong>先说清楚一个现实：</strong>你们目前用的都是<strong>个人账号</strong>（不是企业官方账号），个人号接入本身有一定难度和平台限制。所以下面我们对每个渠道，都如实标注了第一版能做到什么程度，避免让你们有过高预期。</div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>渠道</th><th>第一版目标</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>WhatsApp</strong></td>
+              <td><span class="badge badge-done">核心 · 必达</span></td>
+              <td>第一版最优先保证能在 CRM 里收发。用个人号接入，为降低被封风险，会以稳妥的方式推进</td>
+            </tr>
+            <tr>
+              <td><strong>官网客服</strong></td>
+              <td><span class="badge badge-done">必达</span></td>
+              <td>官网上的在线客服对话，直接进 CRM</td>
+            </tr>
+            <tr>
+              <td><strong>邮件</strong></td>
+              <td><span class="badge badge-done">已支持</span></td>
+              <td>客户邮件自动归档到对应联系人下，跟进历史看得到</td>
+            </tr>
+            <tr>
+              <td><strong>Instagram</strong></td>
+              <td><span class="badge badge-wip">争取接入</span></td>
+              <td>个人号接入有难度、受平台限制，会争取在第一版接上，但存在不确定性，做不到会如实告知</td>
+            </tr>
+            <tr>
+              <td><strong>Facebook</strong></td>
+              <td><span class="badge badge-wip">争取接入</span></td>
+              <td>同上，会争取接入，进度以实际为准</td>
+            </tr>
+            <tr>
+              <td><strong>官网询盘表单</strong></td>
+              <td><span class="badge badge-wip">供应商接入中</span></td>
+              <td>客户在官网留资后，自动在 CRM 建一条客户记录；由官网供应商负责接入，测试中</td>
+            </tr>
+            <tr>
+              <td><strong>LinkedIn</strong></td>
+              <td><span class="badge badge-na">第一版不做</span></td>
+              <td>平台管控严、个人号没有可用的接入方式，第一版不接入</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout green"><strong>你的体验：</strong>能接入的渠道，消息都汇到 CRM 同一个对话列表里，带渠道标识、可按渠道筛选、可搜索，新消息自动出现不用手动刷新。文字、图片、链接这三类消息优先全渠道支持。</div>
+
+      <div class="confirm">
+        <div class="confirm-label">请你确认</div>
+        <div class="confirm-q">这五个渠道（WhatsApp、官网客服、Instagram、Facebook、邮件）够不够覆盖你们平时接触客户的场景？有没有还在用、但这里没列到的渠道？</div>
+      </div>
+    </section>
+
+    <!-- S6 -->
+    <section class="section" id="s6">
+      <div class="section-header">
+        <span class="section-num">06</span>
+        <h2 class="section-title">AI 客服（必须项）与其他 AI 能力<span class="section-title-en">AI Service &amp; Others</span></h2>
+      </div>
+
+      <div class="callout red"><strong>先分清两件事：</strong>AI 里面，<strong>只有「AI 客服」是第一版的必须项</strong>——常见问题让 AI 先顶、重要的转人工，这个第一版一定给你们做。其余 AI 能力（商机阶段建议、翻译、话术推荐等）属于<strong>锦上添花的加分项</strong>，做得到就给你们用上，做得浅或往后放，都不影响这一版的核心。</div>
+
+      <div class="sub" style="margin-top:24px;">
+        <div class="sub-title">AI 客服 · 必须项</div>
+        <p>官网等渠道每天有很多重复的常见问题，AI 客服帮你先顶一层，把你的精力留给真正重要的客户。每个渠道可以单独设置 AI 用到什么程度，三挡：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>模式</th><th>AI 会做什么</th></tr></thead>
+            <tbody>
+              <tr><td><strong>关闭</strong></td><td>AI 完全不参与，纯人工回</td></tr>
+              <tr><td><strong>建议</strong></td><td>AI 帮你把回复草稿写好放输入框，你看一眼、确认了再发</td></tr>
+              <tr><td><strong>自动回复</strong></td><td>简单的常见问题 AI 直接回；遇到报价、投诉、复杂需求等，自动转给人工，AI 不碰</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout"><strong>人工永远优先：</strong>任何会话你都能一键接管，接管后 AI 立刻停手、不再插话，随时可关。<br><strong>WhatsApp 会偏保守：</strong>因为是个人号，AI 频繁自动发消息有被封风险，所以 WhatsApp 默认走"建议"模式（AI 起草、你确认再发），自动回复由管理员按需谨慎开启；官网客服这类更适合放开自动回复。</div>
+
+        <div class="confirm">
+          <div class="confirm-label">请你确认</div>
+          <div class="confirm-q">哪些常见问题可以放心让 AI 直接回？哪些必须人工来？这个"建议 / 自动"的分寸，你们觉得合适吗？</div>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">其他 AI 能力 · 锦上添花</div>
+        <p>下面这些能做则做、给你们加分，但不是第一版的重点，进度以实际为准：</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>能力</th><th>作用</th></tr></thead>
+            <tbody>
+              <tr><td><strong>商机阶段建议</strong></td><td>AI 根据聊天记录，判断客户大概走到哪一步（询价 / 报价 / 谈判…），在旁边给你一个<strong>建议</strong>；是否采纳、要不要改由你决定，AI 不会自己改你的数据</td></tr>
+              <tr><td><strong>翻译</strong></td><td>会话内容多语言翻译，帮你和海外客户沟通（更靠后）</td></tr>
+              <tr><td><strong>话术推荐</strong></td><td>遇到沟通卡点时给你参考话术，你确认后再发（更靠后）</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="confirm">
+        <div class="confirm-label">请你确认</div>
+        <div class="confirm-q">AI 帮你回复这件事，你们能接受到什么程度？哪些问题可以放心让 AI 直接回，哪些必须人工来？这个"建议 / 自动"的分寸，你们觉得合适吗？</div>
+      </div>
+    </section>
+
+    <!-- S7 -->
+    <section class="section" id="s7">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <h2 class="section-title">权限配置<span class="section-title-en">Roles &amp; Permissions</span></h2>
+      </div>
+
+      <p>谁能看到哪些客户、哪些敏感信息（比如报价、利润）谁看不到，这块需要和你们对齐。目前初步分成四个角色：</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>角色</th><th>能看到的范围</th></tr></thead>
+          <tbody>
+            <tr><td><strong>老板</strong></td><td>所有数据和报表都能看，一般不直接改业务数据</td></tr>
+            <tr><td><strong>管理员</strong></td><td>负责系统配置、字段、权限、账号管理</td></tr>
+            <tr><td><strong>销售主管</strong></td><td>能看团队成员的全部客户、商机、对话</td></tr>
+            <tr><td><strong>销售</strong></td><td>只操作自己负责的客户；报价、利润等敏感字段不可见</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="confirm">
+        <div class="confirm-label">请你确认</div>
+        <div class="confirm-q">这个分级符合你们的管理方式吗？销售之间的客户要不要互相保密？哪些字段（报价、利润、成本…）是普通销售绝对不能看的？主管的查看范围对不对？</div>
+      </div>
+    </section>
+
+    <!-- S8 -->
+    <section class="section" id="s8">
+      <div class="section-header">
+        <span class="section-num">08</span>
+        <h2 class="section-title">需要你确认的几件事<span class="section-title-en">We Need Your Input</span></h2>
+      </div>
+
+      <div class="callout red"><strong>这一节最重要。</strong>下面几件事定了，我们才好往下做、才不会做偏。时间紧，麻烦你们尽快给到反馈。</div>
+
+      <div class="sub" style="margin-top:20px;">
+        <div class="sub-title">1 · 客户字段（先照搬现有 CRM）</div>
+        <p>客户档案里要记哪些字段，第一版先照搬你们现在询盘云用的那一套。<strong>待对齐：</strong>这套字段有没有要<strong>加</strong>的、有没有平时根本不用可以<strong>去掉</strong>的？</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">2 · 商机阶段（这样分对不对）</div>
+        <div class="stages">
+          <div class="stage-pill">线索</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">询价</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">报价</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">寄样</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">谈判</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">已下单</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">已付款</div><div class="stage-arrow">→</div>
+          <div class="stage-pill">已发货</div><div class="stage-arrow">→</div>
+          <div class="stage-pill" style="color:var(--text-primary);">已成交</div>
+          <div class="stage-arrow">|</div>
+          <div class="stage-pill" style="color:var(--text-tertiary);">丢单</div>
+        </div>
+        <p><strong>待对齐：</strong>你们实际的成交流程是不是这些阶段？顺序对不对？有没有该合并或该拆开的？</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">3 · 意向等级怎么定</div>
+        <p>客户意向初步分 A（高意向）/ B（跟进中）/ C（观望）/ 无效。<strong>待对齐：</strong>什么样的客户算 A、算 B？你们心里的判断标准是什么？（AI 会参考这个标准帮你推荐等级）</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">4 · AI 回复的尺度</div>
+        <p>哪些问题可以放心交给 AI 自动回，哪些必须人工来？（见第 06 节）</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">5 · 权限分级是否符合你们管理方式</div>
+        <p>见第 07 节，尤其是销售之间是否互相保密、哪些字段对普通销售保密。</p>
+      </div>
+    </section>
+
+    <!-- S9 -->
+    <section class="section" id="s9">
+      <div class="section-header">
+        <span class="section-num">09</span>
+        <h2 class="section-title">第一版暂时不做的<span class="section-title-en">Not in v1.0</span></h2>
+      </div>
+
+      <p>为了在 7 月 31 日交出一版扎实能用的东西，下面这些第一版<strong>先不做</strong>。不是永远不做，而是不在这半个月这一版里——先把前面的做稳，避免摊子铺太大反而都做不好。</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>暂不做</th><th>原因</th></tr></thead>
+          <tbody>
+            <tr><td><strong>LinkedIn 接入</strong></td><td>平台管控严、个人号没有可用接入方式</td></tr>
+            <tr><td><strong>升级企业官方账号</strong></td><td>第一版先用个人号把渠道跑通，企业号方案后续单独评估</td></tr>
+            <tr><td><strong>群发 / 营销消息</strong></td><td>个人号频繁主动群发有封号风险，第一版不做批量营销</td></tr>
+            <tr><td><strong>同一客户跨渠道自动合并</strong></td><td>一个客户从多个渠道找来自动认成一个人，逻辑复杂，第一版先按渠道分开处理</td></tr>
+            <tr><td><strong>AI 翻译 / 话术推荐</strong></td><td>进阶的 AI 销售助手能力，第一版先不接</td></tr>
+            <tr><td><strong>复杂坐席排班</strong></td><td>当前团队规模用不上</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="confirm">
+        <div class="confirm-label">请你确认</div>
+        <div class="confirm-q">这些"暂时不做"的，有没有哪一项其实对你们非常关键、不能等到后面？如果有，请告诉我们，我们重新评估优先级。</div>
+      </div>
+    </section>
+
+    <div style="padding:32px 0;border-top:1px solid var(--border-subtle);color:var(--text-tertiary);font-size:12px;letter-spacing:0.04em;">
+      © NEW HONGDA 新宏大集团 · 内部文件 · 面向销售团队的产品对齐说明 · 2026-07-19 · 未经授权不得对外传播
+    </div>
+
+  </main>
+</div>
+
+<script>
+// TOC scroll highlight
+const tocItems = document.querySelectorAll('.toc-item');
+const sections = document.querySelectorAll('.section[id]');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      tocItems.forEach(i => i.classList.remove('active'));
+      const a = document.querySelector(`.toc-item[href="#${e.target.id}"]`);
+      if (a) a.classList.add('active');
+    }
+  });
+}, { rootMargin: '-60px 0px -70% 0px' });
+sections.forEach(s => obs.observe(s));
+
+// Theme sync
+function syncTheme() {
+  const k = localStorage.getItem('twenty-color-scheme') ||
+            localStorage.getItem('colorScheme') ||
+            localStorage.getItem('theme');
+  if (k === 'dark') document.documentElement.setAttribute('data-theme','dark');
+  else if (k === 'light') document.documentElement.setAttribute('data-theme','light');
+}
+syncTheme();
+window.addEventListener('storage', syncTheme);
+
+// ---- 全文可编辑 + 保存到本地 ----
+(function(){
+  const editTarget = document.querySelector('main.main');
+  const toggle = document.getElementById('editToggle');
+  const hint = document.getElementById('editHintText');
+  let editing = false;
+
+  function setEditing(on){
+    editing = on;
+    // 只让正文各区块可编辑，工具条本身不进入编辑
+    document.querySelectorAll('main.main > .section, main.main > .cover').forEach(el => {
+      if (on) el.setAttribute('contenteditable','true');
+      else el.removeAttribute('contenteditable');
+    });
+    if (toggle) toggle.textContent = on ? '✅ 完成编辑' : '✏️ 编辑全文';
+    if (hint) hint.textContent = on
+      ? '✏️ 编辑中——正文任意文字都可直接修改。改完点「完成编辑」，再点「保存到本地」下载。'
+      : '✏️ 点「编辑全文」后，正文任意文字都可直接修改；改完点「保存到本地」下载修改后的完整文档。';
+  }
+
+  if (toggle) toggle.addEventListener('click', () => setEditing(!editing));
+
+  // 保存到本地：把当前（含改动）的完整文档下载下来
+  const saveBtn = document.getElementById('saveLocal');
+  if (saveBtn) saveBtn.addEventListener('click', () => {
+    setEditing(false); // 退出编辑态，避免把 contenteditable 写进文件
+    const html = '<!doctype html>\n' + document.documentElement.outerHTML;
+    const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+    const d = new Date();
+    const stamp = d.getFullYear() + String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '新宏大CRM对齐说明-' + stamp + '.html';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  });
+})();
+</script>
+
+</body></html>
