@@ -1,12 +1,29 @@
-import { useState, useMemo } from 'react'
-import { CONVERSATIONS } from '../data/mock'
+import { useState, useMemo, useEffect } from 'react'
 
 export function useConversations() {
-  const [conversations, setConversations] = useState(CONVERSATIONS)
+  const [conversations, setConversations] = useState([])
   const [activeChannel, setActiveChannel] = useState('all')
   const [activeStatus, setActiveStatus] = useState('all')
   const [search, setSearch] = useState('')
-  const [selectedId, setSelectedId] = useState(CONVERSATIONS[0]?.id ?? null)
+  const [selectedId, setSelectedId] = useState(null)
+
+  async function loadConversations() {
+    const response = await fetch('/conv-api/conversations')
+    if (!response.ok) throw new Error('无法加载会话')
+    const list = await response.json()
+    const withMessages = await Promise.all(list.map(async conv => {
+      const messages = await fetch(`/conv-api/conversations/${conv.id}/messages`).then(r => r.ok ? r.json() : [])
+      return { ...conv, messages: messages.map(m => ({ ...m, sentAt: new Date(m.sentAt) })), unread: 0 }
+    }))
+    setConversations(withMessages)
+    setSelectedId(current => current || withMessages[0]?.id || null)
+  }
+
+  useEffect(() => {
+    loadConversations().catch(error => console.error(error))
+    const timer = setInterval(() => loadConversations().catch(() => {}), 10000)
+    return () => clearInterval(timer)
+  }, [])
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {
@@ -27,24 +44,10 @@ export function useConversations() {
 
   const selected = conversations.find(c => c.id === selectedId) ?? null
 
-  function sendMessage(convId, content) {
-    setConversations(prev => prev.map(c => {
-      if (c.id !== convId) return c
-      const msg = {
-        id: `m${Date.now()}`,
-        senderType: 'agent',
-        content,
-        sentAt: new Date(),
-        contentType: 'text',
-      }
-      return {
-        ...c,
-        messages: [...c.messages, msg],
-        lastMessage: content,
-        lastMessageAt: new Date(),
-        unread: 0,
-      }
-    }))
+  async function sendMessage(convId, content) {
+    const response = await fetch(`/conv-api/conversations/${convId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) })
+    if (!response.ok) throw new Error('WhatsApp 消息发送失败')
+    window.setTimeout(() => loadConversations().catch(() => {}), 1000)
   }
 
   function setTakeover(convId, action) {

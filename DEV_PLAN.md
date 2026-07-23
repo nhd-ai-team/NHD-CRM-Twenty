@@ -34,9 +34,9 @@
 | Chatwoot 解耦 | ✅ 完成 | docker-compose / nginx / middleware 均已清理 |
 | 公网访问 | ⚠️ 临时 | cloudflared 临时 URL，重启会变，域名待购买 |
 | CRM 自定义字段 | 🔲 待做 | 外贸字段、商机阶段、成员权限 |
-| Evolution API 接入 | 🔲 待做 | 未开始，等 Phase 1 公网域名 |
+| Evolution API 接入 | 🟡 联调中 | 容器、会话库、Webhook、CRM 内工作台接口已部署；待个人号扫码及收发验证 |
 | 官网 Chatbot Widget | 🔲 待做 | 由其他同事负责 |
-| CRM 会话工作台 UI | ✅ 完成 | React+Vite，mock 数据，嵌入 Twenty 侧边栏，`/chat/` 路径 |
+| CRM 会话工作台 UI | 🟡 已接真实接口 | React+Vite，嵌入 Twenty 侧边栏，`/chat/` 路径；WhatsApp 联调后展示真实会话 |
 
 ---
 

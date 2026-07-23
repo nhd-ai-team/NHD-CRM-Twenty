@@ -129,10 +129,72 @@ services:
       TWENTY_API_URL: http://server:3000
       TWENTY_API_KEY: ${TWENTY_API_KEY:-}
       WEBHOOK_SECRET: ${MIDDLEWARE_WEBHOOK_SECRET}
+      DATABASE_URL: postgresql://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@db:5432/${PG_DATABASE_NAME:-default}
+      EVOLUTION_API_URL: http://evolution-api:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
     depends_on:
       - server
+    restart: always
+
+  # ── Evolution API（WhatsApp 个人号接入）────────────────────────────────────
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.7
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_URL: ${SERVER_URL}
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@db:5432/evolution
+      DATABASE_CONNECTION_CLIENT_NAME: evolution_client
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      DEL_INSTANCE: "false"
+      LANGUAGE: zh-CN
+      CONFIG_SESSION_PHONE_VERSION: "2.3000.1023204200"
+      HTTP_PROXY: http://host.docker.internal:7890
+      HTTPS_PROXY: http://host.docker.internal:7890
+      # Docker 内部服务不能经过本机代理，否则 webhook 会被代理拒绝（502）。
+      NO_PROXY: localhost,127.0.0.1,db,redis,middleware,evolution-api
+      PROXY_HOST: host.docker.internal
+      PROXY_PORT: "7890"
+      PROXY_PROTOCOL: http
+      WEBHOOK_GLOBAL_URL: http://middleware:3002/api/whatsapp/webhook
+      WEBHOOK_GLOBAL_ENABLED: "true"
+      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
+      WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
+    volumes:
+      - evolution-instances:/evolution/instances
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+
+  # ── WAHA（WhatsApp HTTP API，真实 Chrome + WhatsApp 网页版）─────────────────
+  waha:
+    image: devlikeapro/waha:arm
+    ports:
+      - "3003:3000"
+    environment:
+      WAHA_API_KEY: ${EVOLUTION_API_KEY}
+      WAHA_DASHBOARD_USERNAME: ${WAHA_DASHBOARD_USERNAME:-admin}
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD}
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+      WAHA_PRINT_QR: "false"
+      HTTP_PROXY: http://host.docker.internal:7890
+      HTTPS_PROXY: http://host.docker.internal:7890
+      NO_PROXY: localhost,127.0.0.1,db,redis,middleware
+    volumes:
+      - waha-sessions:/app/.sessions
     restart: always
 
 volumes:
   db-data:
   server-local-data:
+  evolution-instances:
+  waha-sessions:
