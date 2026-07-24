@@ -130,8 +130,9 @@ services:
       TWENTY_API_KEY: ${TWENTY_API_KEY:-}
       WEBHOOK_SECRET: ${MIDDLEWARE_WEBHOOK_SECRET}
       DATABASE_URL: postgresql://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@db:5432/${PG_DATABASE_NAME:-default}
-      EVOLUTION_API_URL: http://evolution-api:8080
-      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
+      WAHA_API_URL: http://waha:3000
+      WAHA_API_KEY: ${EVOLUTION_API_KEY}
+      WAHA_SESSION: default
     depends_on:
       - server
     restart: always
@@ -186,6 +187,8 @@ services:
       WAHA_DASHBOARD_PASSWORD: ${WAHA_DASHBOARD_PASSWORD}
       WHATSAPP_DEFAULT_ENGINE: WEBJS
       WAHA_PRINT_QR: "false"
+      WHATSAPP_HOOK_URL: http://middleware:3002/api/whatsapp/webhook
+      WHATSAPP_HOOK_EVENTS: message
       HTTP_PROXY: http://host.docker.internal:7890
       HTTPS_PROXY: http://host.docker.internal:7890
       NO_PROXY: localhost,127.0.0.1,db,redis,middleware

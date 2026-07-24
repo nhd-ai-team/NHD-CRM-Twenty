@@ -8,11 +8,12 @@ export function useConversations() {
   const [selectedId, setSelectedId] = useState(null)
 
   async function loadConversations() {
-    const response = await fetch('/conv-api/conversations')
+    // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
+    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, { cache: 'no-store' })
     if (!response.ok) throw new Error('无法加载会话')
     const list = await response.json()
     const withMessages = await Promise.all(list.map(async conv => {
-      const messages = await fetch(`/conv-api/conversations/${conv.id}/messages`).then(r => r.ok ? r.json() : [])
+      const messages = await fetch(`/conv-api/conversations/${conv.id}/messages?_=${Date.now()}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : [])
       return { ...conv, messages: messages.map(m => ({ ...m, sentAt: new Date(m.sentAt) })), unread: 0 }
     }))
     setConversations(withMessages)

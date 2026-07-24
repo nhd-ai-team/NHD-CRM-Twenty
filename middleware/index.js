@@ -8,8 +8,9 @@ app.use(express.json({ limit: '25mb' }));
 const PORT = process.env.PORT || 3002;
 const TWENTY_API_URL = process.env.TWENTY_API_URL || 'http://localhost:3000';
 const TWENTY_API_KEY = process.env.TWENTY_API_KEY || '';
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
+const WAHA_API_URL = process.env.WAHA_API_URL || 'http://localhost:3003';
+const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
+const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function twentyGraphQL(query, variables = {}) {
@@ -44,14 +45,30 @@ async function ensureSchema() {
 }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
-function messageContent(message = {}) {
-  const body = message.message || message;
-  if (body.conversation) return { content: body.conversation, type: 'text' };
-  if (body.extendedTextMessage?.text) return { content: body.extendedTextMessage.text, type: 'text' };
-  if (body.imageMessage) return { content: body.imageMessage.caption || '[图片]', type: 'image', mediaUrl: body.imageMessage.url };
-  if (body.videoMessage) return { content: body.videoMessage.caption || '[视频]', type: 'video', mediaUrl: body.videoMessage.url };
-  if (body.documentMessage) return { content: body.documentMessage.fileName || '[文件]', type: 'file', mediaUrl: body.documentMessage.url };
-  if (body.audioMessage) return { content: '[语音]', type: 'audio', mediaUrl: body.audioMessage.url };
+
+// WhatsApp 新版对未存联系人使用 @lid 匿名地址，其中的数字不是手机号。
+// WAHA 的 contacts 接口可把 lid 解析回真实号码（返回 id 形如 8619057220975@c.us）。
+async function resolvePhone(jid = '') {
+  if (!jid.endsWith('@lid')) return phoneFromJid(jid);
+  try {
+    const response = await fetch(`${WAHA_API_URL}/api/contacts?contactId=${encodeURIComponent(jid)}&session=${WAHA_SESSION}`,
+      { headers: { 'X-Api-Key': WAHA_API_KEY } });
+    if (!response.ok) return null;
+    const contact = await response.json();
+    return String(contact.id || '').endsWith('@c.us') ? phoneFromJid(contact.id) : null;
+  } catch (error) { console.error('[whatsapp] lid resolve failed:', error.message); return null; }
+}
+// WAHA `message` 事件为扁平 payload：{ from, body, hasMedia, media: { url, mimetype }, type }
+function messageContent(payload = {}) {
+  const media = payload.media || {};
+  const mime = media.mimetype || '';
+  if (payload.hasMedia && media.url) {
+    if (mime.startsWith('image/')) return { content: payload.body || '[图片]', type: 'image', mediaUrl: media.url };
+    if (mime.startsWith('video/')) return { content: payload.body || '[视频]', type: 'video', mediaUrl: media.url };
+    if (mime.startsWith('audio/')) return { content: '[语音]', type: 'audio', mediaUrl: media.url };
+    return { content: media.filename || payload.body || '[文件]', type: 'file', mediaUrl: media.url };
+  }
+  if (payload.body) return { content: payload.body, type: 'text' };
   return { content: '[暂不支持的消息]', type: 'unknown' };
 }
 
@@ -66,21 +83,22 @@ async function syncPerson(phone, displayName) {
 }
 
 async function persistWhatsAppMessage(payload) {
-  const data = payload.data || payload;
-  const key = data.key || data.message?.key || {};
-  const remoteJid = key.remoteJid || data.remoteJid;
+  const data = payload.payload || payload;
+  const remoteJid = data.from;
   if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') return;
-  const externalMessageId = key.id || data.id;
-  const fromMe = Boolean(key.fromMe ?? data.fromMe);
+  const externalMessageId = data.id;
+  const fromMe = Boolean(data.fromMe);
   const parsed = messageContent(data);
-  const phone = phoneFromJid(remoteJid);
-  const displayName = data.pushName || data.senderName || phone;
+  const phone = await resolvePhone(remoteJid);
+  const displayName = data.notifyName || data._data?.notifyName || phone || remoteJid;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, phone)
       VALUES ('whatsapp', $1, $2, $3) ON CONFLICT(channel, external_id)
-      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name), updated_at = now() RETURNING *`, [remoteJid, displayName, `+${phone}`]);
+      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name),
+        phone = COALESCE(EXCLUDED.phone, conv.contacts.phone), updated_at = now() RETURNING *`,
+      [remoteJid, displayName, phone ? `+${phone}` : null]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
       VALUES ('whatsapp', $1, $2) ON CONFLICT(channel, external_chat_id)
@@ -88,21 +106,19 @@ async function persistWhatsAppMessage(payload) {
     const conversation = conversationResult.rows[0];
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
       VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
-      [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.messageTimestamp ? Number(data.messageTimestamp) * (Number(data.messageTimestamp) < 100000000000 ? 1000 : 1) : Date.now()]);
+      [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.timestamp ? Number(data.timestamp) * 1000 : Date.now()]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
-    if (!contact.twenty_person_id && !fromMe) {
-      const twentyId = await syncPerson(phone, displayName);
-      if (twentyId) await pool.query('UPDATE conv.contacts SET twenty_person_id = $2, updated_at = now() WHERE id = $1', [contact.id, twentyId]);
-    }
+    // 规则（2026-07-24）：消息只落对话工作台，不自动同步 People/Companies。
+    // 客户信息由销售在工作台右侧表单确认后一键写入 Opportunity（另行实现）。
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
 async function receiveWhatsAppWebhook(req, res) {
   res.status(200).json({ received: true });
-  // Evolution API may deliver either to the base URL or append /messages-upsert.
+  // WAHA 投递 `message`（入站+出站）/ `message.any`；只处理文本类消息事件。
   const event = req.body.event || req.params.event?.replace(/-/g, '.');
-  if (event !== 'messages.upsert') return;
+  if (event !== 'message' && event !== 'message.any') return;
   persistWhatsAppMessage(req.body).catch(error => console.error('[whatsapp] webhook failed:', error.message));
 }
 app.post('/api/whatsapp/webhook', receiveWhatsAppWebhook);
@@ -127,13 +143,13 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const conversation = result.rows[0];
   if (!conversation) return res.status(404).json({ error: 'conversation not found' });
   if (conversation.channel !== 'whatsapp') return res.status(400).json({ error: 'channel is not supported yet' });
-  const response = await fetch(`${EVOLUTION_API_URL}/message/sendText/nhd-whatsapp`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: EVOLUTION_API_KEY }, body: JSON.stringify({ number: phoneFromJid(conversation.external_chat_id), text: content }) });
+  const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
   if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
   res.status(202).json(await response.json());
 });
 
 app.get('/health', async (_req, res) => {
-  try { await pool.query('SELECT 1'); res.json({ status: 'ok', twenty_api_configured: !!TWENTY_API_KEY, evolution_api_configured: !!EVOLUTION_API_KEY }); }
+  try { await pool.query('SELECT 1'); res.json({ status: 'ok', twenty_api_configured: !!TWENTY_API_KEY, waha_api_configured: !!WAHA_API_KEY }); }
   catch (error) { res.status(503).json({ status: 'error', error: error.message }); }
 });
 
