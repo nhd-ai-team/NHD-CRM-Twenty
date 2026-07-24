@@ -213,6 +213,11 @@ services:
       INTEGRATION_API_KEY: ${AI_SERVICE_API_KEY}
       INTEGRATION_CLIENT_ID: nhd-crm-middleware
       INTEGRATION_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
+      # 官网 widget 嵌入 chinanhd.com；aichatbot 为预览页自身来源
+      ALLOWED_ORIGINS: https://chinanhd.com,https://www.chinanhd.com,https://aichatbot.chinanhd.com
+      # 官网访客消息转发到 CRM 会话工作台
+      CRM_WEBHOOK_URL: http://middleware:3002/api/website/webhook
+      CRM_WEBHOOK_SECRET: ${WEBSITE_INGEST_SECRET}
     volumes:
       - ai-service-data:/app/data
     restart: always

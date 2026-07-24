@@ -14,6 +14,7 @@ const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
 const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
 const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
+const WEBSITE_INGEST_SECRET = process.env.WEBSITE_INGEST_SECRET || '';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function twentyGraphQL(query, variables = {}) {
@@ -161,6 +162,43 @@ async function receiveWhatsAppWebhook(req, res) {
 }
 app.post('/api/whatsapp/webhook', receiveWhatsAppWebhook);
 app.post('/api/whatsapp/webhook/:event', receiveWhatsAppWebhook);
+
+// 官网客服（AI 客服服务的 website 渠道）访客消息 → CRM 会话工作台。
+// AI 服务在存下访客消息后转发到此端点；middleware 按 channel='website' 落入同一 conv 库。
+async function persistWebsiteMessage(body) {
+  const visitorId = String(body.visitorId || body.sessionId || '').trim();
+  const sessionId = String(body.sessionId || body.conversationId || visitorId).trim();
+  const content = String(body.content || body.message || '').trim();
+  const externalMessageId = String(body.externalMessageId || body.clientMessageId || '').trim();
+  if (!sessionId || !content) return;
+  const displayName = String(body.displayName || '').trim() || `网站访客 ${visitorId.slice(-6) || sessionId.slice(-6)}`;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name)
+      VALUES ('website', $1, $2) ON CONFLICT(channel, external_id)
+      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name), updated_at = now() RETURNING *`,
+      [visitorId || sessionId, displayName]);
+    const contact = contactResult.rows[0];
+    const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
+      VALUES ('website', $1, $2) ON CONFLICT(channel, external_chat_id)
+      DO UPDATE SET updated_at = now() RETURNING *`, [sessionId, contact.id]);
+    const conversation = conversationResult.rows[0];
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+      VALUES ($1, $2, 'customer', $3, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [externalMessageId ? `web:${externalMessageId}` : null, conversation.id, content]);
+    if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, content]);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+app.post('/api/website/webhook', async (req, res) => {
+  if (WEBSITE_INGEST_SECRET && req.headers['x-webhook-secret'] !== WEBSITE_INGEST_SECRET) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  res.status(200).json({ received: true });
+  persistWebsiteMessage(req.body).catch(error => console.error('[website] ingest failed:', error.message));
+});
 
 app.get('/api/conversations', async (_req, res) => {
   const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt",
