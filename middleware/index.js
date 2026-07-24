@@ -1,9 +1,11 @@
 const express = require('express');
 const fetch = require('node-fetch');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
-app.use(express.json({ limit: '25mb' }));
+// verify 回调保留原始 body，供 Instagram/Meta 的 X-Hub-Signature-256 校验使用。
+app.use(express.json({ limit: '25mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 
 const PORT = process.env.PORT || 3002;
 const TWENTY_API_URL = process.env.TWENTY_API_URL || 'http://localhost:3000';
@@ -15,6 +17,10 @@ const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
 const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
 const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
 const WEBSITE_INGEST_SECRET = process.env.WEBSITE_INGEST_SECRET || '';
+const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || 'v21.0';
+const INSTAGRAM_VERIFY_TOKEN = process.env.INSTAGRAM_VERIFY_TOKEN || '';
+const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET || '';
+const INSTAGRAM_PAGE_ACCESS_TOKEN = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN || '';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function twentyGraphQL(query, variables = {}) {
@@ -87,7 +93,7 @@ async function syncPerson(phone, displayName) {
 }
 
 // 调用 AI 客服服务生成回复草稿，以 sender_type=ai / content_type=ai_suggestion 存入会话。
-// WhatsApp 个人号默认「建议模式」：只落草稿供销售确认，不自动发送（避免封号）。
+// WhatsApp / Instagram 个人号或企业号默认「建议模式」：只落草稿供销售确认，不自动发送（避免封号/误发）。
 async function requestAiSuggestion(conversation, customerMessageId, message) {
   if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY || !message?.trim()) return;
   const suggestionExternalId = `ai:${customerMessageId}`;
@@ -100,7 +106,7 @@ async function requestAiSuggestion(conversation, customerMessageId, message) {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
       body: JSON.stringify({
         tenantId: AI_SERVICE_TENANT_ID,
-        channel: 'whatsapp',
+        channel: conversation.channel,
         conversationId: conversation.id,
         messageId: customerMessageId,
         message,
@@ -200,6 +206,84 @@ app.post('/api/website/webhook', async (req, res) => {
   persistWebsiteMessage(req.body).catch(error => console.error('[website] ingest failed:', error.message));
 });
 
+// ── Instagram（Meta Graph API，企业官方账号）──────────────────────────────
+// Meta 一次性 webhook 校验：Meta 后台配置回调地址时会发 GET 请求核对 verify_token。
+app.get('/api/instagram/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && token === INSTAGRAM_VERIFY_TOKEN) return res.status(200).send(challenge);
+  res.sendStatus(403);
+});
+
+// 校验 Meta 的 X-Hub-Signature-256（HMAC-SHA256(app secret, rawBody)），防止伪造请求。
+function verifyMetaSignature(req) {
+  if (!INSTAGRAM_APP_SECRET) return true; // 未配置密钥时不做强校验，仅用于本地联调
+  const signature = req.headers['x-hub-signature-256'] || '';
+  if (!signature.startsWith('sha256=') || !req.rawBody) return false;
+  const expected = 'sha256=' + crypto.createHmac('sha256', INSTAGRAM_APP_SECRET).update(req.rawBody).digest('hex');
+  try { return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected)); }
+  catch { return false; }
+}
+
+// IG 消息事件 payload：{ message: { mid, text, attachments, is_echo } }；无 text 时取附件类型。
+function instagramMessageContent(message = {}) {
+  const attachment = message.attachments?.[0];
+  if (attachment) {
+    const url = attachment.payload?.url;
+    if (attachment.type === 'image') return { content: message.text || '[图片]', type: 'image', mediaUrl: url };
+    if (attachment.type === 'video') return { content: message.text || '[视频]', type: 'video', mediaUrl: url };
+    if (attachment.type === 'audio') return { content: '[语音]', type: 'audio', mediaUrl: url };
+    return { content: message.text || '[文件]', type: 'file', mediaUrl: url };
+  }
+  if (message.text) return { content: message.text, type: 'text' };
+  return { content: '[暂不支持的消息]', type: 'unknown' };
+}
+
+async function persistInstagramMessage(senderId, messageEvent) {
+  const message = messageEvent.message;
+  if (!senderId || !message || message.is_deleted) return;
+  const externalMessageId = message.mid ? `ig:${message.mid}` : null;
+  const fromMe = Boolean(message.is_echo);
+  const parsed = instagramMessageContent(message);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name)
+      VALUES ('instagram', $1, $2) ON CONFLICT(channel, external_id)
+      DO UPDATE SET updated_at = now() RETURNING *`, [senderId, `Instagram ${senderId.slice(-6)}`]);
+    const contact = contactResult.rows[0];
+    const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
+      VALUES ('instagram', $1, $2) ON CONFLICT(channel, external_chat_id)
+      DO UPDATE SET updated_at = now() RETURNING *`, [senderId, contact.id]);
+    const conversation = conversationResult.rows[0];
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
+      VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [externalMessageId, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, messageEvent.timestamp || Date.now()]);
+    if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
+    await client.query('COMMIT');
+    // 与 WhatsApp 一致：仅落草稿，接管中的会话不触发 AI。
+    if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
+      requestAiSuggestion(conversation, message.mid, parsed.content)
+        .catch(error => console.error('[ai] suggestion failed:', error.message));
+    }
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+app.post('/api/instagram/webhook', (req, res) => {
+  if (!verifyMetaSignature(req)) return res.sendStatus(401);
+  res.status(200).json({ received: true });
+  const entries = req.body.entry || [];
+  for (const entry of entries) {
+    for (const messagingEvent of entry.messaging || []) {
+      const senderId = messagingEvent.sender?.id;
+      if (messagingEvent.message) {
+        persistInstagramMessage(senderId, messagingEvent).catch(error => console.error('[instagram] webhook failed:', error.message));
+      }
+    }
+  }
+});
+
 app.get('/api/conversations', async (_req, res) => {
   const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt",
     json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'filedStatus', CASE WHEN ct.twenty_person_id IS NULL THEN 'unfiled' ELSE 'lead' END) AS contact
@@ -218,15 +302,37 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT c.external_chat_id, c.channel FROM conv.conversations c WHERE c.id = $1`, [req.params.id]);
   const conversation = result.rows[0];
   if (!conversation) return res.status(404).json({ error: 'conversation not found' });
-  if (conversation.channel !== 'whatsapp') return res.status(400).json({ error: 'channel is not supported yet' });
-  const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
-  if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
-  res.status(202).json(await response.json());
+
+  if (conversation.channel === 'whatsapp') {
+    const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
+    if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
+    return res.status(202).json(await response.json());
+  }
+
+  if (conversation.channel === 'instagram') {
+    if (!INSTAGRAM_PAGE_ACCESS_TOKEN) return res.status(500).json({ error: 'Instagram page access token not configured' });
+    const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/me/messages?access_token=${INSTAGRAM_PAGE_ACCESS_TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: conversation.external_chat_id }, message: { text: content } }),
+    });
+    if (!response.ok) return res.status(502).json({ error: 'Instagram send failed', detail: await response.text() });
+    return res.status(202).json(await response.json());
+  }
+
+  res.status(400).json({ error: 'channel is not supported yet' });
 });
 
 app.get('/health', async (_req, res) => {
-  try { await pool.query('SELECT 1'); res.json({ status: 'ok', twenty_api_configured: !!TWENTY_API_KEY, waha_api_configured: !!WAHA_API_KEY }); }
-  catch (error) { res.status(503).json({ status: 'error', error: error.message }); }
+  try {
+    await pool.query('SELECT 1');
+    res.json({
+      status: 'ok',
+      twenty_api_configured: !!TWENTY_API_KEY,
+      waha_api_configured: !!WAHA_API_KEY,
+      instagram_configured: !!(INSTAGRAM_VERIFY_TOKEN && INSTAGRAM_PAGE_ACCESS_TOKEN),
+    });
+  } catch (error) { res.status(503).json({ status: 'error', error: error.message }); }
 });
 
 ensureSchema().then(() => app.listen(PORT, () => console.log(`[middleware] listening on ${PORT}`))).catch(error => { console.error(error); process.exit(1); });
