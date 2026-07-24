@@ -11,6 +11,9 @@ const TWENTY_API_KEY = process.env.TWENTY_API_KEY || '';
 const WAHA_API_URL = process.env.WAHA_API_URL || 'http://localhost:3003';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
 const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
+const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
+const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function twentyGraphQL(query, variables = {}) {
@@ -82,6 +85,36 @@ async function syncPerson(phone, displayName) {
   } catch (error) { console.error('[twenty] person sync failed:', error.message); return null; }
 }
 
+// 调用 AI 客服服务生成回复草稿，以 sender_type=ai / content_type=ai_suggestion 存入会话。
+// WhatsApp 个人号默认「建议模式」：只落草稿供销售确认，不自动发送（避免封号）。
+async function requestAiSuggestion(conversation, customerMessageId, message) {
+  if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY || !message?.trim()) return;
+  const suggestionExternalId = `ai:${customerMessageId}`;
+  // 幂等：webhook 可能重复投递，已生成过草稿则跳过
+  const exists = await pool.query('SELECT 1 FROM conv.messages WHERE external_msg_id = $1', [suggestionExternalId]);
+  if (exists.rowCount) return;
+  try {
+    const response = await fetch(`${AI_SERVICE_URL}/api/v1/ai/reply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
+      body: JSON.stringify({
+        tenantId: AI_SERVICE_TENANT_ID,
+        channel: 'whatsapp',
+        conversationId: conversation.id,
+        messageId: customerMessageId,
+        message,
+        requestId: `crm_${customerMessageId}`,
+      }),
+    });
+    if (!response.ok) { console.error('[ai] reply failed:', response.status); return; }
+    const ai = await response.json();
+    if (!['reply', 'fallback', 'handoff'].includes(ai.status) || !ai.reply?.trim()) return;
+    await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+      VALUES ($1, $2, 'ai', $3, 'ai_suggestion', now()) ON CONFLICT(external_msg_id) DO NOTHING`,
+      [suggestionExternalId, conversation.id, ai.reply]);
+  } catch (error) { console.error('[ai] suggestion error:', error.message); }
+}
+
 async function persistWhatsAppMessage(payload) {
   const data = payload.payload || payload;
   const remoteJid = data.from;
@@ -111,6 +144,11 @@ async function persistWhatsAppMessage(payload) {
     await client.query('COMMIT');
     // 规则（2026-07-24）：消息只落对话工作台，不自动同步 People/Companies。
     // 客户信息由销售在工作台右侧表单确认后一键写入 Opportunity（另行实现）。
+    // 新的客户入站消息（非人工接管、文本类）触发 AI 生成回复草稿（建议模式，不自动发送）。
+    if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
+      requestAiSuggestion(conversation, externalMessageId, parsed.content)
+        .catch(error => console.error('[ai] suggestion failed:', error.message));
+    }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 

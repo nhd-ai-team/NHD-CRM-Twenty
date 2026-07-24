@@ -133,6 +133,9 @@ services:
       WAHA_API_URL: http://waha:3000
       WAHA_API_KEY: ${EVOLUTION_API_KEY}
       WAHA_SESSION: default
+      AI_SERVICE_URL: http://ai-service:8790
+      AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY}
+      AI_SERVICE_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
     depends_on:
       - server
     restart: always
@@ -196,8 +199,27 @@ services:
       - waha-sessions:/app/.sessions
     restart: always
 
+  # ── AI 客服服务（知识库 + AI 回复能力层）──────────────────────────────────
+  ai-service:
+    build:
+      context: ../../../测试/ai-customer-service-system
+    environment:
+      APP_ENV: development
+      PORT: "8790"
+      HOST: 0.0.0.0
+      DATABASE_PATH: /app/data/customer_service.sqlite3
+      KNOWLEDGE_ENGINE: local
+      REQUIRE_INTEGRATION_AUTH: "true"
+      INTEGRATION_API_KEY: ${AI_SERVICE_API_KEY}
+      INTEGRATION_CLIENT_ID: nhd-crm-middleware
+      INTEGRATION_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
+    volumes:
+      - ai-service-data:/app/data
+    restart: always
+
 volumes:
   db-data:
   server-local-data:
   evolution-instances:
   waha-sessions:
+  ai-service-data:
