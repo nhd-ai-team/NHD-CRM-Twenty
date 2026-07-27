@@ -16,6 +16,9 @@ const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
 const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
 const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
+// 调用 ai-service 的 /api/agent 路由（销售在 CRM 回复官网访客）需要 Basic Auth。
+const AI_AGENT_USER = process.env.AI_AGENT_USER || 'admin';
+const AI_AGENT_PASSWORD = process.env.AI_AGENT_PASSWORD || 'admin123';
 const WEBSITE_INGEST_SECRET = process.env.WEBSITE_INGEST_SECRET || '';
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || 'v21.0';
 const INSTAGRAM_VERIFY_TOKEN = process.env.INSTAGRAM_VERIFY_TOKEN || '';
@@ -180,12 +183,21 @@ app.post('/api/whatsapp/webhook/:event', receiveWhatsAppWebhook);
 
 // 官网客服（AI 客服服务的 website 渠道）访客消息 → CRM 会话工作台。
 // AI 服务在存下访客消息后转发到此端点；middleware 按 channel='website' 落入同一 conv 库。
+// 官网消息发送方映射：ai-service 的 visitor/ai/agent → conv 库 sender_type。
+// agent 是销售在 CRM 回复后由 ai-service 广播回来的回声，CRM 已自行落库，避免重复入库。
+const WEBSITE_SENDER_MAP = { visitor: 'customer', customer: 'customer', ai: 'ai', agent: 'agent' };
+
 async function persistWebsiteMessage(body) {
   const visitorId = String(body.visitorId || body.sessionId || '').trim();
-  const sessionId = String(body.sessionId || body.conversationId || visitorId).trim();
+  // external_chat_id 优先用 ai-service 的 conversationId，供 CRM 出站回推到同一会话。
+  const sessionId = String(body.conversationId || body.sessionId || visitorId).trim();
   const content = String(body.content || body.message || '').trim();
   const externalMessageId = String(body.externalMessageId || body.clientMessageId || '').trim();
+  const rawSender = String(body.senderType || 'customer').trim().toLowerCase();
+  const senderType = WEBSITE_SENDER_MAP[rawSender] || 'customer';
   if (!sessionId || !content) return;
+  // 销售回复的回声不重复入库（CRM 出站时已 recordAgentMessage）。
+  if (senderType === 'agent') return;
   const displayName = String(body.displayName || '').trim() || `网站访客 ${visitorId.slice(-6) || sessionId.slice(-6)}`;
   const client = await pool.connect();
   try {
@@ -199,9 +211,11 @@ async function persistWebsiteMessage(body) {
       VALUES ('website', $1, $2) ON CONFLICT(channel, external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [sessionId, contact.id]);
     const conversation = conversationResult.rows[0];
+    // 按发送方给 external_msg_id 加前缀，避免访客/AI 消息 id 撞车导致漏存。
+    const dedupeId = externalMessageId ? `web:${senderType}:${externalMessageId}` : null;
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
-      VALUES ($1, $2, 'customer', $3, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
-      [externalMessageId ? `web:${externalMessageId}` : null, conversation.id, content]);
+      VALUES ($1, $2, $3, $4, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [dedupeId, conversation.id, senderType, content]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, content]);
     await client.query('COMMIT');
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
@@ -435,6 +449,22 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
     if (!response.ok) return res.status(502).json({ error: 'Facebook send failed', detail: await response.text() });
     const sent = await response.json();
     await recordAgentMessage(req.params.id, content, sent?.message_id);
+    return res.status(202).json(sent);
+  }
+
+  if (conversation.channel === 'website') {
+    if (!AI_SERVICE_URL) return res.status(500).json({ error: 'AI service url not configured' });
+    // external_chat_id 即 ai-service 的 conversationId；注入一条 agent 消息，widget 轮询即可看到。
+    const auth = Buffer.from(`${AI_AGENT_USER}:${AI_AGENT_PASSWORD}`).toString('base64');
+    const idempotencyKey = `crm:${req.params.id}:${Date.now()}`;
+    const response = await fetch(`${AI_SERVICE_URL}/api/agent/conversations/${encodeURIComponent(conversation.external_chat_id)}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+      body: JSON.stringify({ content, idempotencyKey, agentId: 'crm' }),
+    });
+    if (!response.ok) return res.status(502).json({ error: 'Website send failed', detail: await response.text() });
+    const sent = await response.json();
+    await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`);
     return res.status(202).json(sent);
   }
 

@@ -136,6 +136,11 @@ services:
       AI_SERVICE_URL: http://ai-service:8790
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY}
       AI_SERVICE_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
+      # 官网入站 webhook 校验密钥（与 ai-service 的 CRM_WEBHOOK_SECRET 一致）
+      WEBSITE_INGEST_SECRET: ${WEBSITE_INGEST_SECRET:-}
+      # 调 ai-service /api/agent 的 Basic Auth（销售在 CRM 回复官网访客）
+      AI_AGENT_USER: ${AI_AGENT_USER:-admin}
+      AI_AGENT_PASSWORD: ${AI_AGENT_PASSWORD:-admin123}
       GRAPH_API_VERSION: ${GRAPH_API_VERSION:-v21.0}
       INSTAGRAM_VERIFY_TOKEN: ${INSTAGRAM_VERIFY_TOKEN:-}
       INSTAGRAM_APP_SECRET: ${INSTAGRAM_APP_SECRET:-}
@@ -211,6 +216,9 @@ services:
   ai-service:
     build:
       context: ../../../测试/ai-customer-service-system
+    # 发布到宿主机回环，供 Cloudflare 隧道 aichatbot.chinanhd.com → 127.0.0.1:8790 接入。
+    ports:
+      - "127.0.0.1:8790:8790"
     environment:
       APP_ENV: development
       PORT: "8790"
@@ -222,7 +230,7 @@ services:
       INTEGRATION_CLIENT_ID: nhd-crm-middleware
       INTEGRATION_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
       # 官网 widget 嵌入 chinanhd.com；aichatbot 为预览页自身来源
-      ALLOWED_ORIGINS: https://chinanhd.com,https://www.chinanhd.com,https://aichatbot.chinanhd.com
+      ALLOWED_ORIGINS: https://chinanhd.com,https://www.chinanhd.com,https://aichatbot.chinanhd.com,https://staging.chinanhd.com,http://staging.chinanhd.com
       # 官网访客消息转发到 CRM 会话工作台
       CRM_WEBHOOK_URL: http://middleware:3002/api/website/webhook
       CRM_WEBHOOK_SECRET: ${WEBSITE_INGEST_SECRET}
