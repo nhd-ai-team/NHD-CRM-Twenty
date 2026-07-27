@@ -124,13 +124,16 @@ async function requestAiSuggestion(conversation, customerMessageId, message) {
 
 async function persistWhatsAppMessage(payload) {
   const data = payload.payload || payload;
-  const remoteJid = data.from;
-  if (!remoteJid || remoteJid.endsWith('@g.us') || remoteJid === 'status@broadcast') return;
-  const externalMessageId = data.id;
   const fromMe = Boolean(data.fromMe);
+  // `_data.id.remote` 始终是对方（客户），与收发方向无关；据此把双向消息归入同一会话。
+  const counterpartyJid = data._data?.id?.remote || (fromMe ? data.to : data.from);
+  if (!counterpartyJid || counterpartyJid.endsWith('@g.us') || counterpartyJid === 'status@broadcast') return;
+  const externalMessageId = data.id;
   const parsed = messageContent(data);
-  const phone = await resolvePhone(remoteJid);
-  const displayName = data.notifyName || data._data?.notifyName || phone || remoteJid;
+  const phone = await resolvePhone(counterpartyJid);
+  // 归一化会话键：同一客户的 @lid 与 @c.us 统一为真实号 <phone>@c.us，避免拆成多个会话。
+  const chatKey = phone ? `${phone}@c.us` : counterpartyJid;
+  const displayName = (!fromMe && (data.notifyName || data._data?.notifyName)) || phone || counterpartyJid;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -138,11 +141,11 @@ async function persistWhatsAppMessage(payload) {
       VALUES ('whatsapp', $1, $2, $3) ON CONFLICT(channel, external_id)
       DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name),
         phone = COALESCE(EXCLUDED.phone, conv.contacts.phone), updated_at = now() RETURNING *`,
-      [remoteJid, displayName, phone ? `+${phone}` : null]);
+      [chatKey, displayName, phone ? `+${phone}` : null]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
       VALUES ('whatsapp', $1, $2) ON CONFLICT(channel, external_chat_id)
-      DO UPDATE SET updated_at = now() RETURNING *`, [remoteJid, contact.id]);
+      DO UPDATE SET updated_at = now() RETURNING *`, [chatKey, contact.id]);
     const conversation = conversationResult.rows[0];
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
       VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
@@ -296,11 +299,12 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   res.json(result.rows);
 });
 
-// 记录销售发出的消息到会话时间线（渠道 webhook 一般只回传入站消息，出站需自行落库）。
+// 记录销售在 CRM 内发出的消息。用渠道返回的消息 id 落库，与 message.any webhook 回传的
+// 同一条出站消息（fromMe=true，external_msg_id 同为该 id）去重，避免重复。
 async function recordAgentMessage(conversationId, content, externalId) {
   await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
     VALUES ($1, $2, 'agent', $3, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING`,
-    [externalId ? `out:${externalId}` : null, conversationId, content]);
+    [externalId || null, conversationId, content]);
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
 }
 

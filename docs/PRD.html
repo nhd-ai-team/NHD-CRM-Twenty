@@ -591,11 +591,30 @@ td.muted{color:var(--text-tertiary);}
               <tr><td><strong>联系人（People）</strong></td><td>姓名、邮箱、电话、职位、所属公司等</td><td>记录采购负责人、技术联系人、财务联系人，避免信息散落个人手机</td></tr>
               <tr><td><strong>公司（Companies）</strong></td><td>公司名、官网、行业、地址、关联联系人</td><td>按公司查看历史沟通、商机和任务，判断客户价值</td></tr>
               <tr><td><strong>商机（Opportunities）</strong></td><td>金额、阶段、预计成交时间、关联联系人</td><td>针对每个潜在订单建立商机，实时掌握整体进展</td></tr>
+              <tr><td><strong>项目（Projects）</strong>🆕</td><td>项目编号（系统自增）、关联商机、关联公司、阶段</td><td>商机成功转化后落地为具体订单执行项目；同一客户下的多个并行项目分开管理，不互相污染</td></tr>
               <tr><td><strong>任务（Tasks）</strong></td><td>待办事项，关联联系人 / 公司 / 商机</td><td>「明天发报价」「下周跟进样品」等跟进提醒，降低漏跟进风险</td></tr>
               <tr><td><strong>备注（Notes）</strong></td><td>富文本备注，关联到任意 CRM 记录</td><td>客户需求、付款习惯、时区偏好、会议结论等长期沉淀</td></tr>
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">实体关系模型（Company / Opportunity / Project / People）🆕</div>
+        <div class="callout red"><strong>2026-07-24 与销售确认：</strong>一个公司（Company）对应 N 个商机（Opportunity）、N 个项目（Project）、N 个联系人（People/客户）。商机不一定会转化为项目，但<strong>一旦转化，商机与项目的关系是 1:1</strong>；同一公司下的项目数量<strong>不需要</strong>等于该公司下的商机数量（因为不是每个商机都会转化为项目）。</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>关系</th><th>基数</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>Company → Opportunity</td><td>1 : N</td><td>一个公司可以有多个商机（不同批次询价、不同产品线等）</td></tr>
+              <tr><td>Company → Project</td><td>1 : N</td><td>一个公司可以有多个并行项目（如中间商同时问多个方案）</td></tr>
+              <tr><td>Company → People</td><td>1 : N</td><td>一个公司下可以有多个联系人（采购、技术、财务等不同角色）</td></tr>
+              <tr><td>Opportunity → Project</td><td>1 : 1（或无关系）</td><td>商机转化为项目才产生关联，且转化后严格一一对应；未转化的商机不挂项目</td></tr>
+              <tr><td>N（Opportunity）vs N（Project）</td><td>不需相等</td><td>同一公司下的商机数量与项目数量是两个独立的计数，不能假设两者相同或按比例换算</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="font-size:12px;color:var(--text-tertiary);margin-top:4px;">此前讨论中「以 Company 为核心」与「客户信息归口 Opportunity」两种说法的分歧，已通过本模型澄清：Company 是客户主体，Opportunity / Project / People 都挂在 Company 下，Opportunity 是否升级为 Project 是两者之间唯一需要强校验（1:1）的关系。</p>
       </div>
 
       <div class="sub">
@@ -694,30 +713,30 @@ td.muted{color:var(--text-tertiary);}
               <tr>
                 <td><strong>WhatsApp</strong></td>
                 <td>个人号</td>
-                <td>Evolution API（开源自托管，Baileys 协议）</td>
-                <td><span class="badge badge-done">✓ 核心必达</span></td>
-                <td>有历史记录的老号（建议 6 个月以上）；本地测试可先用临时 cloudflared URL，无需购买域名</td>
+                <td>WAHA（自托管，真实 WhatsApp Web 协议）</td>
+                <td><span class="badge badge-done">✓ 已完成</span></td>
+                <td>已连通（2026-07-23）；Evolution API 因 Baileys 协议与当前 WhatsApp 版本握手失败（Invalid buffer）已弃用改用 WAHA</td>
               </tr>
               <tr>
                 <td><strong>官网客服 Widget</strong></td>
                 <td>自研</td>
                 <td>WebSocket 实时通信，供应商官网嵌入一行 JS 脚本</td>
-                <td><span class="badge badge-done">✓ 核心必达</span></td>
-                <td>供应商官网嵌入脚本标签；需稳定公网域名</td>
+                <td><span class="badge badge-done">✓ 已完成</span></td>
+                <td>固定公网域名 crm.chinanhd.com 已就绪（2026-07-23）；消息已接入对话工作台</td>
               </tr>
               <tr>
                 <td><strong>Instagram</strong></td>
-                <td>个人号（需切专业账号）</td>
+                <td>企业官方账号（已确认，非个人号）</td>
                 <td>Meta Graph API，Webhook 接收 DM</td>
-                <td><span class="badge badge-wip">目标 7.31</span></td>
-                <td>账号切换为专业账号（设置内免费操作，可逆）</td>
+                <td><span class="badge badge-wip">开发中</span></td>
+                <td>middleware 侧 webhook 收发代码已实现（含签名校验、AI 建议模式）；待客户方在 Meta 后台完成 App 授权、提供 Page Access Token / App Secret 才能联调</td>
               </tr>
               <tr>
                 <td><strong>Facebook</strong></td>
-                <td>个人号（需主页）</td>
+                <td>企业官方主页（已确认，非个人号）</td>
                 <td>Meta Graph API，Webhook 接收主页消息</td>
-                <td><span class="badge badge-wip">目标 7.31</span></td>
-                <td>创建 Facebook 主页，申请 Messenger 权限</td>
+                <td><span class="badge badge-wip">待排期</span></td>
+                <td>FB 主页挂在个人账号下的「公共主页」，需客户方发送授权申请链接、我方获得管理权限后才能接入；可复用 Instagram 的 webhook 基础设施</td>
               </tr>
               <tr>
                 <td><strong>邮件</strong></td>
@@ -922,35 +941,35 @@ td.muted{color:var(--text-tertiary);}
         <h2 class="section-title">分阶段交付计划<span class="section-title-en">Delivery Phases</span></h2>
       </div>
 
-      <div class="callout red" style="margin-bottom:20px;"><strong>主线策略：</strong>WhatsApp（临时 URL 即可）→ 中间层 → AI 层，三个阶段串行推进、不依赖域名；域名购买与之并行，域名到位后官网 Widget 和 Meta 渠道再上。这样即使域名延迟，核心链路照样先跑通。</div>
+      <div class="callout green" style="margin-bottom:20px;"><strong>进展（截至 2026-07-24）：</strong>WhatsApp（WAHA）、固定公网域名 crm.chinanhd.com、官网客服接入对话工作台均已完成；Instagram webhook 收发代码已实现，等待客户方完成 Meta 授权后联调；Facebook 待客户方发送公共主页授权申请链接后排期。</div>
 
       <div class="phases">
         <div class="phase-row" style="border-top:1px solid var(--border-subtle);">
           <div class="phase-label">Phase 1</div>
           <div>
             <div class="phase-title">WhatsApp 端到端跑通</div>
-            <div class="phase-desc">Evolution API Docker 部署，用现有 cloudflared 临时 URL 配置 Webhook，老号扫码绑定，完成消息收发端到端验证。<strong>当前可立即开始，不依赖域名。</strong></div>
+            <div class="phase-desc">改用 WAHA（真实 WhatsApp Web 协议）替代 Evolution API（Baileys 协议握手失败）；已连通老号（3 个月历史），消息收发验证通过。</div>
           </div>
-          <div><span class="badge badge-todo">立即可做</span></div>
-          <div class="phase-dep">需准备老号</div>
+          <div><span class="badge badge-done">✓ 已完成</span></div>
+          <div class="phase-dep">2026-07-23</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 2</div>
           <div>
             <div class="phase-title">对话服务中间层核心</div>
-            <div class="phase-desc">conv DB schema、统一消息模型、会话状态机（进行中 / 接管 / 关闭）、人工接管逻辑、SSE 实时推送；对话工作台接真实 API 替换 mock 数据（先只挂 WhatsApp 渠道）。这是全渠道和 AI 的公共底座。</div>
+            <div class="phase-desc">conv DB schema、统一消息模型、会话状态机已落地；WhatsApp / 官网客服已接入真实数据（不再是 mock）。规则确认（2026-07-24）：消息只落对话工作台，不自动同步 People / Companies；客户信息由销售在右侧表单确认后一键写入 Opportunity。</div>
           </div>
-          <div><span class="badge badge-todo">等 Phase 1</span></div>
-          <div class="phase-dep">依赖 Phase 1 链路</div>
+          <div><span class="badge badge-wip">进行中</span></div>
+          <div class="phase-dep">WhatsApp / 官网已跑通，右侧表单待排期</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 3</div>
           <div>
             <div class="phase-title">AI 智能客服层</div>
-            <div class="phase-desc">OpenRouter（Claude）接入、意图 / 优先级分类、知识库 RAG、渠道级 AI 模式（关闭 / 建议 / 自动）与时段策略引擎。WhatsApp 先以「建议模式」上线验证质量，再逐步放开自动回复。</div>
+            <div class="phase-desc">WhatsApp 建议模式已上线（AI 生成回复草稿，销售确认后手动发送，不自动发送避免封号）；Instagram 复用同一套 AI 建议逻辑，webhook 与草稿生成代码已实现。渠道级 AI 模式开关 / 时段策略引擎待做。</div>
           </div>
-          <div><span class="badge badge-todo">等 Phase 2</span></div>
-          <div class="phase-dep">依赖中间层</div>
+          <div><span class="badge badge-wip">进行中</span></div>
+          <div class="phase-dep">WhatsApp 建议模式已跑通</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 4</div>
@@ -965,19 +984,19 @@ td.muted{color:var(--text-tertiary);}
           <div class="phase-label">Phase 5</div>
           <div>
             <div class="phase-title">域名 + 官网 Widget 上线</div>
-            <div class="phase-desc">购买域名并配置 Cloudflare Tunnel 获得稳定公网 HTTPS；官网 Widget 正式接入（AI 自动回复模式），Webhook 从临时 URL 切换为固定域名。域名购买可与 Phase 1–3 并行推进。</div>
+            <div class="phase-desc">固定公网域名 crm.chinanhd.com 已托管至 Cloudflare；官网客服 Widget 消息已接入对话工作台。</div>
           </div>
-          <div><span class="badge badge-block">依赖购买域名</span></div>
-          <div class="phase-dep">可并行启动</div>
+          <div><span class="badge badge-done">✓ 已完成</span></div>
+          <div class="phase-dep">2026-07-23</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 6</div>
           <div>
             <div class="phase-title">Instagram + Facebook 接入</div>
-            <div class="phase-desc">Meta Graph API Webhook 接入 Instagram DM 和 Facebook 主页消息，复用中间层与 AI 层，AI 渠道开关同样生效，对话工作台新增渠道 Tab。</div>
+            <div class="phase-desc">Instagram：middleware webhook（签名校验、消息落库、AI 建议草稿、Graph API 出站发送）已实现，代码已提交分支 <code>feat/instagram-channel</code>；待客户方在 Meta 后台完成 App 授权、提供 Page Access Token / App Secret 才能联调真实消息。Facebook：确认为企业官方主页，待客户方发送公共主页授权申请链接后可复用同一套基础设施接入。</div>
           </div>
-          <div><span class="badge badge-wip">目标 7.31</span></div>
-          <div class="phase-dep">依赖域名 + Meta 权限</div>
+          <div><span class="badge badge-wip">Instagram 开发中 · Facebook 待授权</span></div>
+          <div class="phase-dep">阻塞在客户方 Meta 授权</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">并行 / 后续</div>
@@ -996,13 +1015,14 @@ td.muted{color:var(--text-tertiary);}
           <table>
             <thead><tr><th>#</th><th>待确认项</th><th>影响范围</th><th>状态</th></tr></thead>
             <tbody>
-              <tr><td>1</td><td>准备 WhatsApp 老号（6 个月以上历史记录）</td><td>Phase 1 测试</td><td><span class="badge badge-block">待准备</span></td></tr>
-              <tr><td>2</td><td>购买域名并托管至 Cloudflare DNS</td><td>官网 Widget、Meta API、正式上线</td><td><span class="badge badge-block">待购买</span></td></tr>
-              <tr><td>3</td><td>Instagram 账号切换为专业账号</td><td>Phase 5</td><td><span class="badge badge-todo">待操作</span></td></tr>
-              <tr><td>4</td><td>Facebook 主页确认 / 创建，申请 Messenger 权限</td><td>Phase 5</td><td><span class="badge badge-todo">待确认</span></td></tr>
+              <tr><td>1</td><td>准备 WhatsApp 老号（6 个月以上历史记录）</td><td>Phase 1 测试</td><td><span class="badge badge-done">✓ 已完成</span></td></tr>
+              <tr><td>2</td><td>购买域名并托管至 Cloudflare DNS</td><td>官网 Widget、Meta API、正式上线</td><td><span class="badge badge-done">✓ 已完成（crm.chinanhd.com）</span></td></tr>
+              <tr><td>3</td><td>Instagram：客户方在 Meta 后台完成 App 授权，提供 Page Access Token / App Secret</td><td>Phase 6 联调</td><td><span class="badge badge-block">待客户方提供</span></td></tr>
+              <tr><td>4</td><td>Facebook：客户方发送公共主页授权申请链接，我方获取管理权限</td><td>Phase 6</td><td><span class="badge badge-block">待客户方提供</span></td></tr>
               <tr><td>5</td><td>CRM 自定义字段内容与用户端对齐</td><td>Phase 2 配置</td><td><span class="badge badge-later">暂不急</span></td></tr>
               <tr><td>6</td><td>官网询盘表单接入（供应商负责）</td><td>已自动创建 People 记录；4 个字段待销售手动维护规范确认</td><td><span class="badge badge-done">✓ 已支持</span></td></tr>
               <tr><td>7</td><td>Twenty Workflows 付费方案确认</td><td>自动化功能是否使用 Twenty 原生能力</td><td><span class="badge badge-todo">待评估</span></td></tr>
+              <tr><td>8</td><td>商机 / 项目 / 客户实体关系模型与用户确认落地（见 §06）</td><td>字段结构、Opportunity-Project 关联设计</td><td><span class="badge badge-done">✓ 已确认（2026-07-24）</span></td></tr>
             </tbody>
           </table>
         </div>

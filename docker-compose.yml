@@ -195,7 +195,7 @@ services:
       WHATSAPP_DEFAULT_ENGINE: WEBJS
       WAHA_PRINT_QR: "false"
       WHATSAPP_HOOK_URL: http://middleware:3002/api/whatsapp/webhook
-      WHATSAPP_HOOK_EVENTS: message
+      WHATSAPP_HOOK_EVENTS: message.any
       HTTP_PROXY: http://host.docker.internal:7890
       HTTPS_PROXY: http://host.docker.internal:7890
       NO_PROXY: localhost,127.0.0.1,db,redis,middleware
