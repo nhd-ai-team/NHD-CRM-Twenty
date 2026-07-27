@@ -7,6 +7,46 @@
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__';
 
+  // Twenty 的内置对象标识（company / person / opportunity）不能安全改名；
+  // 这里只改导航展示文案，保留底层路由、API 和已有数据不变。
+  var NAVIGATION_LABELS = {
+    companies: '客户公司',
+    people: '客户联系人',
+    opportunities: '线索公海',
+    tasks: '任务',
+    notes: '备注',
+    dashboards: '数据看板',
+    workflows: '工作流'
+  };
+
+  function getNavigationKey(anchor) {
+    var href = anchor.getAttribute('href') || '';
+    var match = href.match(/^\/(?:objects\/)?([^/?#]+)/);
+    return match ? match[1] : '';
+  }
+
+  function localizeNavigation() {
+    Array.from(document.querySelectorAll('a[href]')).forEach(function (anchor) {
+      var label = NAVIGATION_LABELS[getNavigationKey(anchor)];
+      if (!label) return;
+
+      // Twenty 的链接内部可能包含图标、计数器等元素，只替换实际文本节点。
+      var textNodes = Array.from(anchor.childNodes).filter(function (node) {
+        return node.nodeType === Node.TEXT_NODE && node.nodeValue.trim();
+      });
+
+      if (textNodes.length) {
+        textNodes[textNodes.length - 1].nodeValue = label;
+        return;
+      }
+
+      var textElement = Array.from(anchor.querySelectorAll('span, div')).find(function (element) {
+        return element.children.length === 0 && element.textContent.trim();
+      });
+      if (textElement) textElement.textContent = label;
+    });
+  }
+
   // ── iframe management ──────────────────────────────────────────────────────
 
   function getOrCreateIframe() {
@@ -187,6 +227,7 @@
   }
 
   function tryInsert() {
+    localizeNavigation();
     if (document.getElementById(NAV_ID)) return;
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
