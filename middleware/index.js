@@ -296,6 +296,14 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   res.json(result.rows);
 });
 
+// 记录销售发出的消息到会话时间线（渠道 webhook 一般只回传入站消息，出站需自行落库）。
+async function recordAgentMessage(conversationId, content, externalId) {
+  await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+    VALUES ($1, $2, 'agent', $3, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING`,
+    [externalId ? `out:${externalId}` : null, conversationId, content]);
+  await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
+}
+
 app.post('/api/conversations/:id/messages', async (req, res) => {
   const { content } = req.body;
   if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
@@ -306,7 +314,9 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   if (conversation.channel === 'whatsapp') {
     const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
     if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
-    return res.status(202).json(await response.json());
+    const sent = await response.json();
+    await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized);
+    return res.status(202).json(sent);
   }
 
   if (conversation.channel === 'instagram') {
@@ -317,7 +327,9 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
       body: JSON.stringify({ recipient: { id: conversation.external_chat_id }, message: { text: content } }),
     });
     if (!response.ok) return res.status(502).json({ error: 'Instagram send failed', detail: await response.text() });
-    return res.status(202).json(await response.json());
+    const sent = await response.json();
+    await recordAgentMessage(req.params.id, content, sent?.message_id);
+    return res.status(202).json(sent);
   }
 
   res.status(400).json({ error: 'channel is not supported yet' });
