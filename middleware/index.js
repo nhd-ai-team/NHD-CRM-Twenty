@@ -21,6 +21,12 @@ const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || 'v21.0';
 const INSTAGRAM_VERIFY_TOKEN = process.env.INSTAGRAM_VERIFY_TOKEN || '';
 const INSTAGRAM_APP_SECRET = process.env.INSTAGRAM_APP_SECRET || '';
 const INSTAGRAM_PAGE_ACCESS_TOKEN = process.env.INSTAGRAM_PAGE_ACCESS_TOKEN || '';
+// Instagram 与 Facebook Messenger 同属 Meta Graph API。优先使用统一配置，
+// 同时保留已有 Instagram 变量，避免已部署环境在升级时中断。
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || INSTAGRAM_VERIFY_TOKEN;
+const META_APP_SECRET = process.env.META_APP_SECRET || INSTAGRAM_APP_SECRET;
+const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN || INSTAGRAM_PAGE_ACCESS_TOKEN;
+const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function twentyGraphQL(query, variables = {}) {
@@ -221,10 +227,10 @@ app.get('/api/instagram/webhook', (req, res) => {
 
 // 校验 Meta 的 X-Hub-Signature-256（HMAC-SHA256(app secret, rawBody)），防止伪造请求。
 function verifyMetaSignature(req) {
-  if (!INSTAGRAM_APP_SECRET) return true; // 未配置密钥时不做强校验，仅用于本地联调
+  if (!META_APP_SECRET) return true; // 未配置密钥时不做强校验，仅用于本地联调
   const signature = req.headers['x-hub-signature-256'] || '';
   if (!signature.startsWith('sha256=') || !req.rawBody) return false;
-  const expected = 'sha256=' + crypto.createHmac('sha256', INSTAGRAM_APP_SECRET).update(req.rawBody).digest('hex');
+  const expected = 'sha256=' + crypto.createHmac('sha256', META_APP_SECRET).update(req.rawBody).digest('hex');
   try { return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected)); }
   catch { return false; }
 }
@@ -273,7 +279,7 @@ async function persistInstagramMessage(senderId, messageEvent) {
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
-app.post('/api/instagram/webhook', (req, res) => {
+function receiveInstagramWebhook(req, res) {
   if (!verifyMetaSignature(req)) return res.sendStatus(401);
   res.status(200).json({ received: true });
   const entries = req.body.entry || [];
@@ -285,6 +291,89 @@ app.post('/api/instagram/webhook', (req, res) => {
       }
     }
   }
+}
+
+app.post('/api/instagram/webhook', receiveInstagramWebhook);
+
+// ── Facebook Messenger（Meta Graph API）──────────────────────────────────────
+// 与 Instagram 共用同一个 Meta App 时，可以把回调统一配置为 /api/meta/webhook；
+// /api/facebook/webhook 保留为独立回调地址，方便已有账号单独配置。
+function verifyMetaWebhook(req, res) {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (mode === 'subscribe' && token === META_VERIFY_TOKEN) {
+    res.status(200).send(challenge);
+    return true;
+  }
+  res.sendStatus(403);
+  return false;
+}
+
+function facebookMessageContent(message = {}) {
+  const attachment = message.attachments?.[0];
+  if (attachment) {
+    const url = attachment.payload?.url;
+    if (attachment.type === 'image') return { content: message.text || '[图片]', type: 'image', mediaUrl: url };
+    if (attachment.type === 'video') return { content: message.text || '[视频]', type: 'video', mediaUrl: url };
+    if (attachment.type === 'audio') return { content: '[语音]', type: 'audio', mediaUrl: url };
+    return { content: message.text || '[文件]', type: 'file', mediaUrl: url };
+  }
+  if (message.text) return { content: message.text, type: 'text' };
+  return { content: '[暂不支持的消息]', type: 'unknown' };
+}
+
+async function persistFacebookMessage(messagingEvent) {
+  const message = messagingEvent.message;
+  if (!message || message.is_deleted) return;
+  const fromMe = Boolean(message.is_echo);
+  // Facebook 的 echo 事件 sender 是主页自身，客户 id 在 recipient；入站则相反。
+  const counterpartyId = fromMe ? messagingEvent.recipient?.id : messagingEvent.sender?.id;
+  if (!counterpartyId) return;
+  const externalMessageId = message.mid ? `fb:${message.mid}` : null;
+  const parsed = facebookMessageContent(message);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name)
+      VALUES ('facebook', $1, $2) ON CONFLICT(channel, external_id)
+      DO UPDATE SET updated_at = now() RETURNING *`, [counterpartyId, `Facebook ${counterpartyId.slice(-6)}`]);
+    const contact = contactResult.rows[0];
+    const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
+      VALUES ('facebook', $1, $2) ON CONFLICT(channel, external_chat_id)
+      DO UPDATE SET updated_at = now() RETURNING *`, [counterpartyId, contact.id]);
+    const conversation = conversationResult.rows[0];
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
+      VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [externalMessageId, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, messagingEvent.timestamp || Date.now()]);
+    if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
+    await client.query('COMMIT');
+    if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
+      requestAiSuggestion(conversation, message.mid, parsed.content)
+        .catch(error => console.error('[ai] suggestion failed:', error.message));
+    }
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+function receiveFacebookWebhook(req, res) {
+  if (!verifyMetaSignature(req)) return res.sendStatus(401);
+  res.status(200).json({ received: true });
+  for (const entry of req.body.entry || []) {
+    for (const messagingEvent of entry.messaging || []) {
+      if (messagingEvent.message) {
+        persistFacebookMessage(messagingEvent).catch(error => console.error('[facebook] webhook failed:', error.message));
+      }
+    }
+  }
+}
+
+app.get('/api/facebook/webhook', verifyMetaWebhook);
+app.post('/api/facebook/webhook', receiveFacebookWebhook);
+app.get('/api/meta/webhook', verifyMetaWebhook);
+app.post('/api/meta/webhook', (req, res) => {
+  if (req.body.object === 'page') return receiveFacebookWebhook(req, res);
+  if (req.body.object === 'instagram') return receiveInstagramWebhook(req, res);
+  return res.status(400).json({ error: 'unsupported Meta webhook object' });
 });
 
 app.get('/api/conversations', async (_req, res) => {
@@ -324,13 +413,26 @@ app.post('/api/conversations/:id/messages', async (req, res) => {
   }
 
   if (conversation.channel === 'instagram') {
-    if (!INSTAGRAM_PAGE_ACCESS_TOKEN) return res.status(500).json({ error: 'Instagram page access token not configured' });
-    const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/me/messages?access_token=${INSTAGRAM_PAGE_ACCESS_TOKEN}`, {
+    if (!META_PAGE_ACCESS_TOKEN) return res.status(500).json({ error: 'Instagram page access token not configured' });
+    const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/me/messages?access_token=${META_PAGE_ACCESS_TOKEN}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ recipient: { id: conversation.external_chat_id }, message: { text: content } }),
     });
     if (!response.ok) return res.status(502).json({ error: 'Instagram send failed', detail: await response.text() });
+    const sent = await response.json();
+    await recordAgentMessage(req.params.id, content, sent?.message_id);
+    return res.status(202).json(sent);
+  }
+
+  if (conversation.channel === 'facebook') {
+    if (!FACEBOOK_PAGE_ACCESS_TOKEN) return res.status(500).json({ error: 'Facebook page access token not configured' });
+    const response = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/me/messages?access_token=${FACEBOOK_PAGE_ACCESS_TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient: { id: conversation.external_chat_id }, message: { text: content } }),
+    });
+    if (!response.ok) return res.status(502).json({ error: 'Facebook send failed', detail: await response.text() });
     const sent = await response.json();
     await recordAgentMessage(req.params.id, content, sent?.message_id);
     return res.status(202).json(sent);
@@ -346,7 +448,8 @@ app.get('/health', async (_req, res) => {
       status: 'ok',
       twenty_api_configured: !!TWENTY_API_KEY,
       waha_api_configured: !!WAHA_API_KEY,
-      instagram_configured: !!(INSTAGRAM_VERIFY_TOKEN && INSTAGRAM_PAGE_ACCESS_TOKEN),
+      instagram_configured: !!(META_VERIFY_TOKEN && META_PAGE_ACCESS_TOKEN),
+      facebook_configured: !!(META_VERIFY_TOKEN && FACEBOOK_PAGE_ACCESS_TOKEN),
     });
   } catch (error) { res.status(503).json({ status: 'error', error: error.message }); }
 });
