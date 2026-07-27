@@ -36,14 +36,15 @@
       });
 
       if (textNodes.length) {
-        textNodes[textNodes.length - 1].nodeValue = label;
+        var textNode = textNodes[textNodes.length - 1];
+        if (textNode.nodeValue !== label) textNode.nodeValue = label;
         return;
       }
 
       var textElement = Array.from(anchor.querySelectorAll('span, div')).find(function (element) {
         return element.children.length === 0 && element.textContent.trim();
       });
-      if (textElement) textElement.textContent = label;
+      if (textElement && textElement.textContent !== label) textElement.textContent = label;
     });
   }
 
