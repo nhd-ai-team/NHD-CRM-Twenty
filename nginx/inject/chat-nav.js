@@ -228,7 +228,6 @@
   }
 
   function tryInsert() {
-    localizeNavigation();
     if (document.getElementById(NAV_ID)) return;
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
