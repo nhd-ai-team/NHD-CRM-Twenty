@@ -79,11 +79,10 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft),
       })
       const d = await res.json().catch(() => ({}))
-      if (res.status === 409 && d.alreadyConverted) { setToast({ type: 'err', msg: '该客户已转为线索，无需重复转化' }); return }
       if (!res.ok) { setToast({ type: 'err', msg: d.error || `转化失败 (${res.status})` }); return }
       const skip = Array.isArray(d.skipped) && d.skipped.length
         ? `（${d.skipped.map((s) => (s === 'phone' ? '电话' : s === 'email' ? '邮箱' : s)).join('、')}格式无效已跳过）` : ''
-      setToast({ type: 'ok', msg: '已转为线索并写入商机' + skip })
+      setToast({ type: 'ok', msg: (d.updated ? '已更新到商机' : '已转为线索并写入商机') + skip })
     } catch (e) {
       setToast({ type: 'err', msg: e.message })
     } finally {

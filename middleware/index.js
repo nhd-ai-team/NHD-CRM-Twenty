@@ -452,20 +452,33 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
      FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id WHERE c.id = $1`, [req.params.id]);
   const row = cr.rows[0];
   if (!row) return res.status(404).json({ error: 'conversation not found' });
-  // 幂等：该客户已转过线索则不再重复建单，返回已有商机 id。
-  if (row.twenty_opportunity_id) {
-    return res.status(409).json({ error: '该客户已转为线索', opportunityId: row.twenty_opportunity_id, alreadyConverted: true });
-  }
+  // 已转过 → 更新既有商机；未转 → 新建。支持二次/三次补填后再次推送。
+  const isUpdate = !!row.twenty_opportunity_id;
+  const oppId = row.twenty_opportunity_id;
 
-  // 姓名 → 创建一个 Person，作为商机的「关键联系人」(pointOfContact)。
+  // 关键联系人(Person)：已有则更新姓名，没有且填了姓名则新建；姓名为空则不动。
   let personId = null;
+  let createdPersonId = null; // 仅本次新建的，失败时回滚
+  if (isUpdate) {
+    try {
+      const ex = await twentyGraphQL('query($id: UUID!){ opportunity(filter: { id: { eq: $id } }){ pointOfContact{ id } } }', { id: oppId });
+      personId = ex?.opportunity?.pointOfContact?.id || null;
+    } catch (error) { console.error('[convert-to-lead] load pointOfContact failed:', error.message); }
+  }
   if (name) {
     try {
-      const pr = await twentyGraphQL('mutation($d: PersonCreateInput!){ createPerson(data: $d){ id } }',
-        { d: { name: { firstName: name, lastName: '' } } });
-      personId = pr?.createPerson?.id || null;
-    } catch (error) { console.error('[convert-to-lead] createPerson failed:', error.message); }
+      if (personId) {
+        await twentyGraphQL('mutation($id: UUID!, $d: PersonUpdateInput!){ updatePerson(id: $id, data: $d){ id } }',
+          { id: personId, d: { name: { firstName: name, lastName: '' } } });
+      } else {
+        const pr = await twentyGraphQL('mutation($d: PersonCreateInput!){ createPerson(data: $d){ id } }',
+          { d: { name: { firstName: name, lastName: '' } } });
+        personId = pr?.createPerson?.id || null;
+        createdPersonId = personId;
+      }
+    } catch (error) { console.error('[convert-to-lead] person write failed:', error.message); }
   }
+
   // 商机名用公司（缺则用姓名兜底）；公司关联仍不做，关系在 Opportunity 内维护。
   const data = { name: company || name };
   if (personId) data.pointOfContactId = personId;
@@ -476,12 +489,11 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (b.product) data.keHuXuQiuChanPin = String(b.product);
   if (b.note) data.message = String(b.note);
 
-  // 电话/邮箱 best-effort：明显无效直接跳过，避免一个脏字段阻断整单转化。
+  // 电话/邮箱 best-effort：明显无效直接跳过，避免一个脏字段阻断整单推送。
   const skipped = [];
   const rawPhone = String(b.phone || '').replace(/[\s()-]+/g, '');
   if (rawPhone) {
     if (/^\+?\d{5,15}$/.test(rawPhone)) {
-      // 带 + 的国际号只传号码，Twenty 自动解析区号/国家；否则按国内默认 +86/CN。
       data.phone = rawPhone.startsWith('+')
         ? { primaryPhoneNumber: rawPhone }
         : { primaryPhoneNumber: rawPhone, primaryPhoneCallingCode: '+86', primaryPhoneCountryCode: 'CN' };
@@ -495,30 +507,31 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const country = String(b.country || '').trim();
   if (country) data.country = { addressCountry: country };
 
-  const create = (d) => twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d })
-    .then((r) => r?.createOpportunity);
+  const writeOpp = (d) => (isUpdate
+    ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }).then((r) => r?.updateOpportunity)
+    : twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d }).then((r) => r?.createOpportunity));
 
   try {
     let opp;
     try {
-      opp = await create(data);
+      opp = await writeOpp(data);
     } catch (e) {
-      // 兜底：若 Twenty 仍因电话/邮箱格式拒绝，剥离该字段重试一次，确保线索能建。
+      // 兜底：若 Twenty 仍因电话/邮箱格式拒绝，剥离该字段重试一次。
       const msg = (e.message || '').toLowerCase();
       if (msg.includes('phone') || msg.includes('email')) {
         if (msg.includes('phone')) { delete data.phone; skipped.push('phone'); }
         if (msg.includes('email')) { delete data.email; skipped.push('email'); }
-        opp = await create(data);
+        opp = await writeOpp(data);
       } else throw e;
     }
-    if (!opp?.id) return res.status(502).json({ error: 'createOpportunity failed' });
-    if (row.contact_id) {
+    if (!opp?.id) return res.status(502).json({ error: isUpdate ? 'updateOpportunity failed' : 'createOpportunity failed' });
+    if (!isUpdate && row.contact_id) {
       await pool.query('UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1', [row.contact_id, opp.id]);
     }
-    res.status(201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)] });
+    res.status(isUpdate ? 200 : 201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)], updated: isUpdate });
   } catch (error) {
-    // 商机没建成，删掉刚才为「关键联系人」建的孤儿 Person，避免脏数据。
-    if (personId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: personId }).catch(() => {});
+    // 写商机失败：仅回滚本次「新建」的孤儿 Person（更新既有 Person 不回滚）。
+    if (createdPersonId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: createdPersonId }).catch(() => {});
     console.error('[convert-to-lead] failed:', error.message);
     res.status(502).json({ error: 'convert failed', detail: error.message });
   }

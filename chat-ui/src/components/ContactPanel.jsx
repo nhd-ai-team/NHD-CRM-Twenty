@@ -109,26 +109,23 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
-                    <ChannelIcon channel={conv.channel} size={12} />{channelLabel}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ChannelIcon channel={conv.channel} size={12} />{channelLabel}</span>
+                    {converted && <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--green)', background: 'var(--green-soft)', padding: '1px 7px', borderRadius: 20 }}>✓ 已转线索</span>}
                   </div>
                 </div>
               </div>
 
-              {converted ? (
-                <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--green)', background: 'var(--green-soft)', padding: '7px 10px', borderRadius: 6, textAlign: 'center' }}>✓ 已转为线索</span>
-              ) : (
-                <button onClick={onConvert} disabled={converting} style={{
-                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  padding: '8px 0', borderRadius: 7, fontSize: 13, fontWeight: 600, border: 'none',
-                  background: 'var(--green)', color: '#fff', cursor: converting ? 'default' : 'pointer', opacity: converting ? 0.7 : 1,
-                }}>
-                  {converting ? <Loader2 size={13} className="spin" /> : <UserPlus size={13} />}
-                  {converting ? '写入中…' : '转为线索'}
-                </button>
-              )}
+              <button onClick={onConvert} disabled={converting} style={{
+                width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: '8px 0', borderRadius: 7, fontSize: 13, fontWeight: 600, border: 'none',
+                background: 'var(--green)', color: '#fff', cursor: converting ? 'default' : 'pointer', opacity: converting ? 0.7 : 1,
+              }}>
+                {converting ? <Loader2 size={13} className="spin" /> : <UserPlus size={13} />}
+                {converting ? (converted ? '更新中…' : '写入中…') : (converted ? '更新商机' : '转为线索')}
+              </button>
               <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
-                信息随填随存 · 转为线索写入商机（Opportunity）
+                {converted ? '补填信息后可再次「更新商机」' : '信息随填随存 · 转为线索写入商机（Opportunity）'}
               </div>
             </div>
 
