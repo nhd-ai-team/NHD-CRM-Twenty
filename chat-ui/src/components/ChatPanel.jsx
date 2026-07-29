@@ -2,9 +2,9 @@ import { useState, useRef, useEffect } from 'react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import {
-  MoreHorizontal, UserCheck, UserX, XCircle, UserPlus,
-  Send, Smile, Paperclip, Image, File, Languages, Mic,
-  Settings, Bot, PanelRightOpen, PanelRightClose, Menu,
+  UserCheck, UserX,
+  Send, Paperclip,
+  PanelRightOpen, PanelRightClose, Menu,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -93,7 +93,7 @@ function MessageBubble({ msg, onAdopt }) {
   )
 }
 
-function ActionBar({ conv, onTakeover, onClose, onConvertLead }) {
+function ActionBar({ conv, onTakeover }) {
   const isTakeover = conv.status === 'takeover'
   const isClosed = conv.status === 'closed'
 
@@ -113,23 +113,6 @@ function ActionBar({ conv, onTakeover, onClose, onConvertLead }) {
           <UserX size={13} /> 释放接管
         </button>
       )}
-
-      {/* Close */}
-      {!isClosed && (
-        <button onClick={onClose} style={btnStyle('ghost')}>
-          <XCircle size={13} /> 结束会话
-        </button>
-      )}
-
-      {/* Convert to lead */}
-      <button onClick={onConvertLead} style={btnStyle('green')}>
-        <UserPlus size={13} /> 转为线索
-      </button>
-
-      {/* AI config placeholder */}
-      <button disabled style={{ ...btnStyle('ghost'), opacity: .4, cursor: 'not-allowed', marginLeft: 'auto' }}>
-        <Bot size={13} /> AI 回复配置
-      </button>
     </div>
   )
 }
@@ -147,9 +130,8 @@ function btnStyle(variant) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, layout, contactOpen, onToggleContact, onToggleSidebar }) {
+export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onToggleContact, onToggleSidebar }) {
   const [input, setInput] = useState('')
-  const [lang, setLang] = useState('中文')
   const bottomRef = useRef(null)
 
   useEffect(() => {
@@ -206,9 +188,6 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, la
               <Menu size={16} />
             </button>
           )}
-          <button style={{ ...btnStyle('ghost'), padding: '4px 8px', fontSize: 11 }}>
-            <Settings size={12} /> AI 配置
-          </button>
           {/* 中等宽度：显示联系人面板切换按钮 */}
           {layout === 'medium' && (
             <button onClick={onToggleContact} title={contactOpen ? '收起联系人信息' : '展开联系人信息'}
@@ -222,9 +201,6 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, la
             style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: contactOpen ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 4 }}
           >
             {contactOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-          </button>
-          <button style={{ padding: '4px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <MoreHorizontal size={16} />
           </button>
         </div>
       </div>
@@ -258,47 +234,16 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, la
           padding: '6px 12px 10px', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', gap: 2 }}>
-            {[
-              [Smile,       '表情'],
-              [Paperclip,   '附件'],
-              [Image,       '图片'],
-              [File,        '文件'],
-              [Mic,         '语音'],
-            ].map(([Icon, tip]) => (
-              <button key={tip} title={tip} style={{
-                padding: 6, border: 'none', background: 'transparent', cursor: 'pointer',
-                color: 'var(--text-muted)', borderRadius: 4,
-                display: 'flex', alignItems: 'center',
-              }}>
-                <Icon size={15} />
-              </button>
-            ))}
+            <button title="附件上传" style={{
+              padding: 6, border: 'none', background: 'transparent', cursor: 'pointer',
+              color: 'var(--text-muted)', borderRadius: 4,
+              display: 'flex', alignItems: 'center',
+            }}>
+              <Paperclip size={15} />
+            </button>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {/* Language selector */}
-            <select
-              value={lang}
-              onChange={e => setLang(e.target.value)}
-              style={{
-                fontSize: 11, padding: '3px 6px', borderRadius: 5,
-                border: '1px solid var(--border)', background: 'var(--bg-surface)',
-                color: 'var(--text-secondary)', cursor: 'pointer', outline: 'none',
-              }}
-            >
-              {['中文','英语','西班牙语','阿拉伯语','法语'].map(l => (
-                <option key={l}>{l}</option>
-              ))}
-            </select>
-            {/* Translate placeholder */}
-            <button disabled title="AI 翻译（即将上线）" style={{
-              display: 'flex', alignItems: 'center', gap: 4,
-              padding: '4px 10px', borderRadius: 5, fontSize: 11.5, fontWeight: 500,
-              border: '1px solid var(--border)', background: 'transparent',
-              color: 'var(--text-muted)', cursor: 'not-allowed', opacity: .5,
-            }}>
-              <Languages size={13} /> 翻译
-            </button>
             {/* Send */}
             <button
               onClick={handleSend}
@@ -319,7 +264,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onClose, onConvertLead, la
       </div>
 
       {/* Action bar */}
-      <ActionBar conv={conv} onTakeover={onTakeover} onClose={onClose} onConvertLead={onConvertLead} />
+      <ActionBar conv={conv} onTakeover={onTakeover} />
     </div>
   )
 }

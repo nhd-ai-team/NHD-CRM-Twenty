@@ -37,7 +37,7 @@ export default function App() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, closeConversation,
+    sendMessage, setTakeover,
   } = useConversations()
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
@@ -146,9 +146,6 @@ export default function App() {
         conv={selected}
         onSend={sendMessage}
         onTakeover={(action) => setTakeover(selected?.id, action)}
-        onClose={() => closeConversation(selected?.id)}
-        onConvertLead={requestConvertLead}
-        converting={converting}
         layout={layout}
         contactOpen={contactOpen}
         onToggleContact={() => setContactOpen(o => !o)}
