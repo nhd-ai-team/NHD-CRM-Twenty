@@ -47,6 +47,7 @@ export default function App() {
   // ── 右侧「资料」草稿：编辑就地进行，失焦自动暂存；「转为线索」一键推送 Opportunity ──
   const [draft, setDraft] = useState({})
   const [converting, setConverting] = useState(false)
+  const [convertConfirmOpen, setConvertConfirmOpen] = useState(false)
   const [toast, setToast] = useState(null) // { type: 'ok' | 'err', msg }
 
   // 切换会话时重建草稿（用 selectedId，避免轮询刷新覆盖正在编辑的内容）。
@@ -69,9 +70,19 @@ export default function App() {
     } catch { /* 暂存失败不打扰用户，下次失焦会重试 */ }
   }, [selectedId])
 
+  const requestConvertLead = useCallback(() => {
+    if (!selected || converting) return
+    if (!draft.name?.trim() && !draft.company?.trim()) {
+      setToast({ type: 'err', msg: '请先填写姓名或公司' })
+      return
+    }
+    setConvertConfirmOpen(true)
+  }, [selected, draft, converting])
+
   const convertLead = useCallback(async () => {
     if (!selected || converting) return
     if (!draft.name?.trim() && !draft.company?.trim()) { setToast({ type: 'err', msg: '请先填写姓名或公司' }); return }
+    setConvertConfirmOpen(false)
     setConverting(true)
     try {
       await saveDraft(draft) // 先确保最新草稿落库
@@ -136,7 +147,7 @@ export default function App() {
         onSend={sendMessage}
         onTakeover={(action) => setTakeover(selected?.id, action)}
         onClose={() => closeConversation(selected?.id)}
-        onConvertLead={convertLead}
+        onConvertLead={requestConvertLead}
         converting={converting}
         layout={layout}
         contactOpen={contactOpen}
@@ -152,9 +163,58 @@ export default function App() {
         draft={draft}
         onField={setField}
         onBlurSave={() => saveDraft(draft)}
-        onConvert={convertLead}
+        onConvert={requestConvertLead}
         converting={converting}
       />
+
+      {convertConfirmOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 180, background: 'rgba(0,0,0,.42)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+        }}>
+          <div style={{
+            width: 'min(420px, 100%)', borderRadius: 8, background: 'var(--bg-primary)',
+            border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,.28)',
+            overflow: 'hidden',
+          }}>
+            <div style={{ padding: '16px 18px 10px' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                确认{selected?.contact?.filedStatus === 'lead' ? '更新商机' : '转为线索'}？
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+                当前右侧资料会写入 Opportunity。请确认客户姓名、公司、电话、邮箱、国家、客户来源、公司类型、商机阶段、需求产品和备注无误。
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px 16px',
+              borderTop: '1px solid var(--border-soft)',
+            }}>
+              <button
+                onClick={() => setConvertConfirmOpen(false)}
+                disabled={converting}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--text-secondary)', cursor: converting ? 'default' : 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={convertLead}
+                disabled={converting}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: 'none',
+                  background: 'var(--green)', color: '#fff', cursor: converting ? 'default' : 'pointer',
+                  opacity: converting ? 0.7 : 1, fontSize: 12, fontWeight: 700,
+                }}
+              >
+                {converting ? '处理中…' : `确认${selected?.contact?.filedStatus === 'lead' ? '更新' : '写入'}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div style={{
