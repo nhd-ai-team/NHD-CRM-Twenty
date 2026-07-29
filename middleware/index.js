@@ -457,8 +457,18 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     return res.status(409).json({ error: '该客户已转为线索', opportunityId: row.twenty_opportunity_id, alreadyConverted: true });
   }
 
-  // 商机名：公司 · 姓名（公司字段暂不做关联，先并入商机名，关系在 Opportunity 内维护）。
-  const data = { name: [company, name].filter(Boolean).join(' · ') };
+  // 姓名 → 创建一个 Person，作为商机的「关键联系人」(pointOfContact)。
+  let personId = null;
+  if (name) {
+    try {
+      const pr = await twentyGraphQL('mutation($d: PersonCreateInput!){ createPerson(data: $d){ id } }',
+        { d: { name: { firstName: name, lastName: '' } } });
+      personId = pr?.createPerson?.id || null;
+    } catch (error) { console.error('[convert-to-lead] createPerson failed:', error.message); }
+  }
+  // 商机名用公司（缺则用姓名兜底）；公司关联仍不做，关系在 Opportunity 内维护。
+  const data = { name: company || name };
+  if (personId) data.pointOfContactId = personId;
   if (b.stage) data.stage = String(b.stage);
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];
   if (source) data.keHuLaiYuan = source;
@@ -507,6 +517,8 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     }
     res.status(201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)] });
   } catch (error) {
+    // 商机没建成，删掉刚才为「关键联系人」建的孤儿 Person，避免脏数据。
+    if (personId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: personId }).catch(() => {});
     console.error('[convert-to-lead] failed:', error.message);
     res.status(502).json({ error: 'convert failed', detail: error.message });
   }

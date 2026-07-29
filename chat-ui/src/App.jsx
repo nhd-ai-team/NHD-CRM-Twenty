@@ -17,7 +17,8 @@ const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', in
 function buildDraft(conv) {
   const s = conv?.leadDraft || {}
   return {
-    name: s.name ?? conv?.contact?.name ?? '',
+    // 姓名不预填系统占位名（如「网站访客 xxx」），留空让销售填真实联系人姓名。
+    name: s.name ?? '',
     company: s.company ?? '',
     phone: s.phone ?? conv?.contact?.phone ?? '',
     email: s.email ?? '',
