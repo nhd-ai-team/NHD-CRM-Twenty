@@ -35,8 +35,10 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
   const [skipped, setSkipped] = useState([])
 
   // 防止请求 in-flight 时组件卸载后再 setState。
+  // 注意：setup 里必须重置为 true —— StrictMode 会 mount→unmount→remount，
+  // 若只在 cleanup 置 false，再挂载后会一直是 false，导致成功回调被跳过。
   const mounted = useRef(true)
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
 
   if (!conv) return null
 

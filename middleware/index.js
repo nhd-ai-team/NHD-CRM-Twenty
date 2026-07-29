@@ -43,10 +43,13 @@ function hostAllowed(host) {
 }
 function requireSameSite(req, res, next) {
   const source = req.headers.origin || req.headers.referer || '';
+  // 同源浏览器 POST 有时不带 Origin/Referer；缺失则放行（避免误杀合法请求），
+  // 只拦「带了但不属于同主域」的跨站来源。这是纵深防御，非强鉴权。
+  if (!source) return next();
   let host = '';
-  try { host = source ? new URL(source).hostname.toLowerCase() : ''; } catch { host = ''; }
+  try { host = new URL(source).hostname.toLowerCase(); } catch { host = ''; }
   if (hostAllowed(host)) return next();
-  console.warn('[same-site] blocked origin:', source || '(none)', req.method, req.path);
+  console.warn('[same-site] blocked origin:', source, req.method, req.path);
   return res.status(403).json({ error: 'forbidden origin' });
 }
 
@@ -79,7 +82,8 @@ async function ensureSchema() {
       conversation_id UUID REFERENCES conv.conversations(id), sender_type TEXT NOT NULL,
       content TEXT, content_type TEXT DEFAULT 'text', media_url TEXT, sent_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ DEFAULT now());
-    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS twenty_opportunity_id TEXT;`);
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS twenty_opportunity_id TEXT;
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;`);
 }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -410,7 +414,7 @@ app.post('/api/meta/webhook', (req, res) => {
 });
 
 app.get('/api/conversations', async (_req, res) => {
-  const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt",
+  const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
     json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id ORDER BY c.last_message_at DESC NULLS LAST`);
@@ -424,6 +428,17 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
 
 // 渠道 → 客户来源(keHuLaiYuan)默认值，销售可在表单里改。
 const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', instagram: 'INS', facebook: 'FACEBOOK' };
+
+// 右侧「资料」面板草稿自动暂存（失焦即存）。草稿存会话的 lead_draft(jsonb)。
+const DRAFT_FIELDS = ['name', 'company', 'phone', 'email', 'country', 'source', 'companyType', 'stage', 'product', 'note'];
+app.put('/api/conversations/:id/draft', requireSameSite, async (req, res) => {
+  const b = req.body || {};
+  const draft = {};
+  for (const k of DRAFT_FIELDS) if (b[k] !== undefined) draft[k] = typeof b[k] === 'string' ? b[k] : String(b[k] ?? '');
+  const r = await pool.query('UPDATE conv.conversations SET lead_draft = $2, updated_at = now() WHERE id = $1 RETURNING id', [req.params.id, draft]);
+  if (!r.rowCount) return res.status(404).json({ error: 'conversation not found' });
+  res.json({ saved: true });
+});
 
 // 「转为线索」：把右侧表单字段映射到 Opportunity 并创建；成功后在联系人上记 opportunity id。
 app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, res) => {
