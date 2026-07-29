@@ -32,6 +32,24 @@ const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN || INSTAGRAM_P
 const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+// 浏览器写端点的同主域白名单：只放行来自 chinanhd.com（及子域）与本地开发的请求。
+// 注意：Origin/Referer 可被非浏览器客户端伪造，这是纵深防御/减速带，非强鉴权。
+// webhook（官网/WhatsApp/Meta）走各自的密钥/签名校验，不经此闸。
+const ALLOWED_BROWSER_HOSTS = (process.env.ALLOWED_BROWSER_HOSTS || 'chinanhd.com,localhost,127.0.0.1')
+  .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+function hostAllowed(host) {
+  if (!host) return false;
+  return ALLOWED_BROWSER_HOSTS.some(suffix => host === suffix || host.endsWith('.' + suffix));
+}
+function requireSameSite(req, res, next) {
+  const source = req.headers.origin || req.headers.referer || '';
+  let host = '';
+  try { host = source ? new URL(source).hostname.toLowerCase() : ''; } catch { host = ''; }
+  if (hostAllowed(host)) return next();
+  console.warn('[same-site] blocked origin:', source || '(none)', req.method, req.path);
+  return res.status(403).json({ error: 'forbidden origin' });
+}
+
 async function twentyGraphQL(query, variables = {}) {
   if (!TWENTY_API_KEY) return null;
   const response = await fetch(`${TWENTY_API_URL}/graphql`, {
@@ -60,7 +78,8 @@ async function ensureSchema() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), external_msg_id TEXT UNIQUE,
       conversation_id UUID REFERENCES conv.conversations(id), sender_type TEXT NOT NULL,
       content TEXT, content_type TEXT DEFAULT 'text', media_url TEXT, sent_at TIMESTAMPTZ NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT now());`);
+      created_at TIMESTAMPTZ DEFAULT now());
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS twenty_opportunity_id TEXT;`);
 }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -392,7 +411,8 @@ app.post('/api/meta/webhook', (req, res) => {
 
 app.get('/api/conversations', async (_req, res) => {
   const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt",
-    json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'filedStatus', CASE WHEN ct.twenty_person_id IS NULL THEN 'unfiled' ELSE 'lead' END) AS contact
+    json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
+      'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id ORDER BY c.last_message_at DESC NULLS LAST`);
   res.json(result.rows);
 });
@@ -400,6 +420,81 @@ app.get('/api/conversations', async (_req, res) => {
 app.get('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
+});
+
+// 渠道 → 客户来源(keHuLaiYuan)默认值，销售可在表单里改。
+const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', instagram: 'INS', facebook: 'FACEBOOK' };
+
+// 「转为线索」：把右侧表单字段映射到 Opportunity 并创建；成功后在联系人上记 opportunity id。
+app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  const company = String(b.company || '').trim();
+  if (!name && !company) return res.status(400).json({ error: '姓名或公司至少填写一个' });
+
+  const cr = await pool.query(
+    `SELECT c.id, c.channel, c.contact_id, ct.twenty_opportunity_id
+     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id WHERE c.id = $1`, [req.params.id]);
+  const row = cr.rows[0];
+  if (!row) return res.status(404).json({ error: 'conversation not found' });
+  // 幂等：该客户已转过线索则不再重复建单，返回已有商机 id。
+  if (row.twenty_opportunity_id) {
+    return res.status(409).json({ error: '该客户已转为线索', opportunityId: row.twenty_opportunity_id, alreadyConverted: true });
+  }
+
+  // 商机名：公司 · 姓名（公司字段暂不做关联，先并入商机名，关系在 Opportunity 内维护）。
+  const data = { name: [company, name].filter(Boolean).join(' · ') };
+  if (b.stage) data.stage = String(b.stage);
+  const source = b.source || SOURCE_BY_CHANNEL[row.channel];
+  if (source) data.keHuLaiYuan = source;
+  if (b.companyType) data.gongSiLeiXing = String(b.companyType);
+  if (b.product) data.keHuXuQiuChanPin = String(b.product);
+  if (b.note) data.message = String(b.note);
+
+  // 电话/邮箱 best-effort：明显无效直接跳过，避免一个脏字段阻断整单转化。
+  const skipped = [];
+  const rawPhone = String(b.phone || '').replace(/[\s()-]+/g, '');
+  if (rawPhone) {
+    if (/^\+?\d{5,15}$/.test(rawPhone)) {
+      // 带 + 的国际号只传号码，Twenty 自动解析区号/国家；否则按国内默认 +86/CN。
+      data.phone = rawPhone.startsWith('+')
+        ? { primaryPhoneNumber: rawPhone }
+        : { primaryPhoneNumber: rawPhone, primaryPhoneCallingCode: '+86', primaryPhoneCountryCode: 'CN' };
+    } else skipped.push('phone');
+  }
+  const email = String(b.email || '').trim();
+  if (email) {
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) data.email = { primaryEmail: email };
+    else skipped.push('email');
+  }
+  const country = String(b.country || '').trim();
+  if (country) data.country = { addressCountry: country };
+
+  const create = (d) => twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d })
+    .then((r) => r?.createOpportunity);
+
+  try {
+    let opp;
+    try {
+      opp = await create(data);
+    } catch (e) {
+      // 兜底：若 Twenty 仍因电话/邮箱格式拒绝，剥离该字段重试一次，确保线索能建。
+      const msg = (e.message || '').toLowerCase();
+      if (msg.includes('phone') || msg.includes('email')) {
+        if (msg.includes('phone')) { delete data.phone; skipped.push('phone'); }
+        if (msg.includes('email')) { delete data.email; skipped.push('email'); }
+        opp = await create(data);
+      } else throw e;
+    }
+    if (!opp?.id) return res.status(502).json({ error: 'createOpportunity failed' });
+    if (row.contact_id) {
+      await pool.query('UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1', [row.contact_id, opp.id]);
+    }
+    res.status(201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)] });
+  } catch (error) {
+    console.error('[convert-to-lead] failed:', error.message);
+    res.status(502).json({ error: 'convert failed', detail: error.message });
+  }
 });
 
 // 记录销售在 CRM 内发出的消息。用渠道返回的消息 id 落库，与 message.any webhook 回传的
@@ -411,7 +506,7 @@ async function recordAgentMessage(conversationId, content, externalId) {
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
 }
 
-app.post('/api/conversations/:id/messages', async (req, res) => {
+app.post('/api/conversations/:id/messages', requireSameSite, async (req, res) => {
   const { content } = req.body;
   if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
   const result = await pool.query(`SELECT c.external_chat_id, c.channel FROM conv.conversations c WHERE c.id = $1`, [req.params.id]);
