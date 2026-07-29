@@ -42,7 +42,7 @@ export default function App() {
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [contactOpen, setContactOpen] = useState(false)
+  const [contactOpen, setContactOpen] = useState(() => getLayout(window.innerWidth) === 'wide')
 
   // ── 右侧「资料」草稿：编辑就地进行，失焦自动暂存；「转为线索」一键推送 Opportunity ──
   const [draft, setDraft] = useState({})
@@ -155,7 +155,7 @@ export default function App() {
       <ContactPanel
         conv={selected}
         inline={isWide}
-        open={isWide || contactOpen}
+        open={contactOpen}
         onClose={() => setContactOpen(false)}
         draft={draft}
         onField={setField}

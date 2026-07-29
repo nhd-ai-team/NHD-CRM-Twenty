@@ -188,20 +188,15 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onTog
               <Menu size={16} />
             </button>
           )}
-          {/* 中等宽度：显示联系人面板切换按钮 */}
-          {layout === 'medium' && (
-            <button onClick={onToggleContact} title={contactOpen ? '收起联系人信息' : '展开联系人信息'}
-              style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: contactOpen ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 4 }}>
+          {layout !== 'narrow' && (
+            <button
+              onClick={onToggleContact}
+              title={contactOpen ? '收起联系人信息' : '展开联系人信息'}
+              style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: contactOpen ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 4 }}
+            >
               {contactOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
             </button>
           )}
-          <button
-            onClick={onToggleContact}
-            title={contactOpen ? '收起联系人信息' : '展开联系人信息'}
-            style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: contactOpen ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 4 }}
-          >
-            {contactOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
-          </button>
         </div>
       </div>
 
