@@ -65,6 +65,41 @@ async function twentyGraphQL(query, variables = {}) {
   return json.data;
 }
 
+async function searchCompaniesByName(q, limit = 8) {
+  const term = String(q || '').trim();
+  if (!term) return [];
+  const data = await twentyGraphQL(
+    `query($filter: CompanyFilterInput, $first: Int) {
+      companies(first: $first, filter: $filter) { edges { node { id name } } }
+    }`,
+    { first: limit, filter: { name: { ilike: `%${term}%` } } },
+  );
+  return data?.companies?.edges?.map((edge) => edge.node).filter(Boolean) || [];
+}
+
+async function findCompanyByExactName(name) {
+  const term = String(name || '').trim();
+  if (!term) return null;
+  const data = await twentyGraphQL(
+    `query($filter: CompanyFilterInput) {
+      companies(first: 10, filter: $filter) { edges { node { id name } } }
+    }`,
+    { filter: { name: { ilike: term } } },
+  );
+  const companies = data?.companies?.edges?.map((edge) => edge.node).filter(Boolean) || [];
+  return companies.find((company) => company.name?.trim().toLowerCase() === term.toLowerCase()) || companies[0] || null;
+}
+
+async function createCompanyByName(name) {
+  const term = String(name || '').trim();
+  if (!term) return null;
+  const data = await twentyGraphQL(
+    'mutation($data: CompanyCreateInput!){ createCompany(data: $data){ id name } }',
+    { data: { name: term } },
+  );
+  return data?.createCompany || null;
+}
+
 async function ensureSchema() {
   await pool.query(`CREATE SCHEMA IF NOT EXISTS conv;
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -426,11 +461,23 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   res.json(result.rows);
 });
 
+app.get('/api/companies/search', requireSameSite, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+    const companies = await searchCompaniesByName(q, 8);
+    res.json(companies);
+  } catch (error) {
+    console.error('[companies/search] failed:', error.message);
+    res.status(502).json({ error: 'company search failed' });
+  }
+});
+
 // 渠道 → 客户来源(keHuLaiYuan)默认值，销售可在表单里改。
 const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', instagram: 'INS', facebook: 'FACEBOOK' };
 
 // 右侧「资料」面板草稿自动暂存（失焦即存）。草稿存会话的 lead_draft(jsonb)。
-const DRAFT_FIELDS = ['name', 'company', 'phone', 'email', 'country', 'source', 'companyType', 'stage', 'product', 'note'];
+const DRAFT_FIELDS = ['name', 'company', 'companyId', 'phone', 'email', 'country', 'source', 'companyType', 'stage', 'product', 'note'];
 const OPPORTUNITY_EMAIL_FIELD = 'youXiang';
 const EMAIL_SEPARATOR_RE = /[\s,;，；]+/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -486,8 +533,17 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     } catch (error) { console.error('[convert-to-lead] person write failed:', error.message); }
   }
 
-  // 商机名用公司（缺则用姓名兜底）；公司关联仍不做，关系在 Opportunity 内维护。
+  // 商机名用公司（缺则用姓名兜底）；公司字段优先关联库内 Company，找不到才新建。
   const data = { name: company || name };
+  let companyId = String(b.companyId || '').trim();
+  if (!companyId && company) {
+    try {
+      const existingCompany = await findCompanyByExactName(company);
+      const resolvedCompany = existingCompany || await createCompanyByName(company);
+      companyId = resolvedCompany?.id || '';
+    } catch (error) { console.error('[convert-to-lead] company write failed:', error.message); }
+  }
+  if (companyId) data.companyId = companyId;
   if (personId) data.pointOfContactId = personId;
   if (b.stage) data.stage = String(b.stage);
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];

@@ -20,6 +20,7 @@ function buildDraft(conv) {
     // 姓名不预填系统占位名（如「网站访客 xxx」），留空让销售填真实联系人姓名。
     name: s.name ?? '',
     company: s.company ?? '',
+    companyId: s.companyId ?? '',
     phone: s.phone ?? conv?.contact?.phone ?? '',
     email: s.email ?? '',
     country: s.country ?? '',
@@ -69,6 +70,14 @@ export default function App() {
       })
     } catch { /* 暂存失败不打扰用户，下次失焦会重试 */ }
   }, [selectedId])
+
+  const setFields = useCallback((patch, save = false) => {
+    setDraft((d) => {
+      const next = { ...d, ...patch }
+      if (save) saveDraft(next)
+      return next
+    })
+  }, [saveDraft])
 
   const requestConvertLead = useCallback(() => {
     if (!selected || converting) return
@@ -159,6 +168,7 @@ export default function App() {
         onClose={() => setContactOpen(false)}
         draft={draft}
         onField={setField}
+        onFields={setFields}
         onBlurSave={() => saveDraft(draft)}
         onConvert={requestConvertLead}
         converting={converting}

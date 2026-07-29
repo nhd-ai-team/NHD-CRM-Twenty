@@ -1,4 +1,4 @@
-import { Search, Filter, SlidersHorizontal } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { CHANNELS, STATUS_FILTERS } from '../data/mock'
@@ -156,8 +156,6 @@ export function ConversationSidebar({ conversations, selectedId, onSelect, activ
               fontSize: 12, color: 'var(--text-primary)',
             }}
           />
-          <Filter size={13} color="var(--text-muted)" style={{ cursor: 'pointer' }} />
-          <SlidersHorizontal size={13} color="var(--text-muted)" style={{ cursor: 'pointer' }} />
         </div>
       </div>
 

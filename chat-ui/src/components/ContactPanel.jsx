@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Loader2, UserPlus } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -29,6 +29,69 @@ function TextField({ label, value, onChange, onBlur, type = 'text', placeholder 
       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>{label}</div>
       <input type={type} value={value ?? ''} placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)} onBlur={onBlur} style={inputStyle} />
+    </div>
+  )
+}
+function CompanyField({ value, selectedId, onChange, onPick, onBlur }) {
+  const [options, setOptions] = useState([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    const q = String(value || '').trim()
+    if (q.length < 2 || selectedId) { setOptions([]); return }
+    let active = true
+    const timer = setTimeout(async () => {
+      setLoading(true)
+      try {
+        const res = await fetch(`/conv-api/companies/search?q=${encodeURIComponent(q)}`)
+        const data = await res.json().catch(() => [])
+        if (active) setOptions(Array.isArray(data) ? data : [])
+      } catch {
+        if (active) setOptions([])
+      } finally {
+        if (active) setLoading(false)
+      }
+    }, 220)
+    return () => { active = false; clearTimeout(timer) }
+  }, [value, selectedId])
+
+  return (
+    <div style={{ marginBottom: 10, position: 'relative' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>公司</div>
+      <input
+        value={value ?? ''}
+        placeholder="搜索库内公司；没有则输入新公司名"
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { onChange(e.target.value); setOpen(true) }}
+        onBlur={() => { setTimeout(() => setOpen(false), 140); onBlur?.() }}
+        style={inputStyle}
+      />
+      <div style={{ fontSize: 10.5, color: selectedId ? 'var(--green)' : 'var(--text-muted)', marginTop: 4 }}>
+        {selectedId ? '已选择库内公司' : '未选择库内公司时，更新商机会按名称匹配；仍不存在则新建公司'}
+      </div>
+      {open && !selectedId && (options.length > 0 || loading) && (
+        <div style={{
+          position: 'absolute', left: 0, right: 0, top: 54, zIndex: 20,
+          border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)',
+          boxShadow: '0 8px 24px rgba(0,0,0,.12)', overflow: 'hidden',
+        }}>
+          {loading && <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-muted)' }}>搜索中…</div>}
+          {!loading && options.map((company) => (
+            <button
+              key={company.id}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onPick(company); setOpen(false) }}
+              style={{
+                width: '100%', padding: '8px 10px', border: 'none', background: 'transparent',
+                textAlign: 'left', cursor: 'pointer', fontSize: 12.5, color: 'var(--text-primary)',
+              }}
+            >
+              {company.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -65,7 +128,7 @@ function PlaceholderTab({ label }) {
   )
 }
 
-export function ContactPanel({ conv, open = true, onClose, inline = false, draft = {}, onField, onBlurSave, onConvert, converting }) {
+export function ContactPanel({ conv, open = true, onClose, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting }) {
   const [activeTab, setActiveTab] = useState('资料')
   if (!open) return null
 
@@ -80,6 +143,20 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
     : { position: 'fixed', top: 0, right: 0, bottom: 0, width: 300, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 16px rgba(0,0,0,.08)' }
 
   const f = (k) => (v) => onField(k, v)
+  const updateCompany = (value) => {
+    if (onFields) onFields({ company: value, companyId: draft.companyId ? '' : draft.companyId })
+    else {
+      onField('company', value)
+      if (draft.companyId) onField('companyId', '')
+    }
+  }
+  const pickCompany = (company) => {
+    if (onFields) onFields({ company: company.name, companyId: company.id }, true)
+    else {
+      onField('company', company.name)
+      onField('companyId', company.id)
+    }
+  }
 
   return (
     <>
@@ -132,7 +209,7 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
             {/* Editable fields — 对齐 Opportunity，失焦自动暂存 */}
             <Section title="客户信息">
               <TextField label="姓名" value={draft.name} onChange={f('name')} onBlur={onBlurSave} placeholder="客户姓名" />
-              <TextField label="公司" value={draft.company} onChange={f('company')} onBlur={onBlurSave} placeholder="公司名称（关系在商机内维护）" />
+              <CompanyField value={draft.company} selectedId={draft.companyId} onChange={updateCompany} onPick={pickCompany} onBlur={onBlurSave} />
               <TextField label="电话" value={draft.phone} onChange={f('phone')} onBlur={onBlurSave} />
               <TextField label="邮箱" value={draft.email} onChange={f('email')} onBlur={onBlurSave} placeholder="多个邮箱可用空格/逗号分隔" />
               <TextField label="国家" value={draft.country} onChange={f('country')} onBlur={onBlurSave} />
