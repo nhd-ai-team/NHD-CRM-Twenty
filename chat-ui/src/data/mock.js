@@ -9,7 +9,6 @@ export const STATUS_FILTERS = [
   { id: 'unread',   label: '未读' },
   { id: 'open',     label: '进行中' },
   { id: 'takeover', label: '人工接管' },
-  { id: 'closed',   label: '已关闭' },
 ]
 
 export const CONVERSATIONS = [
