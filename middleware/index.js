@@ -431,6 +431,7 @@ const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', in
 
 // 右侧「资料」面板草稿自动暂存（失焦即存）。草稿存会话的 lead_draft(jsonb)。
 const DRAFT_FIELDS = ['name', 'company', 'phone', 'email', 'country', 'source', 'companyType', 'stage', 'product', 'note'];
+const OPPORTUNITY_EMAIL_FIELD = 'youXiang';
 app.put('/api/conversations/:id/draft', requireSameSite, async (req, res) => {
   const b = req.body || {};
   const draft = {};
@@ -501,7 +502,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   }
   const email = String(b.email || '').trim();
   if (email) {
-    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) data.email = { primaryEmail: email };
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) data[OPPORTUNITY_EMAIL_FIELD] = email;
     else skipped.push('email');
   }
   const country = String(b.country || '').trim();
@@ -520,7 +521,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
       const msg = (e.message || '').toLowerCase();
       if (msg.includes('phone') || msg.includes('email')) {
         if (msg.includes('phone')) { delete data.phone; skipped.push('phone'); }
-        if (msg.includes('email')) { delete data.email; skipped.push('email'); }
+        if (msg.includes('email')) { delete data[OPPORTUNITY_EMAIL_FIELD]; skipped.push('email'); }
         opp = await writeOpp(data);
       } else throw e;
     }
