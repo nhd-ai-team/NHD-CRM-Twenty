@@ -134,7 +134,7 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
               <TextField label="姓名" value={draft.name} onChange={f('name')} onBlur={onBlurSave} placeholder="客户姓名" />
               <TextField label="公司" value={draft.company} onChange={f('company')} onBlur={onBlurSave} placeholder="公司名称（关系在商机内维护）" />
               <TextField label="电话" value={draft.phone} onChange={f('phone')} onBlur={onBlurSave} />
-              <TextField label="邮箱" type="email" value={draft.email} onChange={f('email')} onBlur={onBlurSave} />
+              <TextField label="邮箱" value={draft.email} onChange={f('email')} onBlur={onBlurSave} placeholder="多个邮箱可用空格/逗号分隔" />
               <TextField label="国家" value={draft.country} onChange={f('country')} onBlur={onBlurSave} />
             </Section>
 

@@ -106,7 +106,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
             <FormField label="公司"><input value={form.company} onChange={set('company')} style={inputStyle} placeholder="公司名称（暂不关联，转入后在商机内维护）" /></FormField>
             <Row>
               <FormField label="电话"><input value={form.phone} onChange={set('phone')} style={inputStyle} /></FormField>
-              <FormField label="邮箱"><input value={form.email} onChange={set('email')} style={inputStyle} type="email" /></FormField>
+              <FormField label="邮箱"><input value={form.email} onChange={set('email')} style={inputStyle} placeholder="多个邮箱可用空格/逗号分隔" /></FormField>
             </Row>
             <Row>
               <FormField label="国家"><input value={form.country} onChange={set('country')} style={inputStyle} /></FormField>
