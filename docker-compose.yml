@@ -146,6 +146,7 @@ services:
       IMAP_PASSWORD: ${IMAP_PASSWORD:-}
       IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
       IMAP_POLL_SECONDS: ${IMAP_POLL_SECONDS:-60}
+      IMAP_INITIAL_FETCH_LIMIT: ${IMAP_INITIAL_FETCH_LIMIT:-20}
       # 调 ai-service /api/agent 的 Basic Auth（销售在 CRM 回复官网访客）
       AI_AGENT_USER: ${AI_AGENT_USER:-admin}
       AI_AGENT_PASSWORD: ${AI_AGENT_PASSWORD:-admin123}

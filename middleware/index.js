@@ -40,6 +40,7 @@ const IMAP_USER = process.env.IMAP_USER || '';
 const IMAP_PASSWORD = process.env.IMAP_PASSWORD || '';
 const IMAP_MAILBOX = process.env.IMAP_MAILBOX || 'INBOX';
 const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 60));
+const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let workspaceSchemaCache = null;
 
@@ -629,6 +630,47 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   res.json(result.rows);
 });
 
+app.get('/api/email/status', async (_req, res) => {
+  try {
+    const syncKey = getEmailSyncKey();
+    const sync = await getEmailSync(syncKey);
+    const counts = await pool.query(
+      `SELECT count(DISTINCT c.id)::int AS conversations, count(m.id)::int AS messages
+       FROM conv.conversations c
+       LEFT JOIN conv.messages m ON m.conversation_id = c.id
+       WHERE c.channel = 'email'`,
+    );
+    res.json({
+      configured: !!(IMAP_USER && IMAP_PASSWORD),
+      host: IMAP_HOST,
+      port: IMAP_PORT,
+      tls: IMAP_TLS,
+      user: IMAP_USER ? IMAP_USER.replace(/^(.{2}).*(@.*)?$/, (_m, head, domain) => `${head}***${domain || ''}`) : '',
+      mailbox: IMAP_MAILBOX,
+      pollSeconds: IMAP_POLL_SECONDS,
+      initialFetchLimit: IMAP_INITIAL_FETCH_LIMIT,
+      sync,
+      counts: counts.rows[0],
+    });
+  } catch (error) {
+    console.error('[email] status failed:', error.message);
+    res.status(502).json({ error: 'email status failed', detail: error.message });
+  }
+});
+
+app.post('/api/email/sync-now', requireSameSite, async (_req, res) => {
+  if (!IMAP_USER || !IMAP_PASSWORD) {
+    return res.status(409).json({ error: 'IMAP not configured' });
+  }
+  try {
+    const result = await pollEmailsOnce();
+    res.json(result);
+  } catch (error) {
+    console.error('[email] manual sync failed:', error.message);
+    res.status(502).json({ error: 'email sync failed', detail: error.message });
+  }
+});
+
 app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => {
   const action = String(req.body?.action || '').trim();
   if (!['takeover', 'release'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
@@ -1014,9 +1056,18 @@ async function setEmailSync(mailbox, uidValidity, lastUid) {
     [mailbox, uidValidity, lastUid]);
 }
 
+function getEmailSyncKey() {
+  return `${IMAP_USER || 'default'}:${IMAP_MAILBOX}`;
+}
+
+function getInitialStartUid(uidNext) {
+  const next = Number(uidNext || 1);
+  return Math.max(0, next - 1 - IMAP_INITIAL_FETCH_LIMIT);
+}
+
 let emailPolling = false;
 async function pollEmailsOnce() {
-  if (emailPolling) return;
+  if (emailPolling) return { skipped: true, reason: 'poll already running' };
   emailPolling = true;
   const client = new ImapFlow({
     host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_TLS,
@@ -1028,21 +1079,25 @@ async function pollEmailsOnce() {
     try {
       const uidValidity = client.mailbox.uidValidity ? Number(client.mailbox.uidValidity) : null;
       const uidNext = client.mailbox.uidNext ? Number(client.mailbox.uidNext) : null;
-      const sync = await getEmailSync(IMAP_MAILBOX);
+      const syncKey = getEmailSyncKey();
+      const sync = await getEmailSync(syncKey);
       const firstRun = sync.uidValidity == null && Number(sync.lastUid) === 0;
       let startUid = Number(sync.lastUid) || 0;
       // uidValidity 变化：旧 UID 失效，从头（去重仍靠 Message-ID）
-      if (sync.uidValidity != null && uidValidity != null && Number(sync.uidValidity) !== uidValidity) startUid = 0;
-      // 首次接入只跟踪「此刻之后的新邮件」，不回灌历史
-      if (firstRun && uidNext) {
-        startUid = uidNext - 1;
-        await setEmailSync(IMAP_MAILBOX, uidValidity, startUid);
-        console.log(`[email] first run: tracking new mail with uid>${startUid}`);
+      if (sync.uidValidity != null && uidValidity != null && Number(sync.uidValidity) !== uidValidity) {
+        startUid = getInitialStartUid(uidNext);
+        console.log(`[email] uidValidity changed, backfilling recent uid>${startUid}`);
       }
-      let maxUid = startUid, newCount = 0;
+      // 首次接入回拉最近一小批邮件，便于验证链路；之后只增量同步新邮件
+      if (firstRun && uidNext) {
+        startUid = getInitialStartUid(uidNext);
+        console.log(`[email] first run: backfilling up to ${IMAP_INITIAL_FETCH_LIMIT} recent mail(s), uid>${startUid}`);
+      }
+      let maxUid = startUid, fetchedCount = 0, insertedCount = 0;
       for await (const msg of client.fetch(`${startUid + 1}:*`, { uid: true, source: true }, { uid: true })) {
         if (msg.uid <= startUid) continue; // 'N:*' 在无新邮件时会回最后一封，需过滤
         maxUid = Math.max(maxUid, msg.uid);
+        fetchedCount++;
         try {
           const parsed = await simpleParser(msg.source);
           const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
@@ -1050,17 +1105,18 @@ async function pollEmailsOnce() {
             filename: a.filename || '(未命名)', size: a.size || 0, contentType: a.contentType || '',
           }));
           const body = (parsed.text || '').trim() || htmlToText(parsed.html || '');
-          await persistEmailMessage({
+          const inserted = await persistEmailMessage({
             fromAddress: from.address, fromName: from.name,
             subject: parsed.subject || '(无主题)', body, attachments,
             messageId: parsed.messageId || `email:${uidValidity}:${msg.uid}`,
             sentAt: parsed.date || new Date(),
           });
-          newCount++;
+          if (inserted) insertedCount++;
         } catch (e) { console.error('[email] parse/persist failed uid', msg.uid, e.message); }
       }
-      if (maxUid > startUid) await setEmailSync(IMAP_MAILBOX, uidValidity, maxUid);
-      if (newCount) console.log(`[email] ingested ${newCount} message(s), lastUid=${maxUid}`);
+      if (maxUid > startUid) await setEmailSync(syncKey, uidValidity, maxUid);
+      if (fetchedCount || insertedCount) console.log(`[email] fetched ${fetchedCount}, inserted ${insertedCount}, lastUid=${maxUid}`);
+      return { skipped: false, fetched: fetchedCount, inserted: insertedCount, lastUid: maxUid };
     } finally { lock.release(); }
   } finally {
     try { await client.logout(); } catch (e) {}
