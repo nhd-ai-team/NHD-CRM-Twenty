@@ -759,6 +759,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     if (emails.length > 0 && emails.every((item) => EMAIL_RE.test(item))) data[OPPORTUNITY_EMAIL_FIELD] = emails.join(', ');
     else skipped.push('email');
   }
+  if ((rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
   const country = String(b.country || '').trim();
   if (country) data.country = { addressCountry: country };
 

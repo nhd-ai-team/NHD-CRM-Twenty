@@ -17,6 +17,14 @@ const STAGE_OPTIONS = [
 ]
 // 会话渠道 → 客户来源默认值
 const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', instagram: 'INS', facebook: 'FACEBOOK' }
+const INITIAL_STAGE = 'XIANSUO'
+const CONTACT_METHOD_STAGE = 'YOUXIAO_XIANSUO'
+
+function applyContactMethodStage(form) {
+  if (!String(form.phone || '').trim() && !String(form.email || '').trim()) return form
+  if (form.stage && form.stage !== INITIAL_STAGE) return form
+  return { ...form, stage: CONTACT_METHOD_STAGE }
+}
 
 export function ConvertToLeadDrawer({ conv, onClose }) {
   const [form, setForm] = useState({
@@ -28,7 +36,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
     source: SOURCE_BY_CHANNEL[conv?.channel] ?? '',
     product: '',
     companyType: '',
-    stage: 'XIANSUO',
+    stage: INITIAL_STAGE,
     note: '',
   })
   const [status, setStatus] = useState('idle') // idle | saving | done | error
@@ -44,7 +52,10 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
   if (!conv) return null
 
   const saving = status === 'saving'
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }))
+  const set = (k) => (e) => setForm((f) => {
+    const next = { ...f, [k]: e.target.value }
+    return (k === 'phone' || k === 'email') ? applyContactMethodStage(next) : next
+  })
   const safeClose = () => { if (!saving) onClose() } // 保存中不允许点遮罩关闭
 
   async function handleSubmit(e) {

@@ -15,11 +15,23 @@ function getLayout(w) {
 }
 
 const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', instagram: 'INS', facebook: 'FACEBOOK' }
+const INITIAL_STAGE = 'XIANSUO'
+const CONTACT_METHOD_STAGE = 'YOUXIAO_XIANSUO'
+
+function hasContactMethod(draft) {
+  return !!String(draft?.phone || '').trim() || !!String(draft?.email || '').trim()
+}
+
+function applyContactMethodStage(draft) {
+  if (!hasContactMethod(draft)) return draft
+  if (draft.stage && draft.stage !== INITIAL_STAGE) return draft
+  return { ...draft, stage: CONTACT_METHOD_STAGE }
+}
 
 // 用已保存草稿 + 联系人/渠道默认值，组装侧栏表单初值。
 function buildDraft(conv) {
   const s = conv?.leadDraft || {}
-  return {
+  return applyContactMethodStage({
     // 姓名不预填系统占位名（如「网站访客 xxx」），留空让销售填真实联系人姓名。
     name: s.name ?? '',
     company: s.company ?? '',
@@ -29,10 +41,10 @@ function buildDraft(conv) {
     country: s.country ?? '',
     source: s.source ?? SOURCE_BY_CHANNEL[conv?.channel] ?? '',
     companyType: s.companyType ?? '',
-    stage: s.stage ?? 'XIANSUO',
+    stage: s.stage ?? INITIAL_STAGE,
     product: s.product ?? '',
     note: s.note ?? '',
-  }
+  })
 }
 
 function ChannelBar({ conversations, activeChannel, setActiveChannel }) {
@@ -99,7 +111,10 @@ export default function App() {
     return () => clearTimeout(t)
   }, [toast])
 
-  const setField = useCallback((k, v) => setDraft((d) => ({ ...d, [k]: v })), [])
+  const setField = useCallback((k, v) => setDraft((d) => {
+    const next = { ...d, [k]: v }
+    return (k === 'phone' || k === 'email') ? applyContactMethodStage(next) : next
+  }), [])
 
   const saveDraft = useCallback(async (next) => {
     if (!selectedId) return
@@ -112,7 +127,7 @@ export default function App() {
 
   const setFields = useCallback((patch, save = false) => {
     setDraft((d) => {
-      const next = { ...d, ...patch }
+      const next = applyContactMethodStage({ ...d, ...patch })
       if (save) saveDraft(next)
       return next
     })
