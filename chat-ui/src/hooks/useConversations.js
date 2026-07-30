@@ -68,20 +68,6 @@ export function useConversations() {
     await loadConversations()
   }
 
-  async function setAiEnabled(convId, enabled) {
-    if (!convId) return
-    const response = await fetch(`/conv-api/conversations/${convId}/ai-config`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
-    })
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}))
-      throw new Error(data.error || 'AI配置保存失败')
-    }
-    await loadConversations()
-  }
-
   function closeConversation(convId) {
     setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, status: 'closed' }))
   }
@@ -100,6 +86,6 @@ export function useConversations() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, setAiEnabled, closeConversation,
+    sendMessage, setTakeover, closeConversation,
   }
 }

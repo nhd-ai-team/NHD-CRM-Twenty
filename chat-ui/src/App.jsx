@@ -122,7 +122,7 @@ export default function App() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, setAiEnabled,
+    sendMessage, setTakeover,
   } = useConversations()
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
@@ -133,8 +133,6 @@ export default function App() {
   const [draft, setDraft] = useState({})
   const [converting, setConverting] = useState(false)
   const [convertConfirmOpen, setConvertConfirmOpen] = useState(false)
-  const [aiConfigOpen, setAiConfigOpen] = useState(false)
-  const [aiConfigSaving, setAiConfigSaving] = useState(false)
   const [toast, setToast] = useState(null) // { type: 'ok' | 'err', msg }
 
   // 切换会话时重建草稿（用 selectedId，避免轮询刷新覆盖正在编辑的内容）。
@@ -172,19 +170,6 @@ export default function App() {
     if (!selected || converting) return
     setConvertConfirmOpen(true)
   }, [selected, converting])
-
-  const toggleAiEnabled = useCallback(async () => {
-    if (!selected || aiConfigSaving) return
-    setAiConfigSaving(true)
-    try {
-      await setAiEnabled(selected.id, !selected.aiControl?.enabled)
-      setToast({ type: 'ok', msg: !selected.aiControl?.enabled ? '已启用AI客服' : '已关闭AI客服' })
-    } catch (e) {
-      setToast({ type: 'err', msg: e.message })
-    } finally {
-      setAiConfigSaving(false)
-    }
-  }, [selected, aiConfigSaving, setAiEnabled])
 
   const convertLead = useCallback(async () => {
     if (!selected || converting) return
@@ -232,7 +217,7 @@ export default function App() {
           setActiveChannel={setActiveChannel}
           contactOpen={contactOpen}
           onToggleContact={() => setContactOpen((open) => !open)}
-          onAiConfig={() => setAiConfigOpen(true)}
+          onAiConfig={() => setToast({ type: 'err', msg: 'AI配置待接入' })}
         />
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
@@ -324,68 +309,6 @@ export default function App() {
                 }}
               >
                 {converting ? '处理中…' : `确认${selected?.contact?.filedStatus === 'lead' ? '更新' : '写入'}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {aiConfigOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 180, background: 'rgba(0,0,0,.42)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
-        }}>
-          <div style={{
-            width: 'min(380px, 100%)', borderRadius: 8, background: 'var(--bg-primary)',
-            border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,.28)',
-            overflow: 'hidden',
-          }}>
-            <div style={{ padding: '16px 18px 12px' }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>AI配置</div>
-              <div style={{
-                marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                gap: 16, padding: '12px 0',
-              }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>AI客服</div>
-                  <div style={{ marginTop: 4, fontSize: 12, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
-                    启用后当前会话可由AI托管；关闭后AI托管与接管入口会暂停。
-                  </div>
-                </div>
-                <label style={{
-                  width: 42, height: 24, borderRadius: 999, padding: 2, flexShrink: 0,
-                  background: selected?.aiControl?.enabled ? 'var(--accent)' : 'var(--bg-active)',
-                  cursor: selected ? 'pointer' : 'not-allowed', opacity: aiConfigSaving ? .7 : 1,
-                  transition: 'background .15s',
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={!!selected?.aiControl?.enabled}
-                    disabled={!selected || aiConfigSaving}
-                    onChange={toggleAiEnabled}
-                    style={{ display: 'none' }}
-                  />
-                  <span style={{
-                    display: 'block', width: 20, height: 20, borderRadius: '50%', background: '#fff',
-                    transform: selected?.aiControl?.enabled ? 'translateX(18px)' : 'translateX(0)',
-                    transition: 'transform .15s', boxShadow: '0 1px 3px rgba(0,0,0,.22)',
-                  }} />
-                </label>
-              </div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                话术、知识库、允许回答范围等复杂配置后续在系统设置中维护。
-              </div>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '12px 18px 16px', borderTop: '1px solid var(--border-soft)' }}>
-              <button
-                onClick={() => setAiConfigOpen(false)}
-                style={{
-                  padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)',
-                  background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer',
-                  fontSize: 12, fontWeight: 600,
-                }}
-              >
-                关闭
               </button>
             </div>
           </div>
