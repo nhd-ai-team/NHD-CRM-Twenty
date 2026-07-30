@@ -295,6 +295,8 @@ async function syncPerson(phone, displayName) {
 // WhatsApp / Instagram 个人号或企业号默认「建议模式」：只落草稿供销售确认，不自动发送（避免封号/误发）。
 async function requestAiSuggestion(conversation, customerMessageId, message) {
   if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY || !message?.trim()) return;
+  const aiEnabled = conversation.ai_enabled ?? (conversation.channel === 'website');
+  if (!aiEnabled) return;
   const suggestionExternalId = `ai:${customerMessageId}`;
   // 幂等：webhook 可能重复投递，已生成过草稿则跳过
   const exists = await pool.query('SELECT 1 FROM conv.messages WHERE external_msg_id = $1', [suggestionExternalId]);
@@ -641,6 +643,17 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
   } finally {
     client.release();
   }
+});
+
+app.patch('/api/conversations/:id/ai-config', requireSameSite, async (req, res) => {
+  const enabled = Boolean(req.body?.enabled);
+  const result = await pool.query(
+    `UPDATE conv.conversations SET ai_enabled = $2, updated_at = now()
+     WHERE id = $1 RETURNING id, ai_enabled AS "aiEnabled"`,
+    [req.params.id, enabled],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'conversation not found' });
+  res.json(result.rows[0]);
 });
 
 app.get('/api/companies/search', requireSameSite, async (req, res) => {

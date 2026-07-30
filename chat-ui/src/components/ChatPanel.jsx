@@ -107,11 +107,7 @@ function ActionBar({ conv, onRequestAction }) {
       : ''
 
   return (
-    <div style={{
-      display: 'flex', gap: 8, padding: '5px 16px 4px',
-      borderTop: '1px solid var(--border-soft)', flexWrap: 'wrap', alignItems: 'center',
-      minHeight: 36, flexShrink: 0,
-    }}>
+    <>
       {/* Takeover */}
       {!isClosed && !isTakeover && (
         <button
@@ -133,7 +129,7 @@ function ActionBar({ conv, onRequestAction }) {
           <Bot size={13} /> AI托管
         </button>
       )}
-    </div>
+    </>
   )
 }
 
@@ -268,7 +264,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
           display: 'flex', alignItems: 'center', gap: 4,
           padding: '6px 12px 10px', justifyContent: 'space-between',
         }}>
-          <div style={{ display: 'flex', gap: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button title="附件上传" style={{
               padding: 6, border: 'none', background: 'transparent', cursor: 'pointer',
               color: 'var(--text-muted)', borderRadius: 4,
@@ -276,6 +272,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
             }}>
               <Paperclip size={15} />
             </button>
+            <ActionBar conv={conv} onRequestAction={setPendingAction} />
           </div>
           {sendError && (
             <div style={{ flex: 1, minWidth: 0, color: '#e1262b', fontSize: 12, padding: '0 8px' }}>
@@ -302,9 +299,6 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
           </div>
         </div>
       </div>
-
-      {/* Action bar */}
-      <ActionBar conv={conv} onRequestAction={setPendingAction} />
 
       {pendingAction && (
         <div style={{
