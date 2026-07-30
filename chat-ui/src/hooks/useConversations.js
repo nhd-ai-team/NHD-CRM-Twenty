@@ -82,7 +82,7 @@ export function useConversations() {
   }
 
   return {
-    filtered, selected, selectedId, selectConversation,
+    conversations, filtered, selected, selectedId, selectConversation,
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,

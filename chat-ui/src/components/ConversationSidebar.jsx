@@ -1,7 +1,7 @@
 import { Search } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
-import { CHANNELS, STATUS_FILTERS } from '../data/mock'
+import { STATUS_FILTERS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 
 function Avatar({ contact, size = 36 }) {
@@ -19,6 +19,7 @@ function Avatar({ contact, size = 36 }) {
 }
 
 function FiledTag({ status }) {
+  if (status === 'lead') return null
   if (status === 'unfiled') return (
     <span style={{fontSize:10,padding:'1px 6px',borderRadius:3,background:'var(--tag-unfiled-bg)',color:'var(--tag-unfiled-text)',fontWeight:600,whiteSpace:'nowrap'}}>
       未建档
@@ -27,11 +28,6 @@ function FiledTag({ status }) {
   if (status === 'customer') return (
     <span style={{fontSize:10,padding:'1px 6px',borderRadius:3,background:'var(--tag-customer-bg)',color:'var(--tag-customer-text)',fontWeight:600,whiteSpace:'nowrap'}}>
       客户
-    </span>
-  )
-  if (status === 'lead') return (
-    <span style={{fontSize:10,padding:'1px 6px',borderRadius:3,background:'var(--green-soft)',color:'var(--green)',fontWeight:600,whiteSpace:'nowrap'}}>
-      线索
     </span>
   )
   return null
@@ -100,45 +96,12 @@ function ConvCard({ conv, isSelected, onSelect }) {
   )
 }
 
-export function ConversationSidebar({ conversations, selectedId, onSelect, activeChannel, setActiveChannel, activeStatus, setActiveStatus, search, setSearch }) {
+export function ConversationSidebar({ conversations, selectedId, onSelect, activeStatus, setActiveStatus, search, setSearch }) {
   return (
     <div style={{
       width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
       background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', height: '100%',
     }}>
-      {/* Channel tabs */}
-      <div style={{
-        display: 'flex', borderBottom: '1px solid var(--border)',
-        background: 'var(--bg-primary)', overflowX: 'auto', flexShrink: 0,
-      }}>
-        {CHANNELS.map(ch => (
-          <button
-            key={ch.id}
-            onClick={() => setActiveChannel(ch.id)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px',
-              fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', border: 'none',
-              background: 'transparent', cursor: 'pointer',
-              color: activeChannel === ch.id ? 'var(--accent)' : 'var(--text-secondary)',
-              borderBottom: activeChannel === ch.id ? '2px solid var(--accent)' : '2px solid transparent',
-              transition: 'color .15s',
-            }}
-          >
-            {ch.id !== 'all' && <ChannelIcon channel={ch.id} size={13} />}
-            {ch.label}
-            {ch.id !== 'all' && (
-              <span style={{
-                fontSize: 10, padding: '0 5px', borderRadius: 10, fontWeight: 700,
-                background: activeChannel === ch.id ? 'var(--accent-soft)' : 'var(--bg-active)',
-                color: activeChannel === ch.id ? 'var(--accent-text)' : 'var(--text-muted)',
-              }}>
-                {conversations.filter(c => c.channel === ch.id).length}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
       {/* Search */}
       <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-soft)', flexShrink: 0 }}>
         <div style={{
@@ -150,7 +113,7 @@ export function ConversationSidebar({ conversations, selectedId, onSelect, activ
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="搜索联系人、消息、电话..."
+            placeholder="搜索联系人、消息、WhatsApp..."
             style={{
               flex: 1, border: 'none', background: 'transparent', outline: 'none',
               fontSize: 12, color: 'var(--text-primary)',

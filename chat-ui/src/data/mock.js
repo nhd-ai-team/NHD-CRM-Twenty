@@ -1,7 +1,9 @@
 export const CHANNELS = [
   { id: 'all',       label: '全部',          icon: 'grid' },
-  { id: 'whatsapp',  label: 'WhatsApp 对话', icon: 'whatsapp' },
-  { id: 'website',   label: '网站聊天',       icon: 'globe' },
+  { id: 'whatsapp',  label: 'WhatsApp',      icon: 'whatsapp' },
+  { id: 'website',   label: '官网',           icon: 'globe' },
+  { id: 'instagram', label: 'Instagram',     icon: 'instagram' },
+  { id: 'facebook',  label: 'Facebook',      icon: 'facebook' },
 ]
 
 export const STATUS_FILTERS = [

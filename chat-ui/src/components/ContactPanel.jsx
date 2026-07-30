@@ -143,7 +143,7 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
 
   const panelStyle = inline
     ? { width: 270, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', height: '100%' }
-    : { position: 'fixed', top: 0, right: 0, bottom: 0, width: 300, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 16px rgba(0,0,0,.08)' }
+    : { position: 'fixed', top: 44, right: 0, bottom: 0, width: 300, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 16px rgba(0,0,0,.08)' }
 
   const f = (k) => (v) => onField(k, v)
   const updateCompany = (value) => {
@@ -163,7 +163,6 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
 
   return (
     <>
-      {!inline && <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 49, background: 'rgba(0,0,0,.25)' }} />}
       <div style={panelStyle}>
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)', overflowX: 'auto', flexShrink: 0 }}>
           {TABS.map((t) => (
@@ -191,7 +190,7 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
                   <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><ChannelIcon channel={conv.channel} size={12} />{channelLabel}</span>
-                    {converted && <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--green)', background: 'var(--green-soft)', padding: '1px 7px', borderRadius: 20 }}>✓ 已转线索</span>}
+                    {converted && <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--green)', background: 'var(--green-soft)', padding: '1px 7px', borderRadius: 20 }}>✓ 已更新</span>}
                   </div>
                 </div>
               </div>
@@ -213,7 +212,7 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
             <Section title="客户信息">
               <TextField label="姓名" value={draft.name} onChange={f('name')} onBlur={onBlurSave} placeholder="客户姓名" />
               <CompanyField value={draft.company} selectedId={draft.companyId} onChange={updateCompany} onPick={pickCompany} onBlur={onBlurSave} />
-              <TextField label="电话" value={draft.phone} onChange={f('phone')} onBlur={onBlurSave} />
+              <TextField label="WhatsApp" value={draft.phone} onChange={f('phone')} onBlur={onBlurSave} />
               <TextField label="邮箱" value={draft.email} onChange={f('email')} onBlur={onBlurSave} placeholder="多个邮箱可用空格/逗号分隔" />
               <TextField label="国家" value={draft.country} onChange={f('country')} onBlur={onBlurSave} />
             </Section>

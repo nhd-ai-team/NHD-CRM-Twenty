@@ -4,6 +4,8 @@ import { ChatPanel } from './components/ChatPanel'
 import { ContactPanel } from './components/ContactPanel'
 import { useConversations } from './hooks/useConversations'
 import { installTwentyAuthMessageListener, withTwentyAuthHeaders } from './utils/twentyAuth'
+import { CHANNELS } from './data/mock'
+import { ChannelIcon } from './components/ChannelIcon'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -33,11 +35,46 @@ function buildDraft(conv) {
   }
 }
 
+function ChannelBar({ conversations, activeChannel, setActiveChannel }) {
+  return (
+    <div style={{
+      height: 44, flexShrink: 0, display: 'flex', alignItems: 'stretch',
+      borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)',
+      overflow: 'hidden',
+    }}>
+      {CHANNELS.map((ch) => {
+        const active = activeChannel === ch.id
+        const count = ch.id === 'all' ? conversations.length : conversations.filter(c => c.channel === ch.id).length
+        return (
+          <button
+            key={ch.id}
+            onClick={() => setActiveChannel(ch.id)}
+            style={{
+              flex: '1 1 0', minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 6, padding: '0 10px', border: 'none', borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+              background: 'transparent', color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              cursor: 'pointer', fontSize: 12.5, fontWeight: active ? 700 : 500,
+            }}
+          >
+            {ch.id !== 'all' && <ChannelIcon channel={ch.id} size={14} />}
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.label}</span>
+            <span style={{
+              fontSize: 10, padding: '1px 6px', borderRadius: 10, fontWeight: 700,
+              background: active ? 'var(--accent-soft)' : 'var(--bg-active)',
+              color: active ? 'var(--accent-text)' : 'var(--text-muted)',
+            }}>{count}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function App() {
   useEffect(() => installTwentyAuthMessageListener(), [])
 
   const {
-    filtered, selected, selectedId, selectConversation,
+    conversations, filtered, selected, selectedId, selectConversation,
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
@@ -46,7 +83,6 @@ export default function App() {
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [contactOpen, setContactOpen] = useState(() => getLayout(window.innerWidth) === 'wide')
 
   // ── 右侧「资料」草稿：编辑就地进行，失焦自动暂存；「转为线索」一键推送 Opportunity ──
   const [draft, setDraft] = useState({})
@@ -84,16 +120,11 @@ export default function App() {
 
   const requestConvertLead = useCallback(() => {
     if (!selected || converting) return
-    if (!draft.name?.trim() && !draft.company?.trim()) {
-      setToast({ type: 'err', msg: '请先填写姓名或公司' })
-      return
-    }
     setConvertConfirmOpen(true)
-  }, [selected, draft, converting])
+  }, [selected, converting])
 
   const convertLead = useCallback(async () => {
     if (!selected || converting) return
-    if (!draft.name?.trim() && !draft.company?.trim()) { setToast({ type: 'err', msg: '请先填写姓名或公司' }); return }
     setConvertConfirmOpen(false)
     setConverting(true)
     try {
@@ -104,7 +135,7 @@ export default function App() {
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setToast({ type: 'err', msg: d.error || `转化失败 (${res.status})` }); return }
       const skip = Array.isArray(d.skipped) && d.skipped.length
-        ? `（${d.skipped.map((s) => (s === 'phone' ? '电话' : s === 'email' ? '邮箱' : s)).join('、')}格式无效已跳过）` : ''
+        ? `（${d.skipped.map((s) => (s === 'phone' ? 'WhatsApp' : s === 'email' ? '邮箱' : s)).join('、')}格式无效已跳过）` : ''
       setToast({ type: 'ok', msg: (d.updated ? '已更新到线索' : '已转为线索并写入线索') + skip })
     } catch (e) {
       setToast({ type: 'err', msg: e.message })
@@ -128,54 +159,58 @@ export default function App() {
 
   return (
     <div style={{
-      display: 'flex', height: '100vh', overflow: 'hidden',
+      display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden',
       background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'var(--font-sans)',
     }}>
-      {isNarrow && sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 48, background: 'rgba(0,0,0,.3)' }} />
-      )}
+      <ChannelBar conversations={conversations} activeChannel={activeChannel} setActiveChannel={setActiveChannel} />
 
-      <div style={{
-        position: isNarrow ? 'fixed' : 'relative', top: 0, left: 0, bottom: 0,
-        zIndex: isNarrow ? 49 : 'auto',
-        transform: isNarrow && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
-        transition: 'transform .2s ease', flexShrink: 0, display: 'flex',
-      }}>
-        <ConversationSidebar
-          conversations={filtered}
-          selectedId={selectedId}
-          onSelect={(id) => { selectConversation(id); if (isNarrow) setSidebarOpen(false) }}
-          activeChannel={activeChannel}
-          setActiveChannel={setActiveChannel}
-          activeStatus={activeStatus}
-          setActiveStatus={setActiveStatus}
-          search={search}
-          setSearch={setSearch}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {isNarrow && sidebarOpen && (
+          <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 48, background: 'rgba(0,0,0,.3)' }} />
+        )}
+
+        <div style={{
+          position: isNarrow ? 'fixed' : 'relative', top: 44, left: 0, bottom: 0,
+          height: isNarrow ? 'calc(100vh - 44px)' : '100%',
+          zIndex: isNarrow ? 49 : 'auto',
+          transform: isNarrow && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
+          transition: 'transform .2s ease', flexShrink: 0, display: 'flex',
+        }}>
+          <ConversationSidebar
+            conversations={filtered}
+            selectedId={selectedId}
+            onSelect={(id) => { selectConversation(id); if (isNarrow) setSidebarOpen(false) }}
+            activeStatus={activeStatus}
+            setActiveStatus={setActiveStatus}
+            search={search}
+            setSearch={setSearch}
+          />
+        </div>
+
+        <ChatPanel
+          conv={selected}
+          onSend={sendMessage}
+          onTakeover={(action) => setTakeover(selected?.id, action)}
+          layout={layout}
+          contactOpen={true}
+          contactFixed={true}
+          onToggleContact={() => {}}
+          onToggleSidebar={() => setSidebarOpen(o => !o)}
+        />
+
+        <ContactPanel
+          conv={selected}
+          inline={isWide}
+          open={true}
+          onClose={() => {}}
+          draft={draft}
+          onField={setField}
+          onFields={setFields}
+          onBlurSave={() => saveDraft(draft)}
+          onConvert={requestConvertLead}
+          converting={converting}
         />
       </div>
-
-      <ChatPanel
-        conv={selected}
-        onSend={sendMessage}
-        onTakeover={(action) => setTakeover(selected?.id, action)}
-        layout={layout}
-        contactOpen={contactOpen}
-        onToggleContact={() => setContactOpen(o => !o)}
-        onToggleSidebar={() => setSidebarOpen(o => !o)}
-      />
-
-      <ContactPanel
-        conv={selected}
-        inline={isWide}
-        open={contactOpen}
-        onClose={() => setContactOpen(false)}
-        draft={draft}
-        onField={setField}
-        onFields={setFields}
-        onBlurSave={() => saveDraft(draft)}
-        onConvert={requestConvertLead}
-        converting={converting}
-      />
 
       {convertConfirmOpen && (
         <div style={{
@@ -192,7 +227,7 @@ export default function App() {
                 确认{selected?.contact?.filedStatus === 'lead' ? '更新线索' : '转为线索'}？
               </div>
               <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-                当前右侧资料会写入线索。请确认客户姓名、公司、电话、邮箱、国家、客户来源、公司类型、线索阶段、需求产品和备注无误。
+                当前右侧资料会写入线索。请确认客户姓名、公司、WhatsApp、邮箱、国家、客户来源、公司类型、线索阶段、需求产品和备注无误。
               </div>
             </div>
             <div style={{

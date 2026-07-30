@@ -688,10 +688,9 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (!auditActor) console.warn('[audit] request summary:', auditRequestSummary(req));
   const name = String(b.name || '').trim();
   const company = String(b.company || '').trim();
-  if (!name && !company) return res.status(400).json({ error: '姓名或公司至少填写一个' });
 
   const cr = await pool.query(
-    `SELECT c.id, c.channel, c.contact_id, ct.twenty_opportunity_id
+    `SELECT c.id, c.channel, c.contact_id, ct.display_name AS contact_name, ct.phone AS contact_phone, ct.twenty_opportunity_id
      FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id WHERE c.id = $1`, [req.params.id]);
   const row = cr.rows[0];
   if (!row) return res.status(404).json({ error: 'conversation not found' });
@@ -724,8 +723,9 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     } catch (error) { console.error('[convert-to-lead] person write failed:', error.message); }
   }
 
-  // 商机名用公司（缺则用姓名兜底）；公司字段优先关联库内 Company，找不到才新建。
-  const data = { name: company || name };
+  // 线索名用公司/姓名；都为空时用会话联系人或 WhatsApp 号兜底，允许销售后续补填。
+  const fallbackLeadName = row.contact_phone || row.contact_name || `${row.channel || '渠道'}线索`;
+  const data = { name: company || name || fallbackLeadName };
   let companyId = String(b.companyId || '').trim();
   if (!companyId && company) {
     try {
