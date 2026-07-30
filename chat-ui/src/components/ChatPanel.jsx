@@ -4,7 +4,7 @@ import { zhCN } from 'date-fns/locale'
 import {
   UserCheck, Bot,
   Send, Paperclip,
-  PanelRightOpen, PanelRightClose, Menu, Settings,
+  Menu,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -150,7 +150,7 @@ function btnStyle(variant, disabled = false) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, contactFixed = false, onToggleContact, onToggleSidebar }) {
+export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar }) {
   const [input, setInput] = useState('')
   const [pendingAction, setPendingAction] = useState(null)
   const [switching, setSwitching] = useState(false)
@@ -234,25 +234,6 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, conta
           {layout === 'narrow' && (
             <button onClick={onToggleSidebar} style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', borderRadius: 4 }}>
               <Menu size={16} />
-            </button>
-          )}
-          {layout !== 'narrow' && (
-            <button
-              onClick={() => setSendError('AI配置待接入')}
-              title="AI配置"
-              aria-label="AI配置"
-              style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', borderRadius: 4 }}
-            >
-              <Settings size={16} />
-            </button>
-          )}
-          {layout !== 'narrow' && (
-            <button
-              onClick={contactFixed ? undefined : onToggleContact}
-              title={contactFixed ? '资料面板已固定展开' : contactOpen ? '收起联系人信息' : '展开联系人信息'}
-              style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: contactFixed ? 'default' : 'pointer', color: contactOpen ? 'var(--accent)' : 'var(--text-muted)', borderRadius: 4 }}
-            >
-              {contactOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
             </button>
           )}
         </div>

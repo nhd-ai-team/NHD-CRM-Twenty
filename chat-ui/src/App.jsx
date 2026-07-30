@@ -6,6 +6,7 @@ import { useConversations } from './hooks/useConversations'
 import { installTwentyAuthMessageListener, withTwentyAuthHeaders } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
+import { PanelRightOpen, PanelRightClose, Settings } from 'lucide-react'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -47,7 +48,17 @@ function buildDraft(conv) {
   })
 }
 
-function ChannelBar({ conversations, activeChannel, setActiveChannel }) {
+function topIconButtonStyle(active = false) {
+  return {
+    width: 30, height: 30, borderRadius: 6, border: 'none',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: active ? 'var(--accent-soft)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-muted)',
+    cursor: 'pointer',
+  }
+}
+
+function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpen, onToggleContact, onAiConfig }) {
   return (
     <div style={{
       height: 44, flexShrink: 0, display: 'flex', alignItems: 'stretch',
@@ -78,6 +89,27 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel }) {
           </button>
         )
       })}
+      <div style={{
+        flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 4,
+        padding: '0 10px', borderLeft: '1px solid var(--border-soft)',
+      }}>
+        <button
+          onClick={onAiConfig}
+          title="AI配置"
+          aria-label="AI配置"
+          style={topIconButtonStyle(false)}
+        >
+          <Settings size={16} />
+        </button>
+        <button
+          onClick={onToggleContact}
+          title={contactOpen ? '收起资料表单' : '展开资料表单'}
+          aria-label={contactOpen ? '收起资料表单' : '展开资料表单'}
+          style={topIconButtonStyle(contactOpen)}
+        >
+          {contactOpen ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        </button>
+      </div>
     </div>
   )
 }
@@ -95,6 +127,7 @@ export default function App() {
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [contactOpen, setContactOpen] = useState(true)
 
   // ── 右侧「资料」草稿：编辑就地进行，失焦自动暂存；「转为线索」一键推送 Opportunity ──
   const [draft, setDraft] = useState({})
@@ -178,7 +211,14 @@ export default function App() {
       background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'var(--font-sans)',
     }}>
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
-        <ChannelBar conversations={conversations} activeChannel={activeChannel} setActiveChannel={setActiveChannel} />
+        <ChannelBar
+          conversations={conversations}
+          activeChannel={activeChannel}
+          setActiveChannel={setActiveChannel}
+          contactOpen={contactOpen}
+          onToggleContact={() => setContactOpen((open) => !open)}
+          onAiConfig={() => setToast({ type: 'err', msg: 'AI配置待接入' })}
+        />
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           {isNarrow && sidebarOpen && (
@@ -208,9 +248,6 @@ export default function App() {
             onSend={sendMessage}
             onTakeover={(action) => setTakeover(selected?.id, action)}
             layout={layout}
-            contactOpen={true}
-            contactFixed={true}
-            onToggleContact={() => {}}
             onToggleSidebar={() => setSidebarOpen(o => !o)}
           />
         </div>
@@ -219,8 +256,8 @@ export default function App() {
       <ContactPanel
         conv={selected}
         inline={isWide}
-        open={true}
-        onClose={() => {}}
+        open={contactOpen}
+        onClose={() => setContactOpen(false)}
         draft={draft}
         onField={setField}
         onFields={setFields}
