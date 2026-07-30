@@ -9,13 +9,42 @@
 
   // ── iframe management ──────────────────────────────────────────────────────
 
+  function getCookie(name) {
+    var prefix = name + '=';
+    var parts = document.cookie ? document.cookie.split(';') : [];
+    for (var i = 0; i < parts.length; i++) {
+      var part = parts[i].trim();
+      if (part.indexOf(prefix) === 0) return part.slice(prefix.length);
+    }
+    return '';
+  }
+
+  function getTwentyAccessToken() {
+    try {
+      var raw = getCookie('tokenPair');
+      if (!raw) return '';
+      var tokenPair = JSON.parse(decodeURIComponent(raw));
+      return tokenPair && tokenPair.accessToken && tokenPair.accessToken.token
+        ? tokenPair.accessToken.token
+        : '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function getChatSrc() {
+    var token = getTwentyAccessToken();
+    if (!token) return CHAT_SRC;
+    return CHAT_SRC + '#twentyAccessToken=' + encodeURIComponent(token);
+  }
+
   function getOrCreateIframe() {
     var existing = document.getElementById(IFRAME_ID);
     if (existing) return existing;
 
     var iframe = document.createElement('iframe');
     iframe.id = IFRAME_ID;
-    iframe.src = CHAT_SRC;
+    iframe.src = getChatSrc();
     iframe.style.cssText = [
       'position:fixed',
       'top:0',
@@ -67,6 +96,8 @@
   function showChat() {
     sessionStorage.setItem(ACTIVE_KEY, '1');
     var iframe = getOrCreateIframe();
+    var src = getChatSrc();
+    if (iframe.getAttribute('src') !== src) iframe.src = src;
     applyIframeSize(iframe);
     iframe.style.display = 'block';
     setNavActive(true);

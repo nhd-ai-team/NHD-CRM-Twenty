@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2, UserPlus } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
+import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 const TABS = ['资料', '话术', '智能物料', '翻译']
 
@@ -44,7 +45,9 @@ function CompanyField({ value, selectedId, onChange, onPick, onBlur }) {
     const timer = setTimeout(async () => {
       setLoading(true)
       try {
-        const res = await fetch(`/conv-api/companies/search?q=${encodeURIComponent(q)}`)
+        const res = await fetch(`/conv-api/companies/search?q=${encodeURIComponent(q)}`, {
+          headers: withTwentyAuthHeaders(),
+        })
         const data = await res.json().catch(() => [])
         if (active) setOptions(Array.isArray(data) ? data : [])
       } catch {

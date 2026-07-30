@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { X, UserPlus, CheckCircle, Loader2, Info } from 'lucide-react'
+import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 // 下拉选项与 Opportunity 的 SELECT 字段选项一一对应（label 显示 / value 入库）。
 const SOURCE_OPTIONS = [
@@ -53,7 +54,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
     try {
       const res = await fetch(`/conv-api/conversations/${conv.id}/convert-to-lead`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(form),
       })
       const d = await res.json().catch(() => ({}))

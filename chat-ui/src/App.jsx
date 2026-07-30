@@ -3,6 +3,7 @@ import { ConversationSidebar } from './components/ConversationSidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { ContactPanel } from './components/ContactPanel'
 import { useConversations } from './hooks/useConversations'
+import { withTwentyAuthHeaders } from './utils/twentyAuth'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -96,7 +97,7 @@ export default function App() {
     try {
       await saveDraft(draft) // 先确保最新草稿落库
       const res = await fetch(`/conv-api/conversations/${selectedId}/convert-to-lead`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft),
+        method: 'POST', headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(draft),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setToast({ type: 'err', msg: d.error || `转化失败 (${res.status})` }); return }

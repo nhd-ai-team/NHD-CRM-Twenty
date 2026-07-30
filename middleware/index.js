@@ -53,11 +53,19 @@ function requireSameSite(req, res, next) {
   return res.status(403).json({ error: 'forbidden origin' });
 }
 
-async function twentyGraphQL(query, variables = {}) {
-  if (!TWENTY_API_KEY) return null;
+function getTwentyTokenFromRequest(req) {
+  const authorization = String(req.headers.authorization || '').trim();
+  if (authorization.toLowerCase().startsWith('bearer ')) {
+    return authorization.slice(7).trim();
+  }
+  return TWENTY_API_KEY;
+}
+
+async function twentyGraphQL(query, variables = {}, token = TWENTY_API_KEY) {
+  if (!token) return null;
   const response = await fetch(`${TWENTY_API_URL}/graphql`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TWENTY_API_KEY}` },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ query, variables }),
   });
   const json = await response.json();
@@ -65,7 +73,7 @@ async function twentyGraphQL(query, variables = {}) {
   return json.data;
 }
 
-async function searchCompaniesByName(q, limit = 8) {
+async function searchCompaniesByName(q, limit = 8, token = TWENTY_API_KEY) {
   const term = String(q || '').trim();
   if (!term) return [];
   const data = await twentyGraphQL(
@@ -73,11 +81,12 @@ async function searchCompaniesByName(q, limit = 8) {
       companies(first: $first, filter: $filter) { edges { node { id name } } }
     }`,
     { first: limit, filter: { name: { ilike: `%${term}%` } } },
+    token,
   );
   return data?.companies?.edges?.map((edge) => edge.node).filter(Boolean) || [];
 }
 
-async function findCompanyByExactName(name) {
+async function findCompanyByExactName(name, token = TWENTY_API_KEY) {
   const term = String(name || '').trim();
   if (!term) return null;
   const data = await twentyGraphQL(
@@ -85,17 +94,19 @@ async function findCompanyByExactName(name) {
       companies(first: 10, filter: $filter) { edges { node { id name } } }
     }`,
     { filter: { name: { ilike: term } } },
+    token,
   );
   const companies = data?.companies?.edges?.map((edge) => edge.node).filter(Boolean) || [];
   return companies.find((company) => company.name?.trim().toLowerCase() === term.toLowerCase()) || companies[0] || null;
 }
 
-async function createCompanyByName(name) {
+async function createCompanyByName(name, token = TWENTY_API_KEY) {
   const term = String(name || '').trim();
   if (!term) return null;
   const data = await twentyGraphQL(
     'mutation($data: CompanyCreateInput!){ createCompany(data: $data){ id name } }',
     { data: { name: term } },
+    token,
   );
   return data?.createCompany || null;
 }
@@ -465,7 +476,7 @@ app.get('/api/companies/search', requireSameSite, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
-    const companies = await searchCompaniesByName(q, 8);
+    const companies = await searchCompaniesByName(q, 8, getTwentyTokenFromRequest(req));
     res.json(companies);
   } catch (error) {
     console.error('[companies/search] failed:', error.message);
@@ -497,6 +508,7 @@ app.put('/api/conversations/:id/draft', requireSameSite, async (req, res) => {
 // 「转为线索」：把右侧表单字段映射到 Opportunity 并创建；成功后在联系人上记 opportunity id。
 app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, res) => {
   const b = req.body || {};
+  const twentyToken = getTwentyTokenFromRequest(req);
   const name = String(b.name || '').trim();
   const company = String(b.company || '').trim();
   if (!name && !company) return res.status(400).json({ error: '姓名或公司至少填写一个' });
@@ -515,7 +527,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   let createdPersonId = null; // 仅本次新建的，失败时回滚
   if (isUpdate) {
     try {
-      const ex = await twentyGraphQL('query($id: UUID!){ opportunity(filter: { id: { eq: $id } }){ pointOfContact{ id } } }', { id: oppId });
+      const ex = await twentyGraphQL('query($id: UUID!){ opportunity(filter: { id: { eq: $id } }){ pointOfContact{ id } } }', { id: oppId }, twentyToken);
       personId = ex?.opportunity?.pointOfContact?.id || null;
     } catch (error) { console.error('[convert-to-lead] load pointOfContact failed:', error.message); }
   }
@@ -523,10 +535,10 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     try {
       if (personId) {
         await twentyGraphQL('mutation($id: UUID!, $d: PersonUpdateInput!){ updatePerson(id: $id, data: $d){ id } }',
-          { id: personId, d: { name: { firstName: name, lastName: '' } } });
+          { id: personId, d: { name: { firstName: name, lastName: '' } } }, twentyToken);
       } else {
         const pr = await twentyGraphQL('mutation($d: PersonCreateInput!){ createPerson(data: $d){ id } }',
-          { d: { name: { firstName: name, lastName: '' } } });
+          { d: { name: { firstName: name, lastName: '' } } }, twentyToken);
         personId = pr?.createPerson?.id || null;
         createdPersonId = personId;
       }
@@ -538,8 +550,8 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   let companyId = String(b.companyId || '').trim();
   if (!companyId && company) {
     try {
-      const existingCompany = await findCompanyByExactName(company);
-      const resolvedCompany = existingCompany || await createCompanyByName(company);
+      const existingCompany = await findCompanyByExactName(company, twentyToken);
+      const resolvedCompany = existingCompany || await createCompanyByName(company, twentyToken);
       companyId = resolvedCompany?.id || '';
     } catch (error) { console.error('[convert-to-lead] company write failed:', error.message); }
   }
@@ -572,8 +584,8 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (country) data.country = { addressCountry: country };
 
   const writeOpp = (d) => (isUpdate
-    ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }).then((r) => r?.updateOpportunity)
-    : twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d }).then((r) => r?.createOpportunity));
+    ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }, twentyToken).then((r) => r?.updateOpportunity)
+    : twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d }, twentyToken).then((r) => r?.createOpportunity));
 
   try {
     let opp;
@@ -595,7 +607,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     res.status(isUpdate ? 200 : 201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)], updated: isUpdate });
   } catch (error) {
     // 写商机失败：仅回滚本次「新建」的孤儿 Person（更新既有 Person 不回滚）。
-    if (createdPersonId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: createdPersonId }).catch(() => {});
+    if (createdPersonId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: createdPersonId }, twentyToken).catch(() => {});
     console.error('[convert-to-lead] failed:', error.message);
     res.status(502).json({ error: 'convert failed', detail: error.message });
   }
