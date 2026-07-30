@@ -71,7 +71,7 @@ function CompanyField({ value, selectedId, onChange, onPick, onBlur }) {
         style={inputStyle}
       />
       <div style={{ fontSize: 10.5, color: selectedId ? 'var(--green)' : 'var(--text-muted)', marginTop: 4 }}>
-        {selectedId ? '已选择库内公司' : '未选择库内公司时，更新商机会按名称匹配；仍不存在则新建公司'}
+        {selectedId ? '已选择库内公司' : '未选择库内公司时，更新线索会按名称匹配；仍不存在则新建公司'}
       </div>
       {open && !selectedId && (options.length > 0 || loading) && (
         <div style={{
@@ -202,10 +202,10 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
                 background: 'var(--green)', color: '#fff', cursor: converting ? 'default' : 'pointer', opacity: converting ? 0.7 : 1,
               }}>
                 {converting ? <Loader2 size={13} className="spin" /> : <UserPlus size={13} />}
-                {converting ? (converted ? '更新中…' : '写入中…') : (converted ? '更新商机' : '转为线索')}
+                {converting ? (converted ? '更新中…' : '写入中…') : (converted ? '更新线索' : '转为线索')}
               </button>
               <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
-                {converted ? '补填信息后可再次「更新商机」' : '信息随填随存 · 转为线索写入商机（Opportunity）'}
+                {converted ? '补填信息后可再次「更新线索」' : '信息随填随存 · 转为线索写入线索'}
               </div>
             </div>
 
@@ -220,10 +220,10 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
 
             <div style={{ height: 1, background: 'var(--border-soft)', margin: '0 16px' }} />
 
-            <Section title="商机信息">
+            <Section title="线索信息">
               <SelectField label="客户来源" value={draft.source} onChange={f('source')} onBlur={onBlurSave} options={SOURCE_OPTIONS} />
               <SelectField label="公司类型" value={draft.companyType} onChange={f('companyType')} onBlur={onBlurSave} options={COMPANY_TYPE_OPTIONS} />
-              <SelectField label="商机阶段" value={draft.stage} onChange={f('stage')} onBlur={onBlurSave} options={STAGE_OPTIONS} allowEmpty={false} />
+              <SelectField label="线索阶段" value={draft.stage} onChange={f('stage')} onBlur={onBlurSave} options={STAGE_OPTIONS} allowEmpty={false} />
               <TextField label="客户需求产品" value={draft.product} onChange={f('product')} onBlur={onBlurSave} placeholder="如：隔膜压滤机" />
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>备注</div>

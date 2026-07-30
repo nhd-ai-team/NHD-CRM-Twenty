@@ -105,7 +105,7 @@ export default function App() {
       if (!res.ok) { setToast({ type: 'err', msg: d.error || `转化失败 (${res.status})` }); return }
       const skip = Array.isArray(d.skipped) && d.skipped.length
         ? `（${d.skipped.map((s) => (s === 'phone' ? '电话' : s === 'email' ? '邮箱' : s)).join('、')}格式无效已跳过）` : ''
-      setToast({ type: 'ok', msg: (d.updated ? '已更新到商机' : '已转为线索并写入商机') + skip })
+      setToast({ type: 'ok', msg: (d.updated ? '已更新到线索' : '已转为线索并写入线索') + skip })
     } catch (e) {
       setToast({ type: 'err', msg: e.message })
     } finally {
@@ -189,10 +189,10 @@ export default function App() {
           }}>
             <div style={{ padding: '16px 18px 10px' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                确认{selected?.contact?.filedStatus === 'lead' ? '更新商机' : '转为线索'}？
+                确认{selected?.contact?.filedStatus === 'lead' ? '更新线索' : '转为线索'}？
               </div>
               <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-                当前右侧资料会写入 Opportunity。请确认客户姓名、公司、电话、邮箱、国家、客户来源、公司类型、商机阶段、需求产品和备注无误。
+                当前右侧资料会写入线索。请确认客户姓名、公司、电话、邮箱、国家、客户来源、公司类型、线索阶段、需求产品和备注无误。
               </div>
             </div>
             <div style={{

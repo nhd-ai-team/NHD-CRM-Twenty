@@ -94,7 +94,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
             <CheckCircle size={40} style={{ color: 'var(--green)' }} />
             <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 600 }}>线索创建成功</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>已写入 Opportunity（商机）</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>已写入线索</div>
             {skipped.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: 'var(--text-muted)', marginTop: 2 }}>
                 <Info size={12} />{skipped.map((s) => (s === 'phone' ? '电话' : s === 'email' ? '邮箱' : s)).join('、')}格式无效，已跳过
@@ -104,7 +104,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
         ) : (
           <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <FormField label="姓名"><input value={form.name} onChange={set('name')} style={inputStyle} placeholder="客户姓名" /></FormField>
-            <FormField label="公司"><input value={form.company} onChange={set('company')} style={inputStyle} placeholder="公司名称（暂不关联，转入后在商机内维护）" /></FormField>
+            <FormField label="公司"><input value={form.company} onChange={set('company')} style={inputStyle} placeholder="公司名称（暂不关联，转入后在线索内维护）" /></FormField>
             <Row>
               <FormField label="电话"><input value={form.phone} onChange={set('phone')} style={inputStyle} /></FormField>
               <FormField label="邮箱"><input value={form.email} onChange={set('email')} style={inputStyle} placeholder="多个邮箱可用空格/逗号分隔" /></FormField>
@@ -125,7 +125,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
                   {COMPANY_TYPE_OPTIONS.map(([l, v]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </FormField>
-              <FormField label="商机阶段">
+              <FormField label="线索阶段">
                 <select value={form.stage} onChange={set('stage')} style={inputStyle}>
                   {STAGE_OPTIONS.map(([l, v]) => <option key={v} value={v}>{l}</option>)}
                 </select>
@@ -154,7 +154,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               }}>
                 {status === 'saving' && <Loader2 size={13} className="spin" />}
-                {status === 'saving' ? '写入中…' : '创建线索并写入商机'}
+                {status === 'saving' ? '写入中…' : '创建线索并写入线索'}
               </button>
             </div>
           </form>
