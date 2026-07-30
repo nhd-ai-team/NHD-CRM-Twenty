@@ -142,6 +142,20 @@
     return sessionStorage.getItem(ACTIVE_KEY) || '';
   }
 
+  function isSettingsPage() {
+    return window.location.pathname.indexOf('/settings') === 0;
+  }
+
+  function removeInjectedNavItems() {
+    [NAV_ID, MAIL_NAV_ID].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var wrapper = el.closest('[data-chat-nav-wrapper="1"]') || el.parentElement;
+      if (wrapper && wrapper !== document.body) wrapper.remove();
+      else el.remove();
+    });
+  }
+
   function getOrCreateIframe() {
     var existing = document.getElementById(IFRAME_ID);
     if (existing) return existing;
@@ -375,6 +389,10 @@
 
   function tryInsert() {
     hideDisabledNativeNavItems();
+    if (isSettingsPage()) {
+      removeInjectedNavItems();
+      return;
+    }
     if (document.getElementById(NAV_ID)) return;
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
@@ -403,6 +421,7 @@
       var item = buildNavItem(refAnchor, opts);
       var wrapper = document.createElement(container.tagName);
       wrapper.className = container.className;
+      wrapper.setAttribute('data-chat-nav-wrapper', '1');
       wrapper.appendChild(item);
       listEl.appendChild(wrapper);
     });
