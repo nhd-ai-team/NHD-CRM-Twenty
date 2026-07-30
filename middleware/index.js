@@ -54,6 +54,24 @@ function requireSameSite(req, res, next) {
   return res.status(403).json({ error: 'forbidden origin' });
 }
 
+function getCookieFromRequest(req, name) {
+  const prefix = `${name}=`;
+  const cookie = String(req.headers.cookie || '');
+  const part = cookie.split(';').map(item => item.trim()).find(item => item.startsWith(prefix));
+  return part ? part.slice(prefix.length) : '';
+}
+
+function getTwentyTokenFromCookie(req) {
+  try {
+    const raw = getCookieFromRequest(req, 'tokenPair');
+    if (!raw) return '';
+    const tokenPair = JSON.parse(decodeURIComponent(raw));
+    return tokenPair?.accessToken?.token || '';
+  } catch {
+    return '';
+  }
+}
+
 function getTwentyTokenFromRequest(req) {
   const authorization = String(req.headers.authorization || '').trim();
   if (authorization.toLowerCase().startsWith('bearer ')) {
@@ -61,6 +79,8 @@ function getTwentyTokenFromRequest(req) {
   }
   const forwardedToken = String(req.headers['x-twenty-access-token'] || '').trim();
   if (forwardedToken) return forwardedToken;
+  const cookieToken = getTwentyTokenFromCookie(req);
+  if (cookieToken) return cookieToken;
   return TWENTY_API_KEY;
 }
 
