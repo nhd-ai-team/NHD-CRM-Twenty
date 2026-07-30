@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ConversationSidebar } from './components/ConversationSidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { ContactPanel } from './components/ContactPanel'
 import { useConversations } from './hooks/useConversations'
+import { useAiSettings } from './hooks/useAiSettings'
+import { AiConfigPopover } from './components/AiConfigPopover'
 import { installTwentyAuthMessageListener, withTwentyAuthHeaders } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
@@ -58,7 +60,9 @@ function topIconButtonStyle(active = false) {
   }
 }
 
-function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpen, onToggleContact, onAiConfig }) {
+function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpen, onToggleContact, aiSettings }) {
+  const [aiOpen, setAiOpen] = useState(false)
+  const gearRef = useRef(null)
   return (
     <div style={{
       height: 44, flexShrink: 0, display: 'flex', alignItems: 'stretch',
@@ -91,16 +95,26 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
       })}
       <div style={{
         flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 4,
-        padding: '0 10px', borderLeft: '1px solid var(--border-soft)',
+        padding: '0 10px', borderLeft: '1px solid var(--border-soft)', position: 'relative',
       }}>
         <button
-          onClick={onAiConfig}
+          ref={gearRef}
+          onClick={() => setAiOpen(o => !o)}
           title="AI配置"
           aria-label="AI配置"
-          style={topIconButtonStyle(false)}
+          style={topIconButtonStyle(aiOpen)}
         >
           <Settings size={16} />
         </button>
+        {aiOpen && (
+          <AiConfigPopover
+            anchorRect={gearRef.current?.getBoundingClientRect()}
+            settings={aiSettings.settings}
+            error={aiSettings.error}
+            onToggle={aiSettings.toggle}
+            onClose={() => setAiOpen(false)}
+          />
+        )}
         <button
           onClick={onToggleContact}
           title={contactOpen ? '收起资料表单' : '展开资料表单'}
@@ -124,6 +138,8 @@ export default function App() {
     search, setSearch,
     sendMessage, setTakeover,
   } = useConversations()
+
+  const aiSettings = useAiSettings()
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -217,7 +233,7 @@ export default function App() {
           setActiveChannel={setActiveChannel}
           contactOpen={contactOpen}
           onToggleContact={() => setContactOpen((open) => !open)}
-          onAiConfig={() => setToast({ type: 'err', msg: 'AI配置待接入' })}
+          aiSettings={aiSettings}
         />
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>

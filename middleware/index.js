@@ -250,7 +250,16 @@ async function ensureSchema() {
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_takeover_until TIMESTAMPTZ;
-    UPDATE conv.conversations SET ai_enabled = (channel = 'website') WHERE ai_enabled IS NULL;`);
+    UPDATE conv.conversations SET ai_enabled = (channel = 'website') WHERE ai_enabled IS NULL;
+    -- 渠道级 AI 自动回复开关（工作台齿轮）：作为「生效范围」基线，
+    -- 会话级 ai_enabled 保留为单会话覆盖位（默认 NULL 时继承此表）。
+    CREATE TABLE IF NOT EXISTS conv.channel_settings (
+      channel TEXT PRIMARY KEY,
+      ai_enabled BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    INSERT INTO conv.channel_settings(channel, ai_enabled) VALUES
+      ('website', true), ('whatsapp', false), ('instagram', false), ('facebook', false)
+      ON CONFLICT (channel) DO NOTHING;`);
 }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -581,15 +590,18 @@ app.post('/api/meta/webhook', (req, res) => {
 });
 
 app.get('/api/conversations', async (_req, res) => {
+  // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
   const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
     json_build_object(
-      'enabled', COALESCE(c.ai_enabled, c.channel = 'website'),
-      'inTakeoverWindow', (COALESCE(c.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now())),
-      'canTakeover', (COALESCE(c.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND c.status NOT IN ('takeover', 'closed'))
+      'enabled', COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'),
+      'inTakeoverWindow', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now())),
+      'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND c.status NOT IN ('takeover', 'closed'))
     ) AS "aiControl",
     json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
-    FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id ORDER BY c.last_message_at DESC NULLS LAST`);
+    FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
+    LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
+    ORDER BY c.last_message_at DESC NULLS LAST`);
   res.json(result.rows);
 });
 
@@ -606,9 +618,11 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
   try {
     await client.query('BEGIN');
     const currentResult = await client.query(
-      `SELECT id, status, COALESCE(ai_enabled, channel = 'website') AS "aiEnabled",
-        (ai_takeover_until IS NULL OR ai_takeover_until > now()) AS "inTakeoverWindow"
-       FROM conv.conversations WHERE id = $1 FOR UPDATE`,
+      `SELECT c.id, c.status, COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
+        (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AS "inTakeoverWindow"
+       FROM conv.conversations c
+       LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
+       WHERE c.id = $1 FOR UPDATE OF c`,
       [req.params.id],
     );
     const conversation = currentResult.rows[0];
@@ -638,6 +652,53 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     await client.query('ROLLBACK').catch(() => {});
     console.error('[conversation-status] failed:', error.message);
     res.status(502).json({ error: 'status switch failed', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+const AI_SETTING_CHANNELS = ['website', 'whatsapp', 'instagram', 'facebook'];
+
+// 渠道级 AI 自动回复开关（工作台齿轮的「生效范围」）
+app.get('/api/ai-settings', async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT channel, ai_enabled AS "enabled" FROM conv.channel_settings ORDER BY channel`,
+    );
+    const map = new Map(result.rows.map(r => [r.channel, r.enabled]));
+    // 保证四个渠道恒定返回，缺失的按官网默认开、其余关兜底
+    res.json(AI_SETTING_CHANNELS.map(channel => ({
+      channel,
+      enabled: map.has(channel) ? map.get(channel) : channel === 'website',
+    })));
+  } catch (error) {
+    console.error('[ai-settings] load failed:', error.message);
+    res.status(502).json({ error: 'ai settings load failed', detail: error.message });
+  }
+});
+
+app.patch('/api/ai-settings', requireSameSite, async (req, res) => {
+  const channel = String(req.body?.channel || '').trim();
+  const enabled = req.body?.enabled;
+  if (!AI_SETTING_CHANNELS.includes(channel)) return res.status(400).json({ error: 'unsupported channel' });
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO conv.channel_settings(channel, ai_enabled, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (channel) DO UPDATE SET ai_enabled = EXCLUDED.ai_enabled, updated_at = now()`,
+      [channel, enabled],
+    );
+    // 清掉该渠道的会话级覆盖，令现有会话立即继承渠道设置
+    await client.query(`UPDATE conv.conversations SET ai_enabled = NULL WHERE channel = $1`, [channel]);
+    await client.query('COMMIT');
+    res.json({ channel, enabled });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[ai-settings] update failed:', error.message);
+    res.status(502).json({ error: 'ai settings update failed', detail: error.message });
   } finally {
     client.release();
   }
