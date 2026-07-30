@@ -30,3 +30,6 @@ tmp/
 
 # Preserved nested repository metadata
 .embedded-git/
+
+# 数据库备份，勿入库
+backups/

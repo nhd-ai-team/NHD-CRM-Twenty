@@ -138,6 +138,14 @@ services:
       AI_SERVICE_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
       # 官网入站 webhook 校验密钥（与 ai-service 的 CRM_WEBHOOK_SECRET 一致）
       WEBSITE_INGEST_SECRET: ${WEBSITE_INGEST_SECRET:-}
+      # 邮箱 IMAP 只读收取（沉淀到对话工作台 email 渠道，不回复）
+      IMAP_HOST: ${IMAP_HOST:-imap.qiye.163.com}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_TLS: ${IMAP_TLS:-true}
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-}
+      IMAP_MAILBOX: ${IMAP_MAILBOX:-INBOX}
+      IMAP_POLL_SECONDS: ${IMAP_POLL_SECONDS:-60}
       # 调 ai-service /api/agent 的 Basic Auth（销售在 CRM 回复官网访客）
       AI_AGENT_USER: ${AI_AGENT_USER:-admin}
       AI_AGENT_PASSWORD: ${AI_AGENT_PASSWORD:-admin123}

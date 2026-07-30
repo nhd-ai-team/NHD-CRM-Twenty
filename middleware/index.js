@@ -2,6 +2,8 @@ const express = require('express');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const { ImapFlow } = require('imapflow');
+const { simpleParser } = require('mailparser');
 
 const app = express();
 // verify 回调保留原始 body，供 Instagram/Meta 的 X-Hub-Signature-256 校验使用。
@@ -30,6 +32,14 @@ const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || INSTAGRAM_VERIFY_TOKE
 const META_APP_SECRET = process.env.META_APP_SECRET || INSTAGRAM_APP_SECRET;
 const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN || INSTAGRAM_PAGE_ACCESS_TOKEN;
 const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
+// 邮箱（IMAP 只读收取，沉淀到对话工作台的 email 渠道；不回复、不接 AI）
+const IMAP_HOST = process.env.IMAP_HOST || 'imap.qiye.163.com';
+const IMAP_PORT = Number(process.env.IMAP_PORT || 993);
+const IMAP_TLS = String(process.env.IMAP_TLS ?? 'true').toLowerCase() !== 'false';
+const IMAP_USER = process.env.IMAP_USER || '';
+const IMAP_PASSWORD = process.env.IMAP_PASSWORD || '';
+const IMAP_MAILBOX = process.env.IMAP_MAILBOX || 'INBOX';
+const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 60));
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let workspaceSchemaCache = null;
 
@@ -259,7 +269,16 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
     INSERT INTO conv.channel_settings(channel, ai_enabled) VALUES
       ('website', true), ('whatsapp', false), ('instagram', false), ('facebook', false)
-      ON CONFLICT (channel) DO NOTHING;`);
+      ON CONFLICT (channel) DO NOTHING;
+    -- 邮件专用字段（仅 channel='email' 使用）：主题与附件清单
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS subject TEXT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS attachments JSONB;
+    -- IMAP 增量同步游标
+    CREATE TABLE IF NOT EXISTS conv.email_sync (
+      mailbox TEXT PRIMARY KEY,
+      uid_validity BIGINT,
+      last_uid BIGINT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());`);
 }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -597,7 +616,7 @@ app.get('/api/conversations', async (_req, res) => {
       'inTakeoverWindow', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now())),
       'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND c.status NOT IN ('takeover', 'closed'))
     ) AS "aiControl",
-    json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
+    json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'email', ct.email, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
@@ -606,7 +625,7 @@ app.get('/api/conversations', async (_req, res) => {
 });
 
 app.get('/api/conversations/:id/messages', async (req, res) => {
-  const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
+  const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
 });
 
@@ -938,4 +957,129 @@ app.get('/health', async (_req, res) => {
   } catch (error) { res.status(503).json({ status: 'error', error: error.message }); }
 });
 
-ensureSchema().then(() => app.listen(PORT, () => console.log(`[middleware] listening on ${PORT}`))).catch(error => { console.error(error); process.exit(1); });
+// ── 邮箱：IMAP 只读收取 → conv 库 email 渠道（沉淀查看，不回复/不接 AI）────────────
+
+// HTML-only 邮件的兜底纯文本提取（富文本/内联图片本期不还原）
+function htmlToText(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function persistEmailMessage({ fromAddress, fromName, subject, body, attachments, messageId, sentAt }) {
+  const addr = String(fromAddress || '').trim().toLowerCase();
+  if (!addr) return false;
+  const displayName = (fromName && fromName.trim()) || addr;
+  const preview = (subject && subject.trim()) || String(body || '').slice(0, 80);
+  const when = sentAt || new Date();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, email)
+      VALUES ('email', $1, $2, $1) ON CONFLICT(channel, external_id)
+      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name),
+        email = COALESCE(EXCLUDED.email, conv.contacts.email), updated_at = now() RETURNING *`,
+      [addr, displayName]);
+    const contact = contactResult.rows[0];
+    const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
+      VALUES ('email', $1, $2) ON CONFLICT(channel, external_chat_id)
+      DO UPDATE SET updated_at = now() RETURNING *`, [addr, contact.id]);
+    const conversation = conversationResult.rows[0];
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, subject, attachments, sent_at)
+      VALUES ($1, $2, 'customer', $3, 'email', $4, $5, $6) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [messageId, conversation.id, body || '', subject || null,
+        attachments && attachments.length ? JSON.stringify(attachments) : null, when]);
+    // 邮件按时间沉淀，last_message_at 取邮件发送时间（可能早于/晚于现有值）
+    if (inserted.rowCount) await client.query(
+      `UPDATE conv.conversations SET last_message_at = GREATEST(COALESCE(last_message_at, $2), $2), last_message_preview = $3, updated_at = now() WHERE id = $1`,
+      [conversation.id, when, preview]);
+    await client.query('COMMIT');
+    return inserted.rowCount > 0;
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+async function getEmailSync(mailbox) {
+  const r = await pool.query(`SELECT uid_validity AS "uidValidity", last_uid AS "lastUid" FROM conv.email_sync WHERE mailbox = $1`, [mailbox]);
+  return r.rows[0] || { uidValidity: null, lastUid: 0 };
+}
+async function setEmailSync(mailbox, uidValidity, lastUid) {
+  await pool.query(`INSERT INTO conv.email_sync(mailbox, uid_validity, last_uid, updated_at) VALUES ($1, $2, $3, now())
+    ON CONFLICT(mailbox) DO UPDATE SET uid_validity = EXCLUDED.uid_validity,
+      last_uid = GREATEST(conv.email_sync.last_uid, EXCLUDED.last_uid), updated_at = now()`,
+    [mailbox, uidValidity, lastUid]);
+}
+
+let emailPolling = false;
+async function pollEmailsOnce() {
+  if (emailPolling) return;
+  emailPolling = true;
+  const client = new ImapFlow({
+    host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_TLS,
+    auth: { user: IMAP_USER, pass: IMAP_PASSWORD }, logger: false,
+  });
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock(IMAP_MAILBOX);
+    try {
+      const uidValidity = client.mailbox.uidValidity ? Number(client.mailbox.uidValidity) : null;
+      const uidNext = client.mailbox.uidNext ? Number(client.mailbox.uidNext) : null;
+      const sync = await getEmailSync(IMAP_MAILBOX);
+      const firstRun = sync.uidValidity == null && Number(sync.lastUid) === 0;
+      let startUid = Number(sync.lastUid) || 0;
+      // uidValidity 变化：旧 UID 失效，从头（去重仍靠 Message-ID）
+      if (sync.uidValidity != null && uidValidity != null && Number(sync.uidValidity) !== uidValidity) startUid = 0;
+      // 首次接入只跟踪「此刻之后的新邮件」，不回灌历史
+      if (firstRun && uidNext) {
+        startUid = uidNext - 1;
+        await setEmailSync(IMAP_MAILBOX, uidValidity, startUid);
+        console.log(`[email] first run: tracking new mail with uid>${startUid}`);
+      }
+      let maxUid = startUid, newCount = 0;
+      for await (const msg of client.fetch(`${startUid + 1}:*`, { uid: true, source: true }, { uid: true })) {
+        if (msg.uid <= startUid) continue; // 'N:*' 在无新邮件时会回最后一封，需过滤
+        maxUid = Math.max(maxUid, msg.uid);
+        try {
+          const parsed = await simpleParser(msg.source);
+          const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
+          const attachments = (parsed.attachments || []).map(a => ({
+            filename: a.filename || '(未命名)', size: a.size || 0, contentType: a.contentType || '',
+          }));
+          const body = (parsed.text || '').trim() || htmlToText(parsed.html || '');
+          await persistEmailMessage({
+            fromAddress: from.address, fromName: from.name,
+            subject: parsed.subject || '(无主题)', body, attachments,
+            messageId: parsed.messageId || `email:${uidValidity}:${msg.uid}`,
+            sentAt: parsed.date || new Date(),
+          });
+          newCount++;
+        } catch (e) { console.error('[email] parse/persist failed uid', msg.uid, e.message); }
+      }
+      if (maxUid > startUid) await setEmailSync(IMAP_MAILBOX, uidValidity, maxUid);
+      if (newCount) console.log(`[email] ingested ${newCount} message(s), lastUid=${maxUid}`);
+    } finally { lock.release(); }
+  } finally {
+    try { await client.logout(); } catch (e) {}
+    emailPolling = false;
+  }
+}
+
+function startEmailPoller() {
+  if (!IMAP_USER || !IMAP_PASSWORD) {
+    console.log('[email] IMAP not configured (IMAP_USER/IMAP_PASSWORD missing); poller disabled');
+    return;
+  }
+  console.log(`[email] poller enabled: ${IMAP_USER}@${IMAP_HOST}:${IMAP_PORT} mailbox=${IMAP_MAILBOX} every ${IMAP_POLL_SECONDS}s`);
+  const run = () => pollEmailsOnce().catch(e => console.error('[email] poll cycle failed:', e.message));
+  run();
+  setInterval(run, IMAP_POLL_SECONDS * 1000);
+}
+
+ensureSchema().then(() => {
+  app.listen(PORT, () => console.log(`[middleware] listening on ${PORT}`));
+  startEmailPoller();
+}).catch(error => { console.error(error); process.exit(1); });

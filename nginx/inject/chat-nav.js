@@ -4,10 +4,15 @@
   var CHAT_SRC   = '/chat/';
   var LABEL      = '对话工作台';
   var NAV_ID     = '__chat_nav_item__';
+  var MAIL_LABEL = '邮箱';
+  var MAIL_NAV_ID = '__mail_nav_item__';
   var IFRAME_ID  = '__chat_iframe__';
-  var ACTIVE_KEY = '__chat_active__';
+  var ACTIVE_KEY = '__chat_active__'; // 存当前激活视图：'chat' | 'mail'
   var AUTH_TOKEN = '';
   var HIDDEN_NAV_LABELS = ['Workflows', '工作流', '自动化'];
+  // 对话工作台（聊天气泡）与邮箱（信封）两个入口共用同一个 iframe，靠 URL 的 view 参数切换。
+  var CHAT_SVG = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+  var MAIL_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
 
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
@@ -126,10 +131,15 @@
     } catch (e) {}
   }
 
-  function getChatSrc() {
+  function getViewSrc(view) {
     var token = getTwentyAccessToken();
-    if (!token) return CHAT_SRC;
-    return CHAT_SRC + '#twentyAccessToken=' + encodeURIComponent(token);
+    var hash = token ? '#twentyAccessToken=' + encodeURIComponent(token) : '';
+    if (view === 'mail') hash += (hash ? '&' : '#') + 'view=mail';
+    return CHAT_SRC + hash;
+  }
+
+  function getActiveView() {
+    return sessionStorage.getItem(ACTIVE_KEY) || '';
   }
 
   function getOrCreateIframe() {
@@ -138,7 +148,7 @@
 
     var iframe = document.createElement('iframe');
     iframe.id = IFRAME_ID;
-    iframe.src = getChatSrc();
+    iframe.src = getViewSrc(getActiveView() || 'chat');
     iframe.style.cssText = [
       'position:fixed',
       'top:0',
@@ -187,23 +197,24 @@
     iframe.style.height = window.innerHeight + 'px';
   }
 
-  function showChat() {
-    sessionStorage.setItem(ACTIVE_KEY, '1');
+  function showView(view) {
+    sessionStorage.setItem(ACTIVE_KEY, view);
     var iframe = getOrCreateIframe();
-    var src = getChatSrc();
+    var src = getViewSrc(view);
+    // 切换视图需重载 iframe（SPA 重读 hash 的 view 参数）
     if (iframe.getAttribute('src') !== src) iframe.src = src;
     applyIframeSize(iframe);
     iframe.style.display = 'block';
     postAuthTokenToIframe(iframe);
     window.setTimeout(function () { postAuthTokenToIframe(iframe); }, 800);
-    setNavActive(true);
+    setNavActive(view);
   }
 
   function hideChat() {
     sessionStorage.removeItem(ACTIVE_KEY);
     var iframe = document.getElementById(IFRAME_ID);
     if (iframe) iframe.style.display = 'none';
-    setNavActive(false);
+    setNavActive('');
   }
 
   function isChatVisible() {
@@ -213,16 +224,19 @@
 
   // ── nav item active styling ────────────────────────────────────────────────
 
-  function setNavActive(active) {
-    var el = document.getElementById(NAV_ID);
-    if (!el) return;
-    el.setAttribute('data-active', active ? '1' : '0');
-    el.style.background = active
-      ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))'
-      : 'transparent';
-    el.style.color = active
-      ? 'var(--twenty-color-purple-50,#9333ea)'
-      : '';
+  function setNavActive(view) {
+    [[ 'chat', NAV_ID ], [ 'mail', MAIL_NAV_ID ]].forEach(function (pair) {
+      var el = document.getElementById(pair[1]);
+      if (!el) return;
+      var active = view === pair[0];
+      el.setAttribute('data-active', active ? '1' : '0');
+      el.style.background = active
+        ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))'
+        : 'transparent';
+      el.style.color = active
+        ? 'var(--twenty-color-purple-50,#9333ea)'
+        : '';
+    });
   }
 
   // ── intercept other nav clicks to hide chat ────────────────────────────────
@@ -275,7 +289,7 @@
   function hideDisabledNativeNavItems() {
     var selectors = 'a[href],button,[role="button"]';
     Array.from(document.querySelectorAll(selectors)).forEach(function (el) {
-      if (el.id === NAV_ID) return;
+      if (el.id === NAV_ID || el.id === MAIL_NAV_ID) return;
       var href = el.getAttribute('href') || '';
       if (!hrefLooksLikeDisabledNav(href) && !textLooksLikeDisabledNav(el.textContent)) return;
       var rect = el.getBoundingClientRect();
@@ -289,11 +303,11 @@
 
   // ── build and insert nav item ──────────────────────────────────────────────
 
-  function buildNavItem(refAnchor) {
+  function buildNavItem(refAnchor, opts) {
     var cs = window.getComputedStyle(refAnchor);
 
     var el = document.createElement('div');
-    el.id = NAV_ID;
+    el.id = opts.navId;
     el.role = 'button';
     el.tabIndex = 0;
     el.setAttribute('data-active', '0');
@@ -325,11 +339,11 @@
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
     svg.style.cssText = 'flex-shrink:0;';
-    svg.innerHTML = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+    svg.innerHTML = opts.svg;
 
     var span = document.createElement('span');
     span.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
-    span.textContent = LABEL;
+    span.textContent = opts.label;
 
     el.appendChild(svg);
     el.appendChild(span);
@@ -345,10 +359,11 @@
       }
     });
     el.addEventListener('click', function () {
-      if (isChatVisible()) {
+      // 点当前已激活的入口 → 收起；否则切到该视图
+      if (isChatVisible() && getActiveView() === opts.view) {
         hideChat();
       } else {
-        showChat();
+        showView(opts.view);
       }
     });
     el.addEventListener('keydown', function (e) {
@@ -381,11 +396,16 @@
       container = refAnchor.parentElement; // keep ref for cloning wrapper
     }
 
-    var item = buildNavItem(refAnchor);
-    var wrapper = document.createElement(container.tagName);
-    wrapper.className = container.className;
-    wrapper.appendChild(item);
-    listEl.appendChild(wrapper);
+    [
+      { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
+      { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
+    ].forEach(function (opts) {
+      var item = buildNavItem(refAnchor, opts);
+      var wrapper = document.createElement(container.tagName);
+      wrapper.className = container.className;
+      wrapper.appendChild(item);
+      listEl.appendChild(wrapper);
+    });
 
     setupNavInterception();
 
