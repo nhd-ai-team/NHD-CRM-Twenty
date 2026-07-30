@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import {
-  UserCheck, UserX,
+  UserCheck, Bot,
   Send, Paperclip,
   PanelRightOpen, PanelRightClose, Menu,
 } from 'lucide-react'
@@ -93,9 +93,18 @@ function MessageBubble({ msg, onAdopt }) {
   )
 }
 
-function ActionBar({ conv, onTakeover }) {
+function ActionBar({ conv, onRequestAction }) {
   const isTakeover = conv.status === 'takeover'
   const isClosed = conv.status === 'closed'
+  const aiControl = conv.aiControl || {}
+  const aiReady = !!aiControl.enabled && !!aiControl.inTakeoverWindow
+  const canTakeover = !isClosed && !isTakeover && aiReady
+  const canAiHost = !isClosed && isTakeover && aiReady
+  const disabledReason = !aiControl.enabled
+    ? 'AI客服未激活，暂不可人工接管'
+    : !aiControl.inTakeoverWindow
+      ? '当前不在AI客服托管时间内'
+      : ''
 
   return (
     <div style={{
@@ -104,26 +113,37 @@ function ActionBar({ conv, onTakeover }) {
     }}>
       {/* Takeover */}
       {!isClosed && !isTakeover && (
-        <button onClick={() => onTakeover('takeover')} style={btnStyle('accent')}>
+        <button
+          onClick={() => canTakeover && onRequestAction('takeover')}
+          disabled={!canTakeover}
+          title={canTakeover ? '人工接管后可回复客户' : disabledReason}
+          style={btnStyle('accent', !canTakeover)}
+        >
           <UserCheck size={13} /> 接管会话
         </button>
       )}
       {!isClosed && isTakeover && (
-        <button onClick={() => onTakeover('release')} style={btnStyle('orange')}>
-          <UserX size={13} /> 释放接管
+        <button
+          onClick={() => canAiHost && onRequestAction('release')}
+          disabled={!canAiHost}
+          title={canAiHost ? '切换后由AI继续托管' : disabledReason}
+          style={btnStyle('orange', !canAiHost)}
+        >
+          <Bot size={13} /> AI托管
         </button>
       )}
     </div>
   )
 }
 
-function btnStyle(variant) {
+function btnStyle(variant, disabled = false) {
   const base = {
     display: 'flex', alignItems: 'center', gap: 5,
     padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500,
-    border: '1px solid var(--border)', cursor: 'pointer', whiteSpace: 'nowrap',
+    border: '1px solid var(--border)', cursor: disabled ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
     transition: 'all .1s',
   }
+  if (disabled) return { ...base, background: 'var(--bg-active)', color: 'var(--text-muted)', borderColor: 'var(--border-soft)', opacity: .72 }
   if (variant === 'accent')  return { ...base, background: 'var(--accent-soft)', color: 'var(--accent-text)', borderColor: 'var(--accent-soft)' }
   if (variant === 'orange')  return { ...base, background: 'var(--orange-soft)', color: 'var(--orange)', borderColor: 'var(--orange-soft)' }
   if (variant === 'green')   return { ...base, background: 'var(--green-soft)',  color: 'var(--green)',  borderColor: 'var(--green-soft)' }
@@ -132,6 +152,9 @@ function btnStyle(variant) {
 
 export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onToggleContact, onToggleSidebar }) {
   const [input, setInput] = useState('')
+  const [pendingAction, setPendingAction] = useState(null)
+  const [switching, setSwitching] = useState(false)
+  const [sendError, setSendError] = useState('')
   const bottomRef = useRef(null)
 
   useEffect(() => {
@@ -150,13 +173,38 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onTog
   function handleSend() {
     const text = input.trim()
     if (!text) return
-    onSend(conv.id, text)
+    if (conv.status !== 'takeover') {
+      setSendError('请先人工接管会话后再发送消息')
+      return
+    }
+    setSendError('')
+    onSend(conv.id, text).catch(error => setSendError(error.message))
     setInput('')
   }
 
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
+
+  async function confirmStatusSwitch() {
+    if (!pendingAction) return
+    setSwitching(true)
+    try {
+      await onTakeover(pendingAction)
+      setPendingAction(null)
+      setSendError('')
+    } catch (error) {
+      setSendError(error.message)
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  const canSend = !!input.trim() && conv.status === 'takeover'
+  const confirmTitle = pendingAction === 'takeover' ? '确认人工接管？' : '确认 AI 托管？'
+  const confirmBody = pendingAction === 'takeover'
+    ? '确认后销售可以在工作台回复客户，AI客服将暂停托管此会话。'
+    : '确认后此会话将重新交给AI客服托管，销售需要再次人工接管后才能回复。'
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%' }}>
@@ -214,7 +262,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onTog
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder='请输入即将发送的内容……  或 输入 "AI" 唤起 AI 工具栏'
+          placeholder={conv.status === 'takeover' ? '请输入即将发送的内容……' : '请先点击「接管会话」后再回复客户'}
           style={{
             width: '100%', minHeight: 80, maxHeight: 160, padding: '12px 16px',
             border: 'none', outline: 'none', resize: 'none',
@@ -237,18 +285,23 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onTog
               <Paperclip size={15} />
             </button>
           </div>
+          {sendError && (
+            <div style={{ flex: 1, minWidth: 0, color: '#e1262b', fontSize: 12, padding: '0 8px' }}>
+              {sendError}
+            </div>
+          )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {/* Send */}
             <button
               onClick={handleSend}
-              disabled={!input.trim() || conv.status === 'closed'}
+              disabled={!canSend}
               style={{
                 display: 'flex', alignItems: 'center', gap: 5,
                 padding: '5px 16px', borderRadius: 6, fontSize: 12.5, fontWeight: 600,
-                border: 'none', cursor: input.trim() && conv.status !== 'closed' ? 'pointer' : 'not-allowed',
-                background: input.trim() && conv.status !== 'closed' ? 'var(--accent)' : 'var(--bg-active)',
-                color: input.trim() && conv.status !== 'closed' ? '#fff' : 'var(--text-muted)',
+                border: 'none', cursor: canSend ? 'pointer' : 'not-allowed',
+                background: canSend ? 'var(--accent)' : 'var(--bg-active)',
+                color: canSend ? '#fff' : 'var(--text-muted)',
                 transition: 'all .15s',
               }}
             >
@@ -259,7 +312,55 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, contactOpen, onTog
       </div>
 
       {/* Action bar */}
-      <ActionBar conv={conv} onTakeover={onTakeover} />
+      <ActionBar conv={conv} onRequestAction={setPendingAction} />
+
+      {pendingAction && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 180, background: 'rgba(0,0,0,.42)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+        }}>
+          <div style={{
+            width: 'min(400px, 100%)', borderRadius: 8, background: 'var(--bg-primary)',
+            border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,.28)',
+            overflow: 'hidden',
+          }}>
+            <div style={{ padding: '16px 18px 10px' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>{confirmTitle}</div>
+              <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+                {confirmBody}
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px 16px',
+              borderTop: '1px solid var(--border-soft)',
+            }}>
+              <button
+                onClick={() => setPendingAction(null)}
+                disabled={switching}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--text-secondary)', cursor: switching ? 'default' : 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmStatusSwitch}
+                disabled={switching}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: 'none',
+                  background: pendingAction === 'takeover' ? 'var(--accent)' : 'var(--orange)',
+                  color: '#fff', cursor: switching ? 'default' : 'pointer',
+                  opacity: switching ? 0.7 : 1, fontSize: 12, fontWeight: 700,
+                }}
+              >
+                {switching ? '处理中…' : pendingAction === 'takeover' ? '确认接管' : '确认托管'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

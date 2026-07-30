@@ -47,23 +47,25 @@ export function useConversations() {
 
   async function sendMessage(convId, content) {
     const response = await fetch(`/conv-api/conversations/${convId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) })
-    if (!response.ok) throw new Error('WhatsApp 消息发送失败')
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.error || '消息发送失败')
+    }
     window.setTimeout(() => loadConversations().catch(() => {}), 1000)
   }
 
-  function setTakeover(convId, action) {
-    setConversations(prev => prev.map(c => {
-      if (c.id !== convId) return c
-      const newStatus = action === 'takeover' ? 'takeover' : 'open'
-      const sysMsg = {
-        id: `m${Date.now()}`,
-        senderType: 'system',
-        content: action === 'takeover' ? '销售接管了此会话' : '已释放接管，恢复正常状态',
-        sentAt: new Date(),
-        contentType: 'system',
-      }
-      return { ...c, status: newStatus, messages: [...c.messages, sysMsg] }
-    }))
+  async function setTakeover(convId, action) {
+    if (!convId) return
+    const response = await fetch(`/conv-api/conversations/${convId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.error || '会话状态切换失败')
+    }
+    await loadConversations()
   }
 
   function closeConversation(convId) {

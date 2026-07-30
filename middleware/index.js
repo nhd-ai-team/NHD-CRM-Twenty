@@ -247,7 +247,10 @@ async function ensureSchema() {
       content TEXT, content_type TEXT DEFAULT 'text', media_url TEXT, sent_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ DEFAULT now());
     ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS twenty_opportunity_id TEXT;
-    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;`);
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN;
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_takeover_until TIMESTAMPTZ;
+    UPDATE conv.conversations SET ai_enabled = (channel = 'website') WHERE ai_enabled IS NULL;`);
 }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -579,6 +582,11 @@ app.post('/api/meta/webhook', (req, res) => {
 
 app.get('/api/conversations', async (_req, res) => {
   const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
+    json_build_object(
+      'enabled', COALESCE(c.ai_enabled, c.channel = 'website'),
+      'inTakeoverWindow', (COALESCE(c.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now())),
+      'canTakeover', (COALESCE(c.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND c.status NOT IN ('takeover', 'closed'))
+    ) AS "aiControl",
     json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id ORDER BY c.last_message_at DESC NULLS LAST`);
@@ -588,6 +596,51 @@ app.get('/api/conversations', async (_req, res) => {
 app.get('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
+});
+
+app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => {
+  const action = String(req.body?.action || '').trim();
+  if (!['takeover', 'release'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      `SELECT id, status, COALESCE(ai_enabled, channel = 'website') AS "aiEnabled",
+        (ai_takeover_until IS NULL OR ai_takeover_until > now()) AS "inTakeoverWindow"
+       FROM conv.conversations WHERE id = $1 FOR UPDATE`,
+      [req.params.id],
+    );
+    const conversation = currentResult.rows[0];
+    if (!conversation) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'conversation not found' });
+    }
+    if (!conversation.aiEnabled || !conversation.inTakeoverWindow) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'AI客服未激活或不在托管时间内' });
+    }
+
+    const nextStatus = action === 'takeover' ? 'takeover' : 'open';
+    const systemText = action === 'takeover' ? '销售已人工接管此会话' : '已切换为 AI 托管';
+    await client.query(
+      `UPDATE conv.conversations SET status = $2, updated_at = now() WHERE id = $1`,
+      [req.params.id, nextStatus],
+    );
+    await client.query(
+      `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+       VALUES ($1, $2, 'system', $3, 'system', now())`,
+      [`system:${req.params.id}:${Date.now()}:${action}`, req.params.id, systemText],
+    );
+    await client.query('COMMIT');
+    res.json({ id: req.params.id, status: nextStatus });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[conversation-status] failed:', error.message);
+    res.status(502).json({ error: 'status switch failed', detail: error.message });
+  } finally {
+    client.release();
+  }
 });
 
 app.get('/api/companies/search', requireSameSite, async (req, res) => {
@@ -752,9 +805,10 @@ async function recordAgentMessage(conversationId, content, externalId) {
 app.post('/api/conversations/:id/messages', requireSameSite, async (req, res) => {
   const { content } = req.body;
   if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
-  const result = await pool.query(`SELECT c.external_chat_id, c.channel FROM conv.conversations c WHERE c.id = $1`, [req.params.id]);
+  const result = await pool.query(`SELECT c.external_chat_id, c.channel, c.status FROM conv.conversations c WHERE c.id = $1`, [req.params.id]);
   const conversation = result.rows[0];
   if (!conversation) return res.status(404).json({ error: 'conversation not found' });
+  if (conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
 
   if (conversation.channel === 'whatsapp') {
     const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
