@@ -108,8 +108,9 @@ function ActionBar({ conv, onRequestAction }) {
 
   return (
     <div style={{
-      display: 'flex', gap: 8, padding: '8px 16px',
+      display: 'flex', gap: 8, padding: '5px 16px 4px',
       borderTop: '1px solid var(--border-soft)', flexWrap: 'wrap', alignItems: 'center',
+      minHeight: 36, flexShrink: 0,
     }}>
       {/* Takeover */}
       {!isClosed && !isTakeover && (
