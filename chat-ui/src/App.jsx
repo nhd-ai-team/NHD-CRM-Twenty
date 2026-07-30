@@ -174,58 +174,60 @@ export default function App() {
 
   return (
     <div style={{
-      display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden',
+      display: 'flex', height: '100vh', overflow: 'hidden',
       background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: 'var(--font-sans)',
     }}>
-      <ChannelBar conversations={conversations} activeChannel={activeChannel} setActiveChannel={setActiveChannel} />
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
+        <ChannelBar conversations={conversations} activeChannel={activeChannel} setActiveChannel={setActiveChannel} />
 
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-        {isNarrow && sidebarOpen && (
-          <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 48, background: 'rgba(0,0,0,.3)' }} />
-        )}
+        <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          {isNarrow && sidebarOpen && (
+            <div onClick={() => setSidebarOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 48, background: 'rgba(0,0,0,.3)' }} />
+          )}
 
-        <div style={{
-          position: isNarrow ? 'fixed' : 'relative', top: 44, left: 0, bottom: 0,
-          height: isNarrow ? 'calc(100vh - 44px)' : '100%',
-          zIndex: isNarrow ? 49 : 'auto',
-          transform: isNarrow && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
-          transition: 'transform .2s ease', flexShrink: 0, display: 'flex',
-        }}>
-          <ConversationSidebar
-            conversations={filtered}
-            selectedId={selectedId}
-            onSelect={(id) => { selectConversation(id); if (isNarrow) setSidebarOpen(false) }}
-            activeStatus={activeStatus}
-            setActiveStatus={setActiveStatus}
-            search={search}
-            setSearch={setSearch}
+          <div style={{
+            position: isNarrow ? 'fixed' : 'relative', top: 44, left: 0, bottom: 0,
+            height: isNarrow ? 'calc(100vh - 44px)' : '100%',
+            zIndex: isNarrow ? 49 : 'auto',
+            transform: isNarrow && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
+            transition: 'transform .2s ease', flexShrink: 0, display: 'flex',
+          }}>
+            <ConversationSidebar
+              conversations={filtered}
+              selectedId={selectedId}
+              onSelect={(id) => { selectConversation(id); if (isNarrow) setSidebarOpen(false) }}
+              activeStatus={activeStatus}
+              setActiveStatus={setActiveStatus}
+              search={search}
+              setSearch={setSearch}
+            />
+          </div>
+
+          <ChatPanel
+            conv={selected}
+            onSend={sendMessage}
+            onTakeover={(action) => setTakeover(selected?.id, action)}
+            layout={layout}
+            contactOpen={true}
+            contactFixed={true}
+            onToggleContact={() => {}}
+            onToggleSidebar={() => setSidebarOpen(o => !o)}
           />
         </div>
-
-        <ChatPanel
-          conv={selected}
-          onSend={sendMessage}
-          onTakeover={(action) => setTakeover(selected?.id, action)}
-          layout={layout}
-          contactOpen={true}
-          contactFixed={true}
-          onToggleContact={() => {}}
-          onToggleSidebar={() => setSidebarOpen(o => !o)}
-        />
-
-        <ContactPanel
-          conv={selected}
-          inline={isWide}
-          open={true}
-          onClose={() => {}}
-          draft={draft}
-          onField={setField}
-          onFields={setFields}
-          onBlurSave={() => saveDraft(draft)}
-          onConvert={requestConvertLead}
-          converting={converting}
-        />
       </div>
+
+      <ContactPanel
+        conv={selected}
+        inline={isWide}
+        open={true}
+        onClose={() => {}}
+        draft={draft}
+        onField={setField}
+        onFields={setFields}
+        onBlurSave={() => saveDraft(draft)}
+        onConvert={requestConvertLead}
+        converting={converting}
+      />
 
       {convertConfirmOpen && (
         <div style={{

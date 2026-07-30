@@ -143,7 +143,7 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
 
   const panelStyle = inline
     ? { width: 270, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', height: '100%' }
-    : { position: 'fixed', top: 44, right: 0, bottom: 0, width: 300, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 16px rgba(0,0,0,.08)' }
+    : { position: 'fixed', top: 0, right: 0, bottom: 0, width: 300, borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', zIndex: 50, boxShadow: '-4px 0 16px rgba(0,0,0,.08)' }
 
   const f = (k) => (v) => onField(k, v)
   const updateCompany = (value) => {
