@@ -87,5 +87,6 @@ export function useConversations() {
     activeStatus, setActiveStatus,
     search, setSearch,
     sendMessage, setTakeover, closeConversation,
+    reload: loadConversations,
   }
 }

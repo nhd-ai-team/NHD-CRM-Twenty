@@ -136,10 +136,15 @@ export default function App() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover,
+    sendMessage, setTakeover, reload: reloadConversations,
   } = useConversations()
 
   const aiSettings = useAiSettings()
+  // 拨动渠道 AI 开关后立即刷新会话列表，令「接管会话」按钮的灰/亮状态即时联动
+  const handleAiToggle = useCallback(async (channel, enabled) => {
+    const ok = await aiSettings.toggle(channel, enabled)
+    if (ok) reloadConversations().catch(() => {})
+  }, [aiSettings, reloadConversations])
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -233,7 +238,7 @@ export default function App() {
           setActiveChannel={setActiveChannel}
           contactOpen={contactOpen}
           onToggleContact={() => setContactOpen((open) => !open)}
-          aiSettings={aiSettings}
+          aiSettings={{ ...aiSettings, toggle: handleAiToggle }}
         />
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>

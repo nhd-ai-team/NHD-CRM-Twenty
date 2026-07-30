@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom'
 import { CHANNELS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 
-const AI_CHANNELS = CHANNELS.filter(c => c.id !== 'all')
+// 官网置顶，其余按原顺序
+const AI_CHANNELS = CHANNELS
+  .filter(c => c.id !== 'all')
+  .sort((a, b) => (a.id === 'website' ? -1 : b.id === 'website' ? 1 : 0))
 
 function Toggle({ on, onClick }) {
   return (
