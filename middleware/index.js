@@ -129,6 +129,30 @@ async function resolveAuditActor(req) {
   return { id: member.id, name };
 }
 
+function auditRequestSummary(req) {
+  const authorization = String(req.headers.authorization || '');
+  const forwardedToken = String(req.headers['x-twenty-access-token'] || '');
+  const forwardedUserId = String(req.headers['x-twenty-user-id'] || '');
+  const cookieToken = getTwentyTokenFromCookie(req);
+  const token = getTwentyTokenFromRequest(req);
+  const decoded = decodeJwtPayload(token);
+  return {
+    hasAuthorization: authorization.toLowerCase().startsWith('bearer '),
+    hasForwardedToken: !!forwardedToken,
+    hasForwardedUserId: !!forwardedUserId,
+    hasCookieHeader: !!req.headers.cookie,
+    hasTokenPairCookie: !!getCookieFromRequest(req, 'tokenPair'),
+    hasCookieToken: !!cookieToken,
+    decodedUserId: decoded?.sub ? `${String(decoded.sub).slice(0, 8)}...` : '',
+    tokenLooksLikeApiKey: !!decoded?.jti && decoded?.sub && !decoded?.workspaceId,
+    chatUiVersion: String(req.headers['x-chat-ui-version'] || ''),
+    cookieNames: String(req.headers.cookie || '')
+      .split(';')
+      .map(item => item.trim().split('=')[0])
+      .filter(Boolean),
+  };
+}
+
 async function applyRecordAudit(tableName, recordId, actor, mode = 'update') {
   if (!actor?.id || !recordId || !['opportunity', 'person', 'company'].includes(tableName)) return;
   const schema = await getWorkspaceSchema();
@@ -608,6 +632,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     return null;
   });
   if (!auditActor) console.warn('[audit] current user not resolved; record audit will keep API identity');
+  if (!auditActor) console.warn('[audit] request summary:', auditRequestSummary(req));
   const name = String(b.name || '').trim();
   const company = String(b.company || '').trim();
   if (!name && !company) return res.status(400).json({ error: '姓名或公司至少填写一个' });

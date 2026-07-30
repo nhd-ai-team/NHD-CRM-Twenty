@@ -6,6 +6,63 @@
   var NAV_ID     = '__chat_nav_item__';
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__';
+  var AUTH_TOKEN = '';
+
+  function rememberAuthToken(token) {
+    if (token && token.split('.').length === 3) AUTH_TOKEN = token;
+  }
+
+  function extractBearer(value) {
+    var auth = String(value || '');
+    return auth.toLowerCase().indexOf('bearer ') === 0 ? auth.slice(7).trim() : '';
+  }
+
+  function getHeaderValue(headers, name) {
+    if (!headers) return '';
+    try {
+      if (typeof headers.get === 'function') return headers.get(name) || '';
+      var lower = name.toLowerCase();
+      if (Array.isArray(headers)) {
+        for (var i = 0; i < headers.length; i++) {
+          if (String(headers[i][0]).toLowerCase() === lower) return headers[i][1];
+        }
+      }
+      for (var key in headers) {
+        if (Object.prototype.hasOwnProperty.call(headers, key) && key.toLowerCase() === lower) return headers[key];
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function installAuthCapture() {
+    if (window.__chatAuthCaptureInstalled) return;
+    window.__chatAuthCaptureInstalled = true;
+
+    var originalFetch = window.fetch;
+    if (typeof originalFetch === 'function') {
+      window.fetch = function () {
+        try {
+          var input = arguments[0];
+          var init = arguments[1] || {};
+          var token = extractBearer(getHeaderValue(init.headers, 'authorization'));
+          if (!token && input && input.headers) token = extractBearer(getHeaderValue(input.headers, 'authorization'));
+          rememberAuthToken(token);
+        } catch (e) {}
+        return originalFetch.apply(this, arguments);
+      };
+    }
+
+    var originalOpen = XMLHttpRequest.prototype.open;
+    var originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.open = function () {
+      this.__chatRequestUrl = arguments[1] || '';
+      return originalOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+      if (String(name || '').toLowerCase() === 'authorization') rememberAuthToken(extractBearer(value));
+      return originalSetRequestHeader.apply(this, arguments);
+    };
+  }
 
   // ── iframe management ──────────────────────────────────────────────────────
 
@@ -20,16 +77,52 @@
   }
 
   function getTwentyAccessToken() {
+    return AUTH_TOKEN || getTokenFromValue(getCookie('tokenPair')) || getTokenFromWebStorage(window.sessionStorage) || getTokenFromWebStorage(window.localStorage);
+  }
+
+  function decodeJwtPayload(token) {
     try {
-      var raw = getCookie('tokenPair');
-      if (!raw) return '';
-      var tokenPair = JSON.parse(decodeURIComponent(raw));
-      return tokenPair && tokenPair.accessToken && tokenPair.accessToken.token
-        ? tokenPair.accessToken.token
-        : '';
+      var payload = token.split('.')[1];
+      if (!payload) return null;
+      return JSON.parse(window.atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
     } catch (e) {
-      return '';
+      return null;
     }
+  }
+
+  function getTokenFromValue(value) {
+    try {
+      var raw = decodeURIComponent(String(value || ''));
+      if (!raw) return '';
+      if (raw.split('.').length === 3) return raw;
+      var parsed = JSON.parse(raw);
+      if (parsed && parsed.accessToken && parsed.accessToken.token) return parsed.accessToken.token;
+      if (parsed && parsed.tokenPair && parsed.tokenPair.accessToken && parsed.tokenPair.accessToken.token) return parsed.tokenPair.accessToken.token;
+      if (parsed && parsed.token && String(parsed.token).split('.').length === 3) return parsed.token;
+    } catch (e) {
+      if (String(value || '').split('.').length === 3) return String(value || '');
+    }
+    return '';
+  }
+
+  function getTokenFromWebStorage(storage) {
+    try {
+      for (var i = 0; i < storage.length; i++) {
+        var key = storage.key(i);
+        var token = getTokenFromValue(storage.getItem(key));
+        var payload = token ? decodeJwtPayload(token) : null;
+        if (payload && payload.workspaceId) return token;
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function postAuthTokenToIframe(iframe) {
+    var token = getTwentyAccessToken();
+    if (!token || !iframe || !iframe.contentWindow) return;
+    try {
+      iframe.contentWindow.postMessage({ type: 'twenty-auth-token', token: token }, window.location.origin);
+    } catch (e) {}
   }
 
   function getChatSrc() {
@@ -100,6 +193,8 @@
     if (iframe.getAttribute('src') !== src) iframe.src = src;
     applyIframeSize(iframe);
     iframe.style.display = 'block';
+    postAuthTokenToIframe(iframe);
+    window.setTimeout(function () { postAuthTokenToIframe(iframe); }, 800);
     setNavActive(true);
   }
 
@@ -261,6 +356,8 @@
   });
 
   // ── boot ──────────────────────────────────────────────────────────────────
+
+  installAuthCapture();
 
   var observer = new MutationObserver(tryInsert);
   observer.observe(document.body, { childList: true, subtree: true });

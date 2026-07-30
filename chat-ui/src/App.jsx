@@ -3,7 +3,7 @@ import { ConversationSidebar } from './components/ConversationSidebar'
 import { ChatPanel } from './components/ChatPanel'
 import { ContactPanel } from './components/ContactPanel'
 import { useConversations } from './hooks/useConversations'
-import { withTwentyAuthHeaders } from './utils/twentyAuth'
+import { installTwentyAuthMessageListener, withTwentyAuthHeaders } from './utils/twentyAuth'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -34,6 +34,8 @@ function buildDraft(conv) {
 }
 
 export default function App() {
+  useEffect(() => installTwentyAuthMessageListener(), [])
+
   const {
     filtered, selected, selectedId, selectConversation,
     activeChannel, setActiveChannel,
