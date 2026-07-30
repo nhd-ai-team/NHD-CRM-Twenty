@@ -31,6 +31,7 @@ const META_APP_SECRET = process.env.META_APP_SECRET || INSTAGRAM_APP_SECRET;
 const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN || INSTAGRAM_PAGE_ACCESS_TOKEN;
 const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+let workspaceSchemaCache = null;
 
 // 浏览器写端点的同主域白名单：只放行来自 chinanhd.com（及子域）与本地开发的请求。
 // 注意：Origin/Referer 可被非浏览器客户端伪造，这是纵深防御/减速带，非强鉴权。
@@ -58,7 +59,78 @@ function getTwentyTokenFromRequest(req) {
   if (authorization.toLowerCase().startsWith('bearer ')) {
     return authorization.slice(7).trim();
   }
+  const forwardedToken = String(req.headers['x-twenty-access-token'] || '').trim();
+  if (forwardedToken) return forwardedToken;
   return TWENTY_API_KEY;
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const payload = String(token || '').split('.')[1];
+    if (!payload) return null;
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function getTwentyUserIdFromRequest(req) {
+  const userId = String(req.headers['x-twenty-user-id'] || '').trim();
+  if (userId) return userId;
+  const token = getTwentyTokenFromRequest(req);
+  return decodeJwtPayload(token)?.sub || '';
+}
+
+async function getWorkspaceSchema() {
+  if (workspaceSchemaCache) return workspaceSchemaCache;
+  const result = await pool.query(`
+    SELECT table_schema
+    FROM information_schema.tables
+    WHERE table_name = 'workspaceMember' AND table_schema LIKE 'workspace_%'
+    ORDER BY table_schema
+    LIMIT 1`);
+  const schema = result.rows[0]?.table_schema || '';
+  if (!/^workspace_[a-z0-9]+$/.test(schema)) throw new Error('workspace schema not found');
+  workspaceSchemaCache = schema;
+  return schema;
+}
+
+async function resolveAuditActor(req) {
+  const userId = getTwentyUserIdFromRequest(req);
+  if (!userId) return null;
+  const schema = await getWorkspaceSchema();
+  const result = await pool.query(
+    `SELECT id, "nameFirstName", "nameLastName" FROM ${schema}."workspaceMember" WHERE "userId" = $1 LIMIT 1`,
+    [userId],
+  );
+  const member = result.rows[0];
+  if (!member?.id) return null;
+  const name = [member.nameFirstName, member.nameLastName].filter(Boolean).join(' ').trim() || 'CRM 用户';
+  return { id: member.id, name };
+}
+
+async function applyRecordAudit(tableName, recordId, actor, mode = 'update') {
+  if (!actor?.id || !recordId || !['opportunity', 'person', 'company'].includes(tableName)) return;
+  const schema = await getWorkspaceSchema();
+  const setCreated = mode === 'create';
+  const assignments = [
+    '"updatedBySource" = \'MANUAL\'',
+    '"updatedByWorkspaceMemberId" = $2',
+    '"updatedByName" = $3',
+    '"updatedByContext" = COALESCE("updatedByContext", \'{}\'::jsonb)',
+  ];
+  if (setCreated) {
+    assignments.push(
+      '"createdBySource" = \'MANUAL\'',
+      '"createdByWorkspaceMemberId" = $2',
+      '"createdByName" = $3',
+      '"createdByContext" = COALESCE("createdByContext", \'{}\'::jsonb)',
+    );
+  }
+  await pool.query(
+    `UPDATE ${schema}."${tableName}" SET ${assignments.join(', ')} WHERE id = $1`,
+    [recordId, actor.id, actor.name],
+  );
 }
 
 async function twentyGraphQL(query, variables = {}, token = TWENTY_API_KEY) {
@@ -100,7 +172,7 @@ async function findCompanyByExactName(name, token = TWENTY_API_KEY) {
   return companies.find((company) => company.name?.trim().toLowerCase() === term.toLowerCase()) || companies[0] || null;
 }
 
-async function createCompanyByName(name, token = TWENTY_API_KEY) {
+async function createCompanyByName(name, token = TWENTY_API_KEY, auditActor = null) {
   const term = String(name || '').trim();
   if (!term) return null;
   const data = await twentyGraphQL(
@@ -108,7 +180,9 @@ async function createCompanyByName(name, token = TWENTY_API_KEY) {
     { data: { name: term } },
     token,
   );
-  return data?.createCompany || null;
+  const company = data?.createCompany || null;
+  if (company?.id) await applyRecordAudit('company', company.id, auditActor, 'create');
+  return company;
 }
 
 async function ensureSchema() {
@@ -509,6 +583,11 @@ app.put('/api/conversations/:id/draft', requireSameSite, async (req, res) => {
 app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, res) => {
   const b = req.body || {};
   const twentyToken = getTwentyTokenFromRequest(req);
+  const auditActor = await resolveAuditActor(req).catch((error) => {
+    console.error('[audit] resolve actor failed:', error.message);
+    return null;
+  });
+  if (!auditActor) console.warn('[audit] current user not resolved; record audit will keep API identity');
   const name = String(b.name || '').trim();
   const company = String(b.company || '').trim();
   if (!name && !company) return res.status(400).json({ error: '姓名或公司至少填写一个' });
@@ -536,11 +615,13 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
       if (personId) {
         await twentyGraphQL('mutation($id: UUID!, $d: PersonUpdateInput!){ updatePerson(id: $id, data: $d){ id } }',
           { id: personId, d: { name: { firstName: name, lastName: '' } } }, twentyToken);
+        await applyRecordAudit('person', personId, auditActor, 'update');
       } else {
         const pr = await twentyGraphQL('mutation($d: PersonCreateInput!){ createPerson(data: $d){ id } }',
           { d: { name: { firstName: name, lastName: '' } } }, twentyToken);
         personId = pr?.createPerson?.id || null;
         createdPersonId = personId;
+        await applyRecordAudit('person', personId, auditActor, 'create');
       }
     } catch (error) { console.error('[convert-to-lead] person write failed:', error.message); }
   }
@@ -551,7 +632,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (!companyId && company) {
     try {
       const existingCompany = await findCompanyByExactName(company, twentyToken);
-      const resolvedCompany = existingCompany || await createCompanyByName(company, twentyToken);
+      const resolvedCompany = existingCompany || await createCompanyByName(company, twentyToken, auditActor);
       companyId = resolvedCompany?.id || '';
     } catch (error) { console.error('[convert-to-lead] company write failed:', error.message); }
   }
@@ -601,6 +682,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
       } else throw e;
     }
     if (!opp?.id) return res.status(502).json({ error: isUpdate ? 'updateOpportunity failed' : 'createOpportunity failed' });
+    await applyRecordAudit('opportunity', opp.id, auditActor, isUpdate ? 'update' : 'create');
     if (!isUpdate && row.contact_id) {
       await pool.query('UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1', [row.contact_id, opp.id]);
     }

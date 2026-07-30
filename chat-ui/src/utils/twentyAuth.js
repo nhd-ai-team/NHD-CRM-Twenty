@@ -18,6 +18,17 @@ function getTwentyAccessTokenFromCookie() {
   }
 }
 
+function decodeJwtPayload(token) {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return null
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(window.atob(normalized))
+  } catch {
+    return null
+  }
+}
+
 export function getTwentyAccessToken() {
   const hash = window.location.hash?.replace(/^#/, '') || ''
   const params = new URLSearchParams(hash)
@@ -27,5 +38,11 @@ export function getTwentyAccessToken() {
 export function withTwentyAuthHeaders(headers = {}) {
   const token = getTwentyAccessToken()
   if (!token) return headers
-  return { ...headers, Authorization: `Bearer ${token}` }
+  const userId = decodeJwtPayload(token)?.sub || ''
+  return {
+    ...headers,
+    Authorization: `Bearer ${token}`,
+    'X-Twenty-Access-Token': token,
+    ...(userId ? { 'X-Twenty-User-Id': userId } : {}),
+  }
 }
