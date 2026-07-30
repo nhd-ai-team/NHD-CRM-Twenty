@@ -164,10 +164,11 @@ export function ContactPanel({ conv, open = true, onClose, inline = false, draft
   return (
     <>
       <div style={panelStyle}>
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)', overflowX: 'auto', flexShrink: 0 }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--bg-primary)', flexShrink: 0 }}>
           {TABS.map((t) => (
             <button key={t} onClick={() => setActiveTab(t)} style={{
-              padding: '10px 14px', fontSize: 12, fontWeight: 500, border: 'none', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap',
+              flex: 1, textAlign: 'center',
+              padding: '10px 4px', fontSize: 12, fontWeight: 500, border: 'none', background: 'transparent', cursor: 'pointer', whiteSpace: 'nowrap',
               color: activeTab === t ? 'var(--accent)' : 'var(--text-secondary)',
               borderBottom: activeTab === t ? '2px solid var(--accent)' : '2px solid transparent',
             }}>{t}</button>

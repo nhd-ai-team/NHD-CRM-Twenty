@@ -106,11 +106,14 @@ function ActionBar({ conv, onRequestAction }) {
       ? '当前不在AI客服托管时间内'
       : ''
 
+  // 无可用操作（如已关闭会话）时不渲染，避免底部残留空白栏
+  if (!canTakeover && !canAiHost && isClosed) return null
+
   return (
     <div style={{
-      display: 'flex', gap: 8, padding: '5px 16px 4px',
+      display: 'flex', gap: 8, padding: '6px 16px',
       borderTop: '1px solid var(--border-soft)', flexWrap: 'wrap', alignItems: 'center',
-      minHeight: 36, flexShrink: 0,
+      flexShrink: 0,
     }}>
       {/* Takeover */}
       {!isClosed && !isTakeover && (

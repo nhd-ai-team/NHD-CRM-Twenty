@@ -226,7 +226,7 @@ export default function App() {
           )}
 
           <div style={{
-            position: isNarrow ? 'fixed' : 'relative', top: 44, left: 0, bottom: 0,
+            position: isNarrow ? 'fixed' : 'relative', top: isNarrow ? 44 : 0, left: 0, bottom: 0,
             height: isNarrow ? 'calc(100vh - 44px)' : '100%',
             zIndex: isNarrow ? 49 : 'auto',
             transform: isNarrow && !sidebarOpen ? 'translateX(-100%)' : 'translateX(0)',
