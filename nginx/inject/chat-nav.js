@@ -7,6 +7,7 @@
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__';
   var AUTH_TOKEN = '';
+  var HIDDEN_NAV_LABELS = ['Workflows', '工作流', '自动化'];
 
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
@@ -227,6 +228,8 @@
   // ── intercept other nav clicks to hide chat ────────────────────────────────
 
   function setupNavInterception() {
+    if (window.__chatNavInterceptionInstalled) return;
+    window.__chatNavInterceptionInstalled = true;
     document.addEventListener('click', function (e) {
       var a = e.target.closest('a[href]');
       if (!a) return;
@@ -239,6 +242,49 @@
         if (isChatVisible()) hideChat();
       }
     }, true);
+  }
+
+  // ── hide native nav items disabled for this workspace ─────────────────────
+
+  function textLooksLikeDisabledNav(text) {
+    var normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    return HIDDEN_NAV_LABELS.indexOf(normalized) !== -1;
+  }
+
+  function hrefLooksLikeDisabledNav(href) {
+    return /^\/workflows(\/|$)/.test(href || '') ||
+      /^\/objects\/workflows(\/|$)/.test(href || '');
+  }
+
+  function sidebarRowFor(el) {
+    var node = el;
+    for (var i = 0; i < 6 && node && node !== document.body; i++) {
+      var rect = node.getBoundingClientRect();
+      var style = window.getComputedStyle(node);
+      if (rect.left <= 320 &&
+          rect.width > 80 && rect.width <= 360 &&
+          rect.height >= 24 && rect.height <= 56 &&
+          style.display !== 'contents') {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return el;
+  }
+
+  function hideDisabledNativeNavItems() {
+    var selectors = 'a[href],button,[role="button"]';
+    Array.from(document.querySelectorAll(selectors)).forEach(function (el) {
+      if (el.id === NAV_ID) return;
+      var href = el.getAttribute('href') || '';
+      if (!hrefLooksLikeDisabledNav(href) && !textLooksLikeDisabledNav(el.textContent)) return;
+      var rect = el.getBoundingClientRect();
+      // Only target the left CRM sidebar. Do not hide content inside detail pages.
+      if (rect.left > 360 || rect.width > 420) return;
+      var row = sidebarRowFor(el);
+      row.style.display = 'none';
+      row.setAttribute('data-chat-hidden-native-nav', '1');
+    });
   }
 
   // ── build and insert nav item ──────────────────────────────────────────────
@@ -313,6 +359,7 @@
   }
 
   function tryInsert() {
+    hideDisabledNativeNavItems();
     if (document.getElementById(NAV_ID)) return;
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
@@ -342,7 +389,7 @@
 
     setupNavInterception();
 
-    // Pre-create iframe (keeps it warm; won't load until shown)
+    // Pre-create iframe. Keep it hidden, but load it once so the first open is faster.
     getOrCreateIframe();
   }
 
@@ -368,11 +415,9 @@
     window.addEventListener('load', tryInsert);
   }
 
-  var stopInterval = setInterval(function () {
-    if (document.getElementById(NAV_ID)) {
-      observer.disconnect();
-      clearInterval(stopInterval);
-    }
-  }, 2000);
+  // Twenty is a SPA: sidebar nodes can be replaced after navigation, role changes,
+  // or metadata refreshes. Keep a low-frequency fallback so our entry survives
+  // those rerenders without requiring a full browser refresh.
+  setInterval(tryInsert, 2000);
 
 })();
