@@ -291,6 +291,47 @@
     return headers;
   }
 
+  var leadLookupCache = {};
+  var leadLookupInFlight = false;
+
+  function cleanLeadName(text) {
+    var value = String(text || '').replace(/\s+/g, ' ').trim();
+    value = value.replace(/^[A-Z]\s+/, '').trim();
+    return value.replace(/[.。…]+$/g, '').trim();
+  }
+
+  function getRowLeadName(row) {
+    var cells = row.querySelectorAll('td');
+    var nameCell = cells[1] || cells[0];
+    return cleanLeadName(nameCell ? nameCell.textContent : '');
+  }
+
+  function lookupOpportunityIds(names, done) {
+    var pending = names.filter(function (name) { return name && !leadLookupCache[name]; });
+    if (!pending.length || leadLookupInFlight) return;
+    leadLookupInFlight = true;
+    window.fetch('/conv-api/opportunities-lookup', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ names: pending }),
+    }).then(function (response) {
+      return response.ok ? response.json() : { items: [] };
+    }).then(function (data) {
+      (data.items || []).forEach(function (item) {
+        if (!item || !item.id || !item.name) return;
+        var exact = cleanLeadName(item.name);
+        leadLookupCache[exact] = item.id;
+        pending.forEach(function (name) {
+          if (exact.indexOf(name) === 0 || name.indexOf(exact) === 0) leadLookupCache[name] = item.id;
+        });
+      });
+    }).catch(function () {
+    }).finally(function () {
+      leadLookupInFlight = false;
+      if (typeof done === 'function') done();
+    });
+  }
+
   function showLeadToCustomerMessage(type, text) {
     var existing = document.getElementById('__lead_to_customer_toast__');
     if (existing) existing.remove();
@@ -374,20 +415,75 @@
     return button;
   }
 
+  function rowLooksLikeOpportunity(row) {
+    var cells = row.querySelectorAll('td');
+    if (cells.length < 2) return false;
+    if (row.querySelector('[data-lead-to-customer-button="1"], [data-lead-action-cell="1"]')) return false;
+    var name = getRowLeadName(row);
+    if (!name || name === '计算') return false;
+    return true;
+  }
+
+  function getOpportunityRows() {
+    return Array.from(document.querySelectorAll('table tr')).filter(rowLooksLikeOpportunity);
+  }
+
+  function installLeadActionHeader() {
+    var headerRow = document.querySelector('table thead tr');
+    if (!headerRow || headerRow.querySelector('[data-lead-action-header="1"]')) return;
+    var headerCells = headerRow.querySelectorAll('th');
+    if (headerCells.length < 2) return;
+    var th = document.createElement('th');
+    th.setAttribute('data-lead-action-header', '1');
+    th.textContent = '操作';
+    th.style.cssText = [
+      'width:92px',
+      'min-width:92px',
+      'max-width:92px',
+      'padding:0 8px',
+      'font-size:12px',
+      'font-weight:600',
+      'color:var(--twenty-text-color-secondary,#6b7280)',
+      'border-bottom:1px solid var(--twenty-border-color-light,#e5e7eb)',
+      'background:var(--twenty-background-primary,#fff)',
+      'white-space:nowrap',
+    ].join(';');
+    headerRow.insertBefore(th, headerCells[2] || null);
+  }
+
+  function insertLeadActionCell(row, rowId) {
+    var cells = row.querySelectorAll('td');
+    if (cells.length < 2 || row.querySelector('[data-lead-action-cell="1"]')) return;
+    var td = document.createElement('td');
+    td.setAttribute('data-lead-action-cell', '1');
+    td.style.cssText = [
+      'width:92px',
+      'min-width:92px',
+      'max-width:92px',
+      'padding:0 8px',
+      'box-sizing:border-box',
+      'text-align:left',
+      'vertical-align:middle',
+      'background:inherit',
+    ].join(';');
+    td.appendChild(buildLeadToCustomerButton(rowId));
+    row.insertBefore(td, cells[2] || null);
+  }
+
   function installLeadToCustomerButtons() {
     if (!isOpportunityListPage() || isChatVisible()) return;
-    Array.from(document.querySelectorAll('tr[data-selectable-id]')).forEach(function (row) {
+    installLeadActionHeader();
+
+    var unresolvedNames = [];
+    getOpportunityRows().forEach(function (row) {
       var rowId = row.getAttribute('data-selectable-id') || '';
-      if (!/^[0-9a-f-]{36}$/i.test(rowId)) return;
-      if (row.querySelector('[data-lead-to-customer-button="1"]')) return;
-      var cells = row.querySelectorAll('td');
-      if (!cells.length) return;
-      var actionCell = cells[1] || cells[0];
-      if (!actionCell) return;
-      actionCell.setAttribute('data-lead-action-cell', '1');
-      actionCell.style.minWidth = '180px';
-      actionCell.appendChild(buildLeadToCustomerButton(rowId));
+      var name = getRowLeadName(row);
+      if (!/^[0-9a-f-]{36}$/i.test(rowId)) rowId = leadLookupCache[name] || '';
+      if (/^[0-9a-f-]{36}$/i.test(rowId)) insertLeadActionCell(row, rowId);
+      else unresolvedNames.push(name);
     });
+
+    lookupOpportunityIds(Array.from(new Set(unresolvedNames)), installLeadToCustomerButtons);
   }
 
   // ── hide native nav items disabled for this workspace ─────────────────────
