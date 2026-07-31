@@ -278,6 +278,15 @@
     return window.location.pathname === '/objects/opportunities';
   }
 
+  function isOpportunityTableView() {
+    if (!isOpportunityListPage()) return false;
+    var table = document.querySelector('table');
+    var headerRow = table ? table.querySelector('thead tr') : null;
+    if (!table || !headerRow) return false;
+    var rect = table.getBoundingClientRect();
+    return rect.width > 300 && rect.height > 60;
+  }
+
   function getAuthHeaders() {
     var token = getTwentyAccessToken();
     var headers = {
@@ -512,6 +521,10 @@
     Array.from(document.querySelectorAll('[data-floating-lead-to-customer="1"]')).forEach(function (el) { el.remove(); });
   }
 
+  function removeLeadActionTableCells() {
+    Array.from(document.querySelectorAll('[data-lead-action-header="1"], [data-lead-action-cell="1"]')).forEach(function (el) { el.remove(); });
+  }
+
   function candidateLeadNameElements() {
     return Array.from(document.querySelectorAll('span,div,a,button')).filter(function (el) {
       if (el.closest('#__chat_iframe__') || el.closest('[data-floating-lead-to-customer="1"]')) return false;
@@ -526,7 +539,7 @@
   }
 
   function installFloatingLeadButtons() {
-    if (!isOpportunityListPage() || isChatVisible()) {
+    if (!isOpportunityTableView() || isChatVisible()) {
       removeFloatingLeadButtons();
       return;
     }
@@ -563,8 +576,9 @@
   }
 
   function installLeadToCustomerButtons() {
-    if (!isOpportunityListPage() || isChatVisible()) {
+    if (!isOpportunityTableView() || isChatVisible()) {
       removeFloatingLeadButtons();
+      removeLeadActionTableCells();
       return;
     }
     installLeadActionHeader();
