@@ -18,6 +18,10 @@ const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
 const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
 const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
+const AI_AUTO_REPLY_CHANNELS = new Set((process.env.AI_AUTO_REPLY_CHANNELS || 'website')
+  .split(',')
+  .map(channel => channel.trim().toLowerCase())
+  .filter(Boolean));
 // 调用 ai-service 的 /api/agent 路由（销售在 CRM 回复官网访客）需要 Basic Auth。
 const AI_AGENT_USER = process.env.AI_AGENT_USER || 'admin';
 const AI_AGENT_PASSWORD = process.env.AI_AGENT_PASSWORD || 'admin123';
@@ -320,34 +324,115 @@ async function syncPerson(phone, displayName) {
   } catch (error) { console.error('[twenty] person sync failed:', error.message); return null; }
 }
 
-// 调用 AI 客服服务生成回复草稿，以 sender_type=ai / content_type=ai_suggestion 存入会话。
-// WhatsApp / Instagram 个人号或企业号默认「建议模式」：只落草稿供销售确认，不自动发送（避免封号/误发）。
-async function requestAiSuggestion(conversation, customerMessageId, message) {
+function composeAiReplyContent(ai) {
+  const text = String(ai.replyText || ai.reply || '').trim();
+  const attachments = Array.isArray(ai.attachments) ? ai.attachments : [];
+  const attachmentLines = attachments
+    .map(item => [item.title, item.url].filter(Boolean).join(': '))
+    .filter(Boolean);
+  return [text, ...attachmentLines].filter(Boolean).join('\n');
+}
+
+async function loadAiPolicy(conversationId) {
+  const result = await pool.query(
+    `SELECT c.id, c.external_chat_id, c.channel, c.status,
+            COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
+            (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AS "inAiWindow"
+       FROM conv.conversations c
+       LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
+      WHERE c.id = $1`,
+    [conversationId],
+  );
+  return result.rows[0] || null;
+}
+
+async function recordAiMessage(conversationId, content, externalId) {
+  await pool.query(
+    `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+     VALUES ($1, $2, 'ai', $3, 'text', now())
+     ON CONFLICT(external_msg_id) DO NOTHING`,
+    [externalId || null, conversationId, content],
+  );
+  await pool.query(
+    `UPDATE conv.conversations
+        SET last_message_at = now(), last_message_preview = $2, updated_at = now()
+      WHERE id = $1`,
+    [conversationId, content],
+  );
+}
+
+async function sendAiReplyToChannel(policy, content, idempotencyKey, ai) {
+  if (policy.channel === 'website') {
+    const response = await fetch(
+      `${AI_SERVICE_URL}/api/v1/conversations/${encodeURIComponent(policy.external_chat_id)}/ai-messages`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
+        body: JSON.stringify({
+          content,
+          idempotencyKey,
+          metadata: {
+            requestId: ai.requestId,
+            status: ai.status,
+            reasonCode: ai.reasonCode,
+            citations: ai.citations || [],
+            attachments: ai.attachments || [],
+          },
+        }),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Website AI send failed: ${response.status} ${await response.text()}`);
+    }
+    const sent = await response.json();
+    await recordAiMessage(policy.id, content, idempotencyKey);
+    return sent;
+  }
+
+  throw new Error(`AI auto reply is not implemented for channel ${policy.channel}`);
+}
+
+// AI 客服只保留「回复 / 不回复」两种实际动作：允许时直接回复客户并落库，不再生成 ai_suggestion 草稿。
+async function requestAiReplyIfAllowed(conversation, customerMessageId, message) {
   if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY || !message?.trim()) return;
-  const suggestionExternalId = `ai:${customerMessageId}`;
-  // 幂等：webhook 可能重复投递，已生成过草稿则跳过
-  const exists = await pool.query('SELECT 1 FROM conv.messages WHERE external_msg_id = $1', [suggestionExternalId]);
+  const policy = await loadAiPolicy(conversation.id);
+  if (!policy || !AI_AUTO_REPLY_CHANNELS.has(policy.channel)) return;
+  if (!policy.aiEnabled || !policy.inAiWindow || policy.status === 'takeover' || policy.status === 'closed') return;
+
+  const aiExternalId = `ai:auto:${customerMessageId}`;
+  // 幂等：webhook 可能重复投递，已自动回复过则跳过。
+  const exists = await pool.query('SELECT 1 FROM conv.messages WHERE external_msg_id = $1', [aiExternalId]);
   if (exists.rowCount) return;
+
   try {
     const response = await fetch(`${AI_SERVICE_URL}/api/v1/ai/reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
       body: JSON.stringify({
         tenantId: AI_SERVICE_TENANT_ID,
-        channel: conversation.channel,
-        conversationId: conversation.id,
+        channel: policy.channel,
+        conversationId: policy.id,
         messageId: customerMessageId,
         message,
         requestId: `crm_${customerMessageId}`,
+        replyPolicy: {
+          humanTakeover: false,
+          replyMode: 'aiReplying',
+          channelActivationDecision: true,
+          activationScheduleDecision: true,
+          serviceAvailable: true,
+        },
       }),
     });
     if (!response.ok) { console.error('[ai] reply failed:', response.status); return; }
     const ai = await response.json();
-    if (!['reply', 'fallback', 'handoff'].includes(ai.status) || !ai.reply?.trim()) return;
-    await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
-      VALUES ($1, $2, 'ai', $3, 'ai_suggestion', now()) ON CONFLICT(external_msg_id) DO NOTHING`,
-      [suggestionExternalId, conversation.id, ai.reply]);
-  } catch (error) { console.error('[ai] suggestion error:', error.message); }
+    const replyContent = composeAiReplyContent(ai);
+    if (!['reply', 'fallback'].includes(ai.status) || !replyContent) {
+      console.log('[ai] no auto reply:', ai.status, ai.reasonCode || '');
+      return;
+    }
+    await sendAiReplyToChannel(policy, replyContent, aiExternalId, ai);
+  } catch (error) { console.error('[ai] auto reply error:', error.message); }
 }
 
 async function persistWhatsAppMessage(payload) {
@@ -382,10 +467,10 @@ async function persistWhatsAppMessage(payload) {
     await client.query('COMMIT');
     // 规则（2026-07-24）：消息只落对话工作台，不自动同步 People/Companies。
     // 客户信息由销售在工作台右侧表单确认后一键写入 Opportunity（另行实现）。
-    // 新的客户入站消息（非人工接管、文本类）触发 AI 生成回复草稿（建议模式，不自动发送）。
+    // 新的客户入站消息（非人工接管、文本类）按渠道 AI 策略决定是否自动回复。
     if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
-      requestAiSuggestion(conversation, externalMessageId, parsed.content)
-        .catch(error => console.error('[ai] suggestion failed:', error.message));
+      requestAiReplyIfAllowed(conversation, externalMessageId, parsed.content)
+        .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
@@ -437,6 +522,11 @@ async function persistWebsiteMessage(body) {
       [dedupeId, conversation.id, senderType, content]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, content]);
     await client.query('COMMIT');
+    if (inserted.rowCount && senderType === 'customer') {
+      const aiMessageId = dedupeId || `web:${conversation.id}:${inserted.rows[0].id}`;
+      requestAiReplyIfAllowed(conversation, aiMessageId, content)
+        .catch(error => console.error('[ai] website auto reply failed:', error.message));
+    }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
@@ -504,10 +594,10 @@ async function persistInstagramMessage(senderId, messageEvent) {
       [externalMessageId, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, messageEvent.timestamp || Date.now()]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
-    // 与 WhatsApp 一致：仅落草稿，接管中的会话不触发 AI。
+    // 入站文本消息按渠道 AI 策略决定是否自动回复；未开启自动回复的渠道直接跳过。
     if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
-      requestAiSuggestion(conversation, message.mid, parsed.content)
-        .catch(error => console.error('[ai] suggestion failed:', error.message));
+      requestAiReplyIfAllowed(conversation, message.mid, parsed.content)
+        .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
@@ -582,8 +672,8 @@ async function persistFacebookMessage(messagingEvent) {
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
     if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
-      requestAiSuggestion(conversation, message.mid, parsed.content)
-        .catch(error => console.error('[ai] suggestion failed:', error.message));
+      requestAiReplyIfAllowed(conversation, message.mid, parsed.content)
+        .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
