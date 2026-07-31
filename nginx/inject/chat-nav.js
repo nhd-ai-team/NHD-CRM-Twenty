@@ -442,22 +442,188 @@
     }
   });
 
+  // ── 线索转客户：线索列表顶部「转客户」按钮（放在 +New opportunity 左侧）──────────
+  var CONVERT_BTN_ID = '__lead_convert_top_btn__';
+  var CONVERT_MODAL_ID = '__lead_convert_modal__';
+
+  function isOpportunityListPage() {
+    return window.location.pathname.indexOf('/objects/opportunities') === 0;
+  }
+
+  // 读取当前被勾选的线索行：兼容 checkbox:checked / aria-selected / data-selected 多种信号。
+  function getSelectedOpportunities() {
+    var picked = [];
+    Array.from(document.querySelectorAll('tr[data-selectable-id]')).forEach(function (row) {
+      var id = row.getAttribute('data-selectable-id') || '';
+      if (!id) return;
+      var cb = row.querySelector('input[type="checkbox"]');
+      var selected = (cb && cb.checked) ||
+        row.getAttribute('aria-selected') === 'true' ||
+        row.getAttribute('data-selected') === 'true';
+      if (!selected) return;
+      var name = '';
+      var cells = row.querySelectorAll('td');
+      for (var i = 0; i < cells.length; i++) {
+        var t = (cells[i].textContent || '').trim();
+        if (t && t.length > 1) { name = t; break; }
+      }
+      picked.push({ id: id, name: name || id });
+    });
+    return picked;
+  }
+
+  function convertToast(type, msg) {
+    var el = document.createElement('div');
+    el.textContent = msg;
+    el.style.cssText = [
+      'position:fixed', 'bottom:24px', 'left:50%', 'transform:translateX(-50%)',
+      'z-index:100003', 'padding:10px 18px', 'border-radius:8px', 'font-size:13px', 'font-weight:500',
+      'color:#fff', 'box-shadow:0 6px 24px rgba(0,0,0,.2)', 'max-width:86vw',
+      'background:' + (type === 'ok' ? '#1f9d5f' : '#e1262b'),
+    ].join(';');
+    document.body.appendChild(el);
+    window.setTimeout(function () { el.remove(); }, 3200);
+  }
+
+  function closeConvertModal() {
+    var m = document.getElementById(CONVERT_MODAL_ID);
+    if (m) m.remove();
+  }
+
+  function runConvert(ids, onProgress) {
+    var created = 0, updated = 0, failed = 0;
+    var chain = Promise.resolve();
+    ids.forEach(function (id, idx) {
+      chain = chain.then(function () {
+        onProgress(idx + 1, ids.length);
+        return window.fetch('/conv-api/opportunities/' + encodeURIComponent(id) + '/convert-to-person', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        }).then(function (r) {
+          return r.json().catch(function () { return {}; }).then(function (data) {
+            if (!r.ok) { failed++; return; }
+            if (data && data.created) created++; else updated++;
+          });
+        }).catch(function () { failed++; });
+      });
+    });
+    return chain.then(function () { return { created: created, updated: updated, failed: failed }; });
+  }
+
+  function openConvertModal(items) {
+    closeConvertModal();
+    var ids = items.map(function (it) { return it.id; });
+    var overlay = document.createElement('div');
+    overlay.id = CONVERT_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(420px,100%);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;';
+
+    var preview = items.slice(0, 5).map(function (it) { return '· ' + it.name; }).join('<br>');
+    var more = items.length > 5 ? '<br>… 等共 ' + items.length + ' 条' : '';
+    card.innerHTML =
+      '<div style="padding:16px 18px 10px">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">确认转为客户？</div>' +
+        '<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:#555">' +
+          '将把选中的 <b>' + items.length + '</b> 条线索同步/关联到客户(People)，按字段映射写入并生成关联编码。' +
+          '<div style="margin-top:8px;color:#777">' + preview + more + '</div>' +
+          '<div style="margin-top:8px;color:#a15c00">要求线索已填写「客户需求产品」，未填写的会被跳过并提示。</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #eee">' +
+        '<button data-act="cancel" style="padding:7px 14px;border-radius:6px;border:1px solid #ddd;background:#fff;color:#555;cursor:pointer;font-size:12px;font-weight:600">取消</button>' +
+        '<button data-act="ok" style="padding:7px 14px;border-radius:6px;border:none;background:#1f9d5f;color:#fff;cursor:pointer;font-size:12px;font-weight:700">确认转客户</button>' +
+      '</div>';
+
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeConvertModal(); });
+    card.querySelector('[data-act="cancel"]').addEventListener('click', closeConvertModal);
+    var okBtn = card.querySelector('[data-act="ok"]');
+    okBtn.addEventListener('click', function () {
+      okBtn.disabled = true;
+      okBtn.textContent = '处理中…';
+      runConvert(ids, function (done, total) { okBtn.textContent = '处理中… ' + done + '/' + total; })
+        .then(function (sum) {
+          closeConvertModal();
+          var parts = [];
+          if (sum.created) parts.push('新建 ' + sum.created);
+          if (sum.updated) parts.push('更新 ' + sum.updated);
+          if (sum.failed) parts.push('失败/跳过 ' + sum.failed);
+          convertToast(sum.failed && !sum.created && !sum.updated ? 'error' : 'ok', '转客户完成：' + (parts.join('，') || '无变化'));
+        });
+    });
+    document.body.appendChild(overlay);
+  }
+
+  // 找线索列表顶部的「+ New opportunity / 新建」按钮，作为插入锚点
+  function findNewRecordButton() {
+    var cands = document.querySelectorAll('button, a[role="button"], [role="button"]');
+    for (var i = 0; i < cands.length; i++) {
+      var el = cands[i];
+      if (el.id === CONVERT_BTN_ID || el.getAttribute('data-lead-convert-top') === '1') continue;
+      var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!t) continue;
+      if (/^(\+\s*)?(New|新建|新增|Create)\b/i.test(t) || /New opportunity|新建商机|新建线索/i.test(t)) {
+        var r = el.getBoundingClientRect();
+        if (r.top >= 0 && r.top < 220 && r.width > 0 && r.width < 320) return el;
+      }
+    }
+    return null;
+  }
+
+  function ensureConvertTopButton() {
+    if (!isOpportunityListPage() || isChatVisible()) {
+      var stale = document.getElementById(CONVERT_BTN_ID);
+      if (stale) stale.remove();
+      return;
+    }
+    if (document.getElementById(CONVERT_BTN_ID)) return;
+    var newBtn = findNewRecordButton();
+    if (!newBtn || !newBtn.parentElement) return;
+
+    var cs = window.getComputedStyle(newBtn);
+    var btn = document.createElement('button');
+    btn.id = CONVERT_BTN_ID;
+    btn.type = 'button';
+    btn.setAttribute('data-lead-convert-top', '1');
+    btn.textContent = '转客户';
+    btn.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'justify-content:center',
+      'height:' + (newBtn.getBoundingClientRect().height || 32) + 'px',
+      'margin-right:8px', 'padding:0 12px',
+      'border-radius:' + (cs.borderRadius || '8px'),
+      'border:1px solid #1f9d5f', 'background:#1f9d5f', 'color:#fff',
+      'font-size:' + (cs.fontSize || '13px'), 'font-weight:600', 'font-family:inherit',
+      'cursor:pointer', 'white-space:nowrap',
+    ].join(';');
+    btn.addEventListener('click', function () {
+      var sel = getSelectedOpportunities();
+      if (sel.length === 0) { convertToast('error', '请先勾选要转客户的线索'); return; }
+      openConvertModal(sel);
+    });
+    newBtn.parentElement.insertBefore(btn, newBtn);
+  }
+
   // ── boot ──────────────────────────────────────────────────────────────────
 
   installAuthCapture();
 
-  var observer = new MutationObserver(tryInsert);
+  function tick() { tryInsert(); ensureConvertTopButton(); }
+
+  var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });
 
   if (document.readyState === 'complete') {
-    tryInsert();
+    tick();
   } else {
-    window.addEventListener('load', tryInsert);
+    window.addEventListener('load', tick);
   }
 
   // Twenty is a SPA: sidebar nodes can be replaced after navigation, role changes,
   // or metadata refreshes. Keep a low-frequency fallback so our entry survives
   // those rerenders without requiring a full browser refresh.
-  setInterval(tryInsert, 2000);
+  setInterval(tick, 2000);
 
 })();
