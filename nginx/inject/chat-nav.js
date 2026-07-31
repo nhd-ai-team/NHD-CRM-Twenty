@@ -450,10 +450,11 @@
     return window.location.pathname.indexOf('/objects/opportunities') === 0;
   }
 
-  // 读取当前被勾选的线索行：兼容 checkbox:checked / aria-selected / data-selected 多种信号。
+  // 读取当前被勾选的线索行。Twenty 表格行为 [data-selectable-id] 的 div（非 tr），
+  // 选中态体现为行内 checkbox 被勾选；同时兼容 aria-selected / data-selected 兜底。
   function getSelectedOpportunities() {
     var picked = [];
-    Array.from(document.querySelectorAll('tr[data-selectable-id]')).forEach(function (row) {
+    Array.from(document.querySelectorAll('[data-selectable-id]')).forEach(function (row) {
       var id = row.getAttribute('data-selectable-id') || '';
       if (!id) return;
       var cb = row.querySelector('input[type="checkbox"]');
@@ -461,12 +462,7 @@
         row.getAttribute('aria-selected') === 'true' ||
         row.getAttribute('data-selected') === 'true';
       if (!selected) return;
-      var name = '';
-      var cells = row.querySelectorAll('td');
-      for (var i = 0; i < cells.length; i++) {
-        var t = (cells[i].textContent || '').trim();
-        if (t && t.length > 1) { name = t; break; }
-      }
+      var name = (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 24);
       picked.push({ id: id, name: name || id });
     });
     return picked;
@@ -557,18 +553,17 @@
     document.body.appendChild(overlay);
   }
 
-  // 找线索列表顶部的「+ New opportunity / 新建」按钮，作为插入锚点
-  function findNewRecordButton() {
-    var cands = document.querySelectorAll('button, a[role="button"], [role="button"]');
+  // 锚点用视图工具栏最左的「过滤 / Filter」按钮（始终可见、同一行）。
+  // 不用「New Opportunity」按钮：它在宽屏会被 Twenty 隐藏(top:-9999)，插过去会跟着看不见。
+  function findToolbarAnchor() {
+    var cands = document.querySelectorAll('button, [role="button"]');
     for (var i = 0; i < cands.length; i++) {
       var el = cands[i];
       if (el.id === CONVERT_BTN_ID || el.getAttribute('data-lead-convert-top') === '1') continue;
       var t = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!t) continue;
-      if (/^(\+\s*)?(New|新建|新增|Create)\b/i.test(t) || /New opportunity|新建商机|新建线索/i.test(t)) {
-        var r = el.getBoundingClientRect();
-        if (r.top >= 0 && r.top < 220 && r.width > 0 && r.width < 320) return el;
-      }
+      if (t !== '过滤' && t !== '筛选' && !/^Filter$/i.test(t)) continue;
+      var r = el.getBoundingClientRect();
+      if (r.top > 0 && r.top < 120 && r.width > 0) return el;
     }
     return null;
   }
@@ -580,10 +575,10 @@
       return;
     }
     if (document.getElementById(CONVERT_BTN_ID)) return;
-    var newBtn = findNewRecordButton();
-    if (!newBtn || !newBtn.parentElement) return;
+    var anchor = findToolbarAnchor();
+    if (!anchor || !anchor.parentElement) return;
 
-    var cs = window.getComputedStyle(newBtn);
+    var h = Math.round(anchor.getBoundingClientRect().height) || 26;
     var btn = document.createElement('button');
     btn.id = CONVERT_BTN_ID;
     btn.type = 'button';
@@ -591,11 +586,9 @@
     btn.textContent = '转客户';
     btn.style.cssText = [
       'display:inline-flex', 'align-items:center', 'justify-content:center',
-      'height:' + (newBtn.getBoundingClientRect().height || 32) + 'px',
-      'margin-right:8px', 'padding:0 12px',
-      'border-radius:' + (cs.borderRadius || '8px'),
-      'border:1px solid #1f9d5f', 'background:#1f9d5f', 'color:#fff',
-      'font-size:' + (cs.fontSize || '13px'), 'font-weight:600', 'font-family:inherit',
+      'height:' + h + 'px', 'margin-right:8px', 'padding:0 12px', 'flex-shrink:0',
+      'border-radius:6px', 'border:1px solid #1f9d5f', 'background:#1f9d5f', 'color:#fff',
+      'font-size:12px', 'font-weight:600', 'font-family:inherit',
       'cursor:pointer', 'white-space:nowrap',
     ].join(';');
     btn.addEventListener('click', function () {
@@ -603,7 +596,7 @@
       if (sel.length === 0) { convertToast('error', '请先勾选要转客户的线索'); return; }
       openConvertModal(sel);
     });
-    newBtn.parentElement.insertBefore(btn, newBtn);
+    anchor.parentElement.insertBefore(btn, anchor);
   }
 
   // ── boot ──────────────────────────────────────────────────────────────────
