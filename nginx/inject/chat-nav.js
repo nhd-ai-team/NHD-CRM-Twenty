@@ -487,7 +487,7 @@
   }
 
   function runConvert(ids, onProgress) {
-    var created = 0, updated = 0, failed = 0;
+    var created = 0, updated = 0, failed = 0, personIds = [];
     var chain = Promise.resolve();
     ids.forEach(function (id, idx) {
       chain = chain.then(function () {
@@ -499,12 +499,13 @@
         }).then(function (r) {
           return r.json().catch(function () { return {}; }).then(function (data) {
             if (!r.ok) { failed++; return; }
+            if (data && data.personId) personIds.push(data.personId);
             if (data && data.created) created++; else updated++;
           });
         }).catch(function () { failed++; });
       });
     });
-    return chain.then(function () { return { created: created, updated: updated, failed: failed }; });
+    return chain.then(function () { return { created: created, updated: updated, failed: failed, personIds: personIds }; });
   }
 
   function openConvertModal(items) {
@@ -548,6 +549,11 @@
           if (sum.updated) parts.push('更新 ' + sum.updated);
           if (sum.failed) parts.push('失败/跳过 ' + sum.failed);
           convertToast(sum.failed && !sum.created && !sum.updated ? 'error' : 'ok', '转客户完成：' + (parts.join('，') || '无变化'));
+          // 转成功后跳到客户列表。Twenty 记录详情无法整页深链(会 404，正常记录亦然)，
+          // 故跳列表；刚转的客户 updatedAt 最新、默认排在靠前，销售一眼可见。
+          if ((sum.personIds || []).length > 0) {
+            window.setTimeout(function () { window.location.href = '/objects/people'; }, 700);
+          }
         });
     });
     document.body.appendChild(overlay);
