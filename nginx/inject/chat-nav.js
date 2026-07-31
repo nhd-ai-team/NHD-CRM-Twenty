@@ -272,123 +272,6 @@
     }, true);
   }
 
-  // ── opportunities table: convert lead to customer ─────────────────────────
-
-  function isOpportunityListPage() {
-    return window.location.pathname === '/objects/opportunities';
-  }
-
-  function getAuthHeaders() {
-    var token = getTwentyAccessToken();
-    var headers = {
-      'Content-Type': 'application/json',
-      'X-Chat-Ui-Version': 'lead-to-customer-20260731',
-    };
-    if (token) {
-      headers.Authorization = 'Bearer ' + token;
-      headers['X-Twenty-Access-Token'] = token;
-    }
-    return headers;
-  }
-
-  function showLeadToCustomerMessage(type, text) {
-    var existing = document.getElementById('__lead_to_customer_toast__');
-    if (existing) existing.remove();
-    var el = document.createElement('div');
-    el.id = '__lead_to_customer_toast__';
-    el.textContent = text;
-    el.style.cssText = [
-      'position:fixed',
-      'left:50%',
-      'bottom:32px',
-      'transform:translateX(-50%)',
-      'z-index:10000',
-      'padding:10px 14px',
-      'border-radius:8px',
-      'font-size:13px',
-      'font-weight:700',
-      'box-shadow:0 12px 28px rgba(15,23,42,.18)',
-      'background:' + (type === 'error' ? '#fee2e2' : '#dcfce7'),
-      'color:' + (type === 'error' ? '#991b1b' : '#166534'),
-      'border:1px solid ' + (type === 'error' ? '#fecaca' : '#bbf7d0'),
-    ].join(';');
-    document.body.appendChild(el);
-    window.setTimeout(function () { if (el.parentElement) el.remove(); }, 2800);
-  }
-
-  function buildLeadToCustomerButton(rowId) {
-    var button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = '转客户';
-    button.setAttribute('data-lead-to-customer-button', '1');
-    button.style.cssText = [
-      'height:24px',
-      'padding:0 10px',
-      'border:1px solid #bbf7d0',
-      'border-radius:6px',
-      'background:#dcfce7',
-      'color:#166534',
-      'font-size:12px',
-      'font-weight:700',
-      'cursor:pointer',
-      'white-space:nowrap',
-    ].join(';');
-    button.addEventListener('click', function (event) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (button.disabled) return;
-      if (!window.confirm('确认将该线索同步到客户表？')) return;
-
-      button.disabled = true;
-      button.textContent = '同步中';
-      button.style.opacity = '0.7';
-      window.fetch('/conv-api/opportunities/' + encodeURIComponent(rowId) + '/convert-to-person', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({}),
-      }).then(function (response) {
-        return response.json().catch(function () { return {}; }).then(function (data) {
-          if (!response.ok) {
-            if (response.status === 409 && data && data.code === 'PRODUCT_REQUIRED') {
-              throw new Error('请先填写客户需求产品，再转为客户');
-            }
-            throw new Error(data && (data.detail || data.error) || '转客户失败');
-          }
-          return data;
-        });
-      }).then(function (data) {
-        button.textContent = data && data.created ? '已转客户' : '已同步';
-        button.style.background = '#ecfdf5';
-        button.style.borderColor = '#a7f3d0';
-        showLeadToCustomerMessage('ok', data && data.created ? '已转为客户' : '已同步到已有客户');
-      }).catch(function (error) {
-        button.disabled = false;
-        button.textContent = '转客户';
-        button.style.opacity = '1';
-        showLeadToCustomerMessage('error', error && error.message ? error.message : '转客户失败');
-      });
-    }, true);
-    return button;
-  }
-
-  function installLeadToCustomerButtons() {
-    if (!isOpportunityListPage() || isChatVisible()) return;
-    Array.from(document.querySelectorAll('tr[data-selectable-id]')).forEach(function (row) {
-      var rowId = row.getAttribute('data-selectable-id') || '';
-      if (!/^[0-9a-f-]{36}$/i.test(rowId)) return;
-      if (row.querySelector('[data-lead-to-customer-button="1"]')) return;
-      var cells = row.querySelectorAll('td');
-      if (!cells.length) return;
-      var actionCell = cells[cells.length - 1];
-      actionCell.setAttribute('data-lead-action-cell', '1');
-      actionCell.style.minWidth = '86px';
-      actionCell.style.width = '86px';
-      actionCell.style.padding = '0 8px';
-      actionCell.style.textAlign = 'right';
-      actionCell.appendChild(buildLeadToCustomerButton(rowId));
-    });
-  }
-
   // ── hide native nav items disabled for this workspace ─────────────────────
 
   function textLooksLikeDisabledNav(text) {
@@ -562,23 +445,18 @@
 
   installAuthCapture();
 
-  function runEnhancements() {
-    tryInsert();
-    installLeadToCustomerButtons();
-  }
-
-  var observer = new MutationObserver(runEnhancements);
+  var observer = new MutationObserver(tryInsert);
   observer.observe(document.body, { childList: true, subtree: true });
 
   if (document.readyState === 'complete') {
-    runEnhancements();
+    tryInsert();
   } else {
-    window.addEventListener('load', runEnhancements);
+    window.addEventListener('load', tryInsert);
   }
 
   // Twenty is a SPA: sidebar nodes can be replaced after navigation, role changes,
   // or metadata refreshes. Keep a low-frequency fallback so our entry survives
   // those rerenders without requiring a full browser refresh.
-  setInterval(runEnhancements, 2000);
+  setInterval(tryInsert, 2000);
 
 })();
