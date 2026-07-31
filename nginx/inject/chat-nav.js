@@ -324,6 +324,7 @@
     button.style.cssText = [
       'height:24px',
       'padding:0 10px',
+      'margin-left:8px',
       'border:1px solid #bbf7d0',
       'border-radius:6px',
       'background:#dcfce7',
@@ -332,6 +333,8 @@
       'font-weight:700',
       'cursor:pointer',
       'white-space:nowrap',
+      'vertical-align:middle',
+      'flex-shrink:0',
     ].join(';');
     button.addEventListener('click', function (event) {
       event.preventDefault();
@@ -379,12 +382,10 @@
       if (row.querySelector('[data-lead-to-customer-button="1"]')) return;
       var cells = row.querySelectorAll('td');
       if (!cells.length) return;
-      var actionCell = cells[cells.length - 1];
+      var actionCell = cells[1] || cells[0];
+      if (!actionCell) return;
       actionCell.setAttribute('data-lead-action-cell', '1');
-      actionCell.style.minWidth = '86px';
-      actionCell.style.width = '86px';
-      actionCell.style.padding = '0 8px';
-      actionCell.style.textAlign = 'right';
+      actionCell.style.minWidth = '180px';
       actionCell.appendChild(buildLeadToCustomerButton(rowId));
     });
   }
