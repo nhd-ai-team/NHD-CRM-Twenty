@@ -9,7 +9,7 @@
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__'; // 存当前激活视图：'chat' | 'mail'
   var AUTH_TOKEN = '';
-  var HIDDEN_NAV_LABELS = ['Workflows', '工作流', '自动化'];
+  var HIDDEN_NAV_LABELS = ['Workflows', 'Workflow Runs', 'Workflow Versions', '工作流', '自动化'];
   // 对话工作台（聊天气泡）与邮箱（信封）两个入口共用同一个 iframe，靠 URL 的 view 参数切换。
   var CHAT_SVG = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
   var MAIL_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
@@ -403,7 +403,7 @@
 
     if (navAnchors.length === 0) return;
 
-    var refAnchor = navAnchors[navAnchors.length - 1];
+    var refAnchor = navAnchors[0];
     var container = refAnchor.parentElement;
     if (!container) return;
 
@@ -414,6 +414,7 @@
       container = refAnchor.parentElement; // keep ref for cloning wrapper
     }
 
+    var insertBeforeNode = container;
     [
       { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
       { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
@@ -423,7 +424,7 @@
       wrapper.className = container.className;
       wrapper.setAttribute('data-chat-nav-wrapper', '1');
       wrapper.appendChild(item);
-      listEl.appendChild(wrapper);
+      listEl.insertBefore(wrapper, insertBeforeNode);
     });
 
     setupNavInterception();
