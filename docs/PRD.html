@@ -320,6 +320,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td style="width:180px;"><strong>产品阶段</strong></td><td>多渠道 AI 智能 CRM v1.0（MVP）</td></tr>
             <tr><td><strong>版本定位</strong></td><td>多渠道对话中间层 + AI 智能客服能力层 + Twenty CRM 销售闭环</td></tr>
             <tr><td><strong>创建日期</strong></td><td>2026-07-15</td></tr>
+            <tr><td><strong>最后更新</strong></td><td>2026-07-31：补充当前 CRM 数据模型、编码规则、三表关联同步与字段映射；转客户按钮暂不进入前端。</td></tr>
             <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
             <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
             <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
@@ -652,7 +653,131 @@ td.muted{color:var(--text-tertiary);}
 
       <div class="sub">
         <div class="sub-title">关联与数据打通</div>
-        <p>联系人 ↔ 公司 ↔ 商机 ↔ 任务支持多对多关联。邮件归档（Gmail / Outlook / IMAP）同步后，客户邮件自动显示在联系人时间线。对话工作台的会话可关联到 CRM 联系人和商机，形成完整客户档案。官网询盘表单留资（供应商已完成接入）自动创建 CRM 联系人（People）记录；来源渠道、意向等级、所属国家、感兴趣产品等 4 个字段暂需销售手动录入维护。</p>
+        <p>联系人 ↔ 公司 ↔ 商机 ↔ 项目 ↔ 任务支持关联。邮件归档（Gmail / Outlook / IMAP）同步后，客户邮件自动显示在联系人时间线。对话工作台的会话可关联到 CRM 联系人和商机，形成完整客户档案。官网询盘表单留资（供应商已完成接入）自动创建 CRM 联系人（People）记录；来源渠道、意向等级、所属国家、感兴趣产品等 4 个字段暂需销售手动录入维护。</p>
+        <div class="callout note"><strong>当前状态（2026-07-31）：</strong>前端「线索转客户」按钮已撤销，暂不在表格视图或阶段视图展示。底层编码、关联字段与三表同步能力保留，作为后续自动化流转的基础设施。</div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">当前 CRM 对象关系与同步规则</div>
+        <p>当前业务漏斗为：渠道内新会话自动进入线索（Opportunities）→ 有效线索 / 已分配后进入客户（People）→ 成交或立项后进入项目（项目对象）。一个公司可对应 N 个线索、N 个客户联系人、N 个项目；一个线索成为项目后，线索与项目按 1:1 关联。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>对象</th><th>业务含义</th><th>隐藏关联字段</th><th>当前说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Opportunities / 线索</strong></td><td>所有客户入口与商机线索池</td><td>syncGroupCode、linkedPersonId、linkedProjectId</td><td>新建线索时自动生成业务编码；作为三表同步主起点</td></tr>
+              <tr><td><strong>People / 客户联系人</strong></td><td>客户联系人；ToB 场景下可代表关键联系人</td><td>syncGroupCode、sourceOpportunityId、linkedProjectId</td><td>通过编码和来源线索与线索表关联</td></tr>
+              <tr><td><strong>项目 / _xiangMu</strong></td><td>有效线索进入项目管理后的项目维度</td><td>syncGroupCode、sourceOpportunityId、linkedPersonId</td><td>通过编码和来源线索与线索、客户联系人关联</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sub-title-sm">业务编码规则</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>项目</th><th>规则</th></tr></thead>
+            <tbody>
+              <tr><td><strong>字段名</strong></td><td>syncGroupCode（当前隐藏，不向销售前端展示）</td></tr>
+              <tr><td><strong>编码格式</strong></td><td>NHD + 线索创建日期（Asia/Shanghai，YYYYMMDD）+ 当日自增流水号，例如 NHD20260731001</td></tr>
+              <tr><td><strong>生成时机</strong></td><td>线索（Opportunity）创建时自动生成；历史线索已按创建时间回填</td></tr>
+              <tr><td><strong>流水规则</strong></td><td>当日流水只递增，不因删除历史数据而回收编号；如 007 删除，下一条仍为 008</td></tr>
+              <tr><td><strong>用途</strong></td><td>用于线索、客户联系人、项目之间建立业务关联与字段同步，不作为销售日常操作字段</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sub-title-sm">同步触发规则</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>触发对象</th><th>触发时机</th><th>同步目标</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>线索 Opportunity</strong></td><td>插入前</td><td>本表</td><td>若 syncGroupCode 为空，则自动生成编码</td></tr>
+              <tr><td><strong>线索 Opportunity</strong></td><td>插入 / 更新后</td><td>People、项目</td><td>按 syncGroupCode、关键联系人或来源线索同步共享字段</td></tr>
+              <tr><td><strong>客户 People</strong></td><td>插入 / 更新后</td><td>Opportunity、项目</td><td>按 syncGroupCode、sourceOpportunityId、linkedPersonId 同步共享字段</td></tr>
+              <tr><td><strong>项目 _xiangMu</strong></td><td>插入 / 更新后</td><td>Opportunity、People</td><td>按 syncGroupCode、sourceOpportunityId、linkedPersonId 同步共享字段</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout red"><strong>注意：</strong>当前只保留底层同步能力；「点击按钮从线索转客户」前端入口已撤销。后续如恢复该入口，应优先在 Twenty 原生 React 表格组件中实现，不再使用页面注入方式。</div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">三表字段映射关系</div>
+        <div class="sub-title-sm">线索 Opportunity ↔ 客户 People</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>线索字段</th><th>客户字段</th><th>同步说明</th></tr></thead>
+            <tbody>
+              <tr><td>name</td><td>nameFirstName</td><td>线索名称同步为客户姓名 / 名称</td></tr>
+              <tr><td>companyId</td><td>companyId</td><td>所属公司保持一致</td></tr>
+              <tr><td>phonePrimaryPhoneNumber / CountryCode / CallingCode</td><td>phonesPrimaryPhoneNumber / CountryCode / CallingCode</td><td>电话 / WhatsApp 号码同步</td></tr>
+              <tr><td>youXiang 或 emailPrimaryEmail</td><td>emailsPrimaryEmail</td><td>取第一个有效邮箱；如目标邮箱已被其他客户占用，不强制覆盖</td></tr>
+              <tr><td>countryAddressCountry</td><td>guoJiaAddressCountry</td><td>国家同步</td></tr>
+              <tr><td>keHuXuQiuChanPin</td><td>keHuXuQiuChanPin</td><td>客户需求产品同步</td></tr>
+              <tr><td>keHuLaiYuan</td><td>keHuLaiYuan</td><td>客户来源同步</td></tr>
+              <tr><td>keHuLeiXing</td><td>keHuLeiXing</td><td>中间商、业主、EPC、技术咨询可双向同步；客户表额外支持「工厂」，该值不反向写入线索</td></tr>
+              <tr><td>zhiWei</td><td>jobTitle</td><td>职位同步</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sub-title-sm">线索 Opportunity ↔ 项目 _xiangMu</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>线索字段</th><th>项目字段</th><th>同步说明</th></tr></thead>
+            <tbody>
+              <tr><td>name</td><td>name</td><td>名称同步</td></tr>
+              <tr><td>countryAddressCountry</td><td>guoJiaAddressCountry</td><td>国家同步</td></tr>
+              <tr><td>keHuXuQiuChanPin</td><td>xuQiuChanPin</td><td>需求产品同步</td></tr>
+              <tr><td>amountAmountMicros</td><td>jinEAmountMicros</td><td>金额同步</td></tr>
+              <tr><td>amountCurrencyCode</td><td>jinECurrencyCode</td><td>币种同步</td></tr>
+              <tr><td>message</td><td>gaiShu</td><td>线索备注 / 背景同步为项目概述</td></tr>
+              <tr><td>xiangMuJinDu</td><td>muQianJinDu</td><td>当前项目进度文本同步</td></tr>
+              <tr><td>stage</td><td>renWuJinDu</td><td>按阶段枚举映射同步，详见下表</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sub-title-sm">客户 People ↔ 项目 _xiangMu</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>客户字段</th><th>项目字段</th><th>同步说明</th></tr></thead>
+            <tbody>
+              <tr><td>nameFirstName</td><td>name</td><td>客户名称 / 联系人名称同步为项目名称兜底值</td></tr>
+              <tr><td>guoJiaAddressCountry</td><td>guoJiaAddressCountry</td><td>国家同步</td></tr>
+              <tr><td>keHuXuQiuChanPin</td><td>xuQiuChanPin</td><td>需求产品同步</td></tr>
+              <tr><td>sourceOpportunityId</td><td>sourceOpportunityId</td><td>来源线索保持一致</td></tr>
+              <tr><td>linkedProjectId</td><td>id</td><td>项目关联回写到客户</td></tr>
+              <tr><td>id</td><td>linkedPersonId</td><td>客户关联回写到项目</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sub-title-sm">阶段 / 任务进度枚举映射</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>线索 stage</th><th>项目 renWuJinDu</th><th>反向同步说明</th></tr></thead>
+            <tbody>
+              <tr><td>XIANSUO / YOUXIAO_XIANSUO</td><td>YOU_XIAO_XUN_PAN</td><td>反向写为 YOUXIAO_XIANSUO</td></tr>
+              <tr><td>XUNJIA</td><td>YI_ZHUAN_ZONG_BU</td><td>反向写为 XUNJIA</td></tr>
+              <tr><td>BAOJIA</td><td>YI_BAO_JIA</td><td>反向写为 BAOJIA</td></tr>
+              <tr><td>SHENYANG</td><td>JI_SHU_CHENG_QING</td><td>反向写为 SHENYANG</td></tr>
+              <tr><td>TANPAN</td><td>SHANG_WU_CHENG_QING</td><td>反向写为 TANPAN</td></tr>
+              <tr><td>YIXIADAN / YIFUKUAN / YICHENGJIAO</td><td>YI_QIAN_DAN</td><td>反向统一写为 YIFUKUAN，无法还原原始细分阶段</td></tr>
+              <tr><td>YIFAHUO</td><td>YI_FA_HUO</td><td>反向写为 YIFAHUO</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sub-title-sm">客户来源与客户类型选项</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>字段</th><th>当前选项</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td><strong>客户来源 / keHuLaiYuan</strong></td><td>官网表单、官网客服、WhatsApp、ins、Facebook</td><td>线索表与客户表保持一致，枚举值分别为 GUAN_WANG_BIAO_DAN、GUAN_WANG_KE_FU、WHATSAPP、INS、FACEBOOK</td></tr>
+              <tr><td><strong>公司类型 / 客户类型 / keHuLeiXing</strong></td><td>线索：中间商、业主、EPC、技术咨询；客户：中间商、业主、EPC、技术咨询、工厂</td><td>共享选项可双向同步；客户表额外「工厂」暂不反向写入线索</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="sub">
