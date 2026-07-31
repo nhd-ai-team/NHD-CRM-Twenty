@@ -1116,6 +1116,25 @@ app.post('/api/opportunities-lookup', requireSameSite, async (req, res) => {
   }
 });
 
+app.get('/api/opportunities-visible', requireSameSite, async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit || 300), 1), 800);
+  try {
+    const schema = await getWorkspaceSchema();
+    const result = await pool.query(
+      `SELECT id, name
+       FROM ${schema}.opportunity
+       WHERE "deletedAt" IS NULL
+       ORDER BY "updatedAt" DESC
+       LIMIT $1`,
+      [limit],
+    );
+    res.json({ items: result.rows });
+  } catch (error) {
+    console.error('[opportunities-visible] failed:', error.message);
+    res.status(502).json({ error: 'opportunity list failed' });
+  }
+});
+
 // 线索表行按钮：把当前线索同步/关联到客户(People)。要求客户需求产品已填写。
 app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req, res) => {
   const auditActor = await resolveAuditActor(req).catch((error) => {

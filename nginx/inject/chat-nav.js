@@ -293,11 +293,24 @@
 
   var leadLookupCache = {};
   var leadLookupInFlight = false;
+  var leadVisibleItems = [];
+  var leadVisibleLoadedAt = 0;
+  var leadVisibleInFlight = false;
 
   function cleanLeadName(text) {
     var value = String(text || '').replace(/\s+/g, ' ').trim();
     value = value.replace(/^[A-Z]\s+/, '').trim();
     return value.replace(/[.。…]+$/g, '').trim();
+  }
+
+  function visibleTextMatchesLead(text, leadName) {
+    var a = cleanLeadName(text);
+    var b = cleanLeadName(leadName);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.length >= 4 && b.indexOf(a) === 0) return true;
+    if (b.length >= 4 && a.indexOf(b) === 0) return true;
+    return false;
   }
 
   function getRowLeadName(row) {
@@ -328,6 +341,31 @@
     }).catch(function () {
     }).finally(function () {
       leadLookupInFlight = false;
+      if (typeof done === 'function') done();
+    });
+  }
+
+  function loadVisibleOpportunities(done) {
+    if (leadVisibleInFlight) return;
+    if (Date.now() - leadVisibleLoadedAt < 15000 && leadVisibleItems.length) {
+      if (typeof done === 'function') done();
+      return;
+    }
+    leadVisibleInFlight = true;
+    window.fetch('/conv-api/opportunities-visible?limit=500', {
+      method: 'GET',
+      headers: getAuthHeaders(),
+    }).then(function (response) {
+      return response.ok ? response.json() : { items: [] };
+    }).then(function (data) {
+      leadVisibleItems = (data.items || []).filter(function (item) { return item && item.id && item.name; });
+      leadVisibleLoadedAt = Date.now();
+      leadVisibleItems.forEach(function (item) {
+        leadLookupCache[cleanLeadName(item.name)] = item.id;
+      });
+    }).catch(function () {
+    }).finally(function () {
+      leadVisibleInFlight = false;
       if (typeof done === 'function') done();
     });
   }
@@ -470,8 +508,65 @@
     row.insertBefore(td, cells[2] || null);
   }
 
+  function removeFloatingLeadButtons() {
+    Array.from(document.querySelectorAll('[data-floating-lead-to-customer="1"]')).forEach(function (el) { el.remove(); });
+  }
+
+  function candidateLeadNameElements() {
+    return Array.from(document.querySelectorAll('span,div,a,button')).filter(function (el) {
+      if (el.closest('#__chat_iframe__') || el.closest('[data-floating-lead-to-customer="1"]')) return false;
+      if (el.querySelector('[data-lead-to-customer-button="1"]')) return false;
+      var rect = el.getBoundingClientRect();
+      if (rect.width < 24 || rect.width > 260 || rect.height < 12 || rect.height > 38) return false;
+      if (rect.left < 300 || rect.top < 210 || rect.top > window.innerHeight - 40) return false;
+      var text = cleanLeadName(el.textContent);
+      if (!text || text.length > 80 || text === '计算') return false;
+      return true;
+    });
+  }
+
+  function installFloatingLeadButtons() {
+    if (!isOpportunityListPage() || isChatVisible()) {
+      removeFloatingLeadButtons();
+      return;
+    }
+    loadVisibleOpportunities(function () {
+      var usedIds = {};
+      candidateLeadNameElements().forEach(function (el) {
+        var match = null;
+        for (var i = 0; i < leadVisibleItems.length; i++) {
+          if (visibleTextMatchesLead(el.textContent, leadVisibleItems[i].name)) {
+            match = leadVisibleItems[i];
+            break;
+          }
+        }
+        if (!match || usedIds[match.id]) return;
+        usedIds[match.id] = true;
+
+        var existing = document.querySelector('[data-floating-lead-to-customer="1"][data-row-id="' + match.id + '"]');
+        var rect = el.getBoundingClientRect();
+        var button = existing || buildLeadToCustomerButton(match.id);
+        button.setAttribute('data-floating-lead-to-customer', '1');
+        button.setAttribute('data-row-id', match.id);
+        button.style.position = 'fixed';
+        button.style.left = Math.min(rect.right + 8, window.innerWidth - 92) + 'px';
+        button.style.top = Math.max(rect.top - 1, 0) + 'px';
+        button.style.zIndex = '9999';
+        button.style.marginLeft = '0';
+        button.style.boxShadow = '0 2px 8px rgba(22,101,52,.16)';
+        if (!existing) document.body.appendChild(button);
+      });
+      Array.from(document.querySelectorAll('[data-floating-lead-to-customer="1"]')).forEach(function (button) {
+        if (!usedIds[button.getAttribute('data-row-id')]) button.remove();
+      });
+    });
+  }
+
   function installLeadToCustomerButtons() {
-    if (!isOpportunityListPage() || isChatVisible()) return;
+    if (!isOpportunityListPage() || isChatVisible()) {
+      removeFloatingLeadButtons();
+      return;
+    }
     installLeadActionHeader();
 
     var unresolvedNames = [];
@@ -484,6 +579,7 @@
     });
 
     lookupOpportunityIds(Array.from(new Set(unresolvedNames)), installLeadToCustomerButtons);
+    installFloatingLeadButtons();
   }
 
   // ── hide native nav items disabled for this workspace ─────────────────────
