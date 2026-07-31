@@ -559,10 +559,33 @@
     document.body.appendChild(overlay);
   }
 
-  // 锚点用视图工具栏最左的「过滤 / Filter」按钮（始终可见、同一行）。
-  // 不用「New Opportunity」按钮：它在宽屏会被 Twenty 隐藏(top:-9999)，插过去会跟着看不见。
+  // 优先锚定顶部可见的「New Opportunity」按钮，让「转客户」与新建按钮并排。
+  // 部分 Twenty 版本/屏幕宽度会隐藏该按钮，此时再回退到第二行的「过滤」按钮。
   function findToolbarAnchor() {
     var cands = document.querySelectorAll('button, [role="button"]');
+    var newButtons = [];
+    for (var i = 0; i < cands.length; i++) {
+      var newBtn = cands[i];
+      if (newBtn.id === CONVERT_BTN_ID || newBtn.getAttribute('data-lead-convert-top') === '1') continue;
+      var newText = (newBtn.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!/^(\+\s*)?New Opportunity$/i.test(newText)) continue;
+      var newRect = newBtn.getBoundingClientRect();
+      if (newRect.top >= 0 &&
+          newRect.bottom <= window.innerHeight &&
+          newRect.width > 0 &&
+          newRect.height > 0) {
+        newButtons.push(newBtn);
+      }
+    }
+    if (newButtons.length > 0) {
+      newButtons.sort(function (a, b) {
+        var ar = a.getBoundingClientRect();
+        var br = b.getBoundingClientRect();
+        return ar.top - br.top || br.right - ar.right;
+      });
+      return newButtons[0];
+    }
+
     for (var i = 0; i < cands.length; i++) {
       var el = cands[i];
       if (el.id === CONVERT_BTN_ID || el.getAttribute('data-lead-convert-top') === '1') continue;
@@ -580,9 +603,17 @@
       if (stale) stale.remove();
       return;
     }
-    if (document.getElementById(CONVERT_BTN_ID)) return;
     var anchor = findToolbarAnchor();
     if (!anchor || !anchor.parentElement) return;
+
+    var existing = document.getElementById(CONVERT_BTN_ID);
+    if (existing) {
+      // Twenty SPA 会在视图切换时替换顶部容器；锚点变化后把按钮重新放回正确位置。
+      if (existing.parentElement !== anchor.parentElement || existing.nextElementSibling !== anchor) {
+        anchor.parentElement.insertBefore(existing, anchor);
+      }
+      return;
+    }
 
     var h = Math.round(anchor.getBoundingClientRect().height) || 26;
     var btn = document.createElement('button');
