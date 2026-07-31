@@ -1082,40 +1082,6 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
   return { id: result.rows[0]?.id, created: true };
 }
 
-// Twenty 原生表格在不同版本里不一定把 record id 暴露到 DOM。
-// 前端注入按钮可用当前可见名称做一次只读 lookup，再拿 id 调转客户接口。
-app.post('/api/opportunities-lookup', requireSameSite, async (req, res) => {
-  const names = Array.isArray(req.body?.names)
-    ? req.body.names.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 80)
-    : [];
-  if (!names.length) return res.json({ items: [] });
-
-  const prefixes = names
-    .map((name) => name.replace(/[.。…]+$/g, '').trim())
-    .filter((name) => name.length >= 2)
-    .map((name) => `${name}%`);
-
-  try {
-    const schema = await getWorkspaceSchema();
-    const result = await pool.query(
-      `SELECT id, name
-       FROM ${schema}.opportunity
-       WHERE "deletedAt" IS NULL
-         AND (
-           name = ANY($1::text[])
-           OR (cardinality($2::text[]) > 0 AND name ILIKE ANY($2::text[]))
-         )
-       ORDER BY "updatedAt" DESC
-       LIMIT 500`,
-      [names, prefixes],
-    );
-    res.json({ items: result.rows });
-  } catch (error) {
-    console.error('[opportunities/lookup] failed:', error.message);
-    res.status(502).json({ error: 'opportunity lookup failed' });
-  }
-});
-
 // 线索表行按钮：把当前线索同步/关联到客户(People)。要求客户需求产品已填写。
 app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req, res) => {
   const auditActor = await resolveAuditActor(req).catch((error) => {
