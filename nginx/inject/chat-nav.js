@@ -6,6 +6,8 @@
   var NAV_ID     = '__chat_nav_item__';
   var MAIL_LABEL = '邮箱';
   var MAIL_NAV_ID = '__mail_nav_item__';
+  var SETTINGS_LABEL = '设置';
+  var SETTINGS_NAV_ID = '__settings_nav_item__';
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__'; // 存当前激活视图：'chat' | 'mail'
   var AUTH_TOKEN = '';
@@ -13,6 +15,7 @@
   // 对话工作台（聊天气泡）与邮箱（信封）两个入口共用同一个 iframe，靠 URL 的 view 参数切换。
   var CHAT_SVG = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
   var MAIL_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
+  var SETTINGS_SVG = '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
 
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
@@ -239,10 +242,10 @@
   // ── nav item active styling ────────────────────────────────────────────────
 
   function setNavActive(view) {
-    [[ 'chat', NAV_ID ], [ 'mail', MAIL_NAV_ID ]].forEach(function (pair) {
+    [[ 'chat', NAV_ID ], [ 'mail', MAIL_NAV_ID ], [ 'settings', SETTINGS_NAV_ID ]].forEach(function (pair) {
       var el = document.getElementById(pair[1]);
       if (!el) return;
-      var active = view === pair[0];
+      var active = pair[0] === 'settings' ? isSettingsPage() && !isChatVisible() : view === pair[0] && !isSettingsPage();
       el.setAttribute('data-active', active ? '1' : '0');
       el.style.background = active
         ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))'
@@ -264,6 +267,7 @@
       var href = a.getAttribute('href') || '';
       // Is this a Twenty internal nav link (not our chat link)?
       if (a.id !== NAV_ID &&
+          a.id !== SETTINGS_NAV_ID &&
           !href.startsWith('/chat') &&
           (href.match(/^\/(people|companies|opportunities|notes|tasks|messages|settings|objects)/) ||
            href.match(/^\/[a-z]/) && !href.startsWith('//'))) {
@@ -303,7 +307,7 @@
   function hideDisabledNativeNavItems() {
     var selectors = 'a[href],button,[role="button"]';
     Array.from(document.querySelectorAll(selectors)).forEach(function (el) {
-      if (el.id === NAV_ID || el.id === MAIL_NAV_ID) return;
+      if (el.id === NAV_ID || el.id === MAIL_NAV_ID || el.id === SETTINGS_NAV_ID) return;
       var href = el.getAttribute('href') || '';
       if (!hrefLooksLikeDisabledNav(href) && !textLooksLikeDisabledNav(el.textContent)) return;
       var rect = el.getBoundingClientRect();
@@ -373,6 +377,11 @@
       }
     });
     el.addEventListener('click', function () {
+      if (opts.href) {
+        hideChat();
+        if (window.location.pathname !== opts.href) window.location.href = opts.href;
+        return;
+      }
       // 点当前已激活的入口 → 收起；否则切到该视图
       if (isChatVisible() && getActiveView() === opts.view) {
         hideChat();
@@ -391,9 +400,7 @@
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeInjectedNavItems();
-      return;
     }
-    if (document.getElementById(NAV_ID)) return;
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
       var href = a.getAttribute('href') || '';
@@ -414,23 +421,43 @@
       container = refAnchor.parentElement; // keep ref for cloning wrapper
     }
 
-    var insertBeforeNode = container;
-    [
-      { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
-      { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
-    ].forEach(function (opts) {
-      var item = buildNavItem(refAnchor, opts);
-      var wrapper = document.createElement(container.tagName);
-      wrapper.className = container.className;
-      wrapper.setAttribute('data-chat-nav-wrapper', '1');
-      wrapper.appendChild(item);
-      listEl.insertBefore(wrapper, insertBeforeNode);
-    });
+    if (!isSettingsPage() && !document.getElementById(NAV_ID)) {
+      var insertBeforeNode = container;
+      [
+        { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
+        { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
+      ].forEach(function (opts) {
+        var item = buildNavItem(refAnchor, opts);
+        var wrapper = document.createElement(container.tagName);
+        wrapper.className = container.className;
+        wrapper.setAttribute('data-chat-nav-wrapper', '1');
+        wrapper.appendChild(item);
+        listEl.insertBefore(wrapper, insertBeforeNode);
+      });
+    }
+
+    var settingsItem = document.getElementById(SETTINGS_NAV_ID);
+    var settingsWrapper = settingsItem ? settingsItem.closest('[data-chat-nav-wrapper="1"]') : null;
+    if (!settingsItem) {
+      settingsItem = buildNavItem(refAnchor, {
+        navId: SETTINGS_NAV_ID,
+        label: SETTINGS_LABEL,
+        svg: SETTINGS_SVG,
+        href: '/settings/profile',
+      });
+      settingsWrapper = document.createElement(container.tagName);
+      settingsWrapper.className = container.className;
+      settingsWrapper.setAttribute('data-chat-nav-wrapper', '1');
+      settingsWrapper.appendChild(settingsItem);
+    }
+    if (settingsWrapper && settingsWrapper.parentElement !== listEl) listEl.appendChild(settingsWrapper);
+    else if (settingsWrapper && settingsWrapper.nextElementSibling) listEl.appendChild(settingsWrapper);
 
     setupNavInterception();
 
     // Pre-create iframe. Keep it hidden, but load it once so the first open is faster.
     getOrCreateIframe();
+    setNavActive(getActiveView());
   }
 
   // ── resize: keep iframe filling the content area ──────────────────────────
