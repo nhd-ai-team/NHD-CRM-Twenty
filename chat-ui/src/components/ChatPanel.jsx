@@ -252,6 +252,19 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     }
   }
 
+  const supportsAttachments = ['website', 'whatsapp'].includes(conv.channel)
+  function handleAttachmentClick() {
+    if (!supportsAttachments) {
+      setSendError('当前渠道暂不支持发送附件')
+      return
+    }
+    if (conv.status !== 'takeover') {
+      setSendError('请先点击「接管会话」后再发送附件')
+      return
+    }
+    fileInputRef.current?.click()
+  }
+
   const canSend = (!!input.trim() || !!selectedFile) && conv.status === 'takeover' && !sending
   const confirmTitle = pendingAction === 'takeover' ? '确认人工接管？' : '确认 AI 托管？'
   const confirmBody = pendingAction === 'takeover'
@@ -350,14 +363,14 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
               onChange={event => setSelectedFile(event.target.files?.[0] || null)}
             />
             <button
-              title={conv.status === 'takeover' ? '附件上传' : '请先接管会话'}
-              onClick={() => conv.status === 'takeover' && fileInputRef.current?.click()}
-              disabled={conv.status !== 'takeover' || sending}
+              title={!supportsAttachments ? '当前渠道暂不支持发送附件' : conv.status === 'takeover' ? '附件上传' : '请先接管会话'}
+              onClick={handleAttachmentClick}
+              disabled={sending}
               style={{
                 padding: 6, border: 'none', background: 'transparent',
-                cursor: conv.status === 'takeover' && !sending ? 'pointer' : 'not-allowed',
+                cursor: sending ? 'not-allowed' : 'pointer',
                 color: 'var(--text-muted)', borderRadius: 4,
-                display: 'flex', alignItems: 'center', opacity: conv.status === 'takeover' ? 1 : .45,
+                display: 'flex', alignItems: 'center', opacity: supportsAttachments && conv.status === 'takeover' ? 1 : .65,
               }}
             >
               <Paperclip size={15} />
