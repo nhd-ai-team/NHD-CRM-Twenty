@@ -339,8 +339,22 @@ async function ensureSchema() {
       mailbox TEXT PRIMARY KEY,
       uid_validity BIGINT,
       last_uid BIGINT NOT NULL DEFAULT 0,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());`);
-}
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS conv.channel_accounts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL,
+      workspace_member_id TEXT,
+      channel TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_session TEXT NOT NULL,
+      external_account_id TEXT,
+      display_name TEXT,
+      status TEXT NOT NULL DEFAULT 'unknown',
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(user_id, channel, provider_session));`);
+  }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
 
@@ -908,6 +922,113 @@ app.patch('/api/ai-settings', requireSameSite, async (req, res) => {
     res.status(502).json({ error: 'ai settings update failed', detail: error.message });
   } finally {
     client.release();
+  }
+});
+
+async function fetchWaha(pathname, options = {}) {
+  return fetch(`${WAHA_API_URL}${pathname}`, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      'X-Api-Key': WAHA_API_KEY,
+    },
+  });
+}
+
+function normalizeWahaSession(session = {}) {
+  const me = session.me || {};
+  const accountId = me.id || '';
+  const phone = accountId ? `+${phoneFromJid(accountId)}` : '';
+  return {
+    session: session.name || WAHA_SESSION,
+    status: session.status || 'UNKNOWN',
+    connected: session.status === 'WORKING',
+    accountId,
+    phone,
+    displayName: me.pushName || me.name || '',
+    engine: session.engine?.engine || '',
+  };
+}
+
+async function upsertWhatsAppChannelAccount(req, normalized) {
+  const userId = getTwentyUserIdFromRequest(req);
+  if (!userId || !normalized.connected) return;
+  const actor = await resolveAuditActor(req).catch(() => null);
+  await pool.query(
+    `INSERT INTO conv.channel_accounts(
+       user_id, workspace_member_id, channel, provider, provider_session,
+       external_account_id, display_name, status, metadata, updated_at
+     ) VALUES ($1, $2, 'whatsapp', 'waha', $3, $4, $5, $6, $7, now())
+     ON CONFLICT(user_id, channel, provider_session)
+     DO UPDATE SET
+       workspace_member_id = EXCLUDED.workspace_member_id,
+       external_account_id = EXCLUDED.external_account_id,
+       display_name = EXCLUDED.display_name,
+       status = EXCLUDED.status,
+       metadata = EXCLUDED.metadata,
+       updated_at = now()`,
+    [
+      userId,
+      actor?.id || null,
+      normalized.session,
+      normalized.accountId || null,
+      normalized.displayName || normalized.phone || null,
+      normalized.status,
+      JSON.stringify({ phone: normalized.phone, engine: normalized.engine }),
+    ],
+  );
+}
+
+app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, res) => {
+  try {
+    const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return res.status(response.status).json({ error: data.message || 'WAHA status failed', detail: data });
+    const normalized = normalizeWahaSession(data);
+    await upsertWhatsAppChannelAccount(req, normalized);
+    res.json({
+      channel: 'whatsapp',
+      provider: 'waha',
+      ...normalized,
+      qrAvailable: normalized.status === 'SCAN_QR_CODE',
+    });
+  } catch (error) {
+    res.status(502).json({ error: 'WhatsApp status failed', detail: error.message });
+  }
+});
+
+app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (_req, res) => {
+  try {
+    const response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!response.ok) {
+      return res.status(response.status).type('application/json').send(buffer.toString('utf8'));
+    }
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'image/png');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.send(buffer);
+  } catch (error) {
+    res.status(502).json({ error: 'WhatsApp QR failed', detail: error.message });
+  }
+});
+
+app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, res) => {
+  try {
+    const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/start`, { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && response.status !== 422) {
+      return res.status(response.status).json({ error: data.message || 'WAHA start failed', detail: data });
+    }
+    const normalized = normalizeWahaSession(data);
+    await upsertWhatsAppChannelAccount(req, normalized);
+    res.status(response.status === 422 ? 200 : 202).json({
+      channel: 'whatsapp',
+      provider: 'waha',
+      ...normalized,
+      qrAvailable: normalized.status === 'SCAN_QR_CODE',
+    });
+  } catch (error) {
+    res.status(502).json({ error: 'WhatsApp start failed', detail: error.message });
   }
 });
 

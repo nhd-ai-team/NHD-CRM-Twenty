@@ -8,6 +8,11 @@
   var MAIL_NAV_ID = '__mail_nav_item__';
   var SETTINGS_LABEL = '设置';
   var SETTINGS_NAV_ID = '__settings_nav_item__';
+  var CHANNELS_SETTINGS_LABEL = '渠道';
+  var CHANNELS_SETTINGS_PATH = '/settings/accounts/channels';
+  var CHANNELS_SETTINGS_NAV_ID = '__settings_channels_nav_item__';
+  var CHANNELS_SETTINGS_PAGE_ID = '__settings_channels_page__';
+  var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__'; // 存当前激活视图：'chat' | 'mail'
   var AUTH_TOKEN = '';
@@ -16,6 +21,7 @@
   var CHAT_SVG = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
   var MAIL_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
   var SETTINGS_SVG = '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
+  var CHANNELS_SVG = '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>';
 
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
@@ -147,6 +153,10 @@
 
   function isSettingsPage() {
     return window.location.pathname.indexOf('/settings') === 0;
+  }
+
+  function isChannelsSettingsPage() {
+    return window.location.pathname === CHANNELS_SETTINGS_PATH;
   }
 
   function removeInjectedNavItems() {
@@ -396,11 +406,269 @@
     return el;
   }
 
+  function removeChannelsSettingsPage() {
+    var page = document.getElementById(CHANNELS_SETTINGS_PAGE_ID);
+    if (page) page.remove();
+  }
+
+  function settingsDrawerRight() {
+    var anchors = Array.from(document.querySelectorAll('a[href^="/settings/"]'));
+    var right = 0;
+    anchors.forEach(function (anchor) {
+      var node = anchor;
+      for (var i = 0; i < 8 && node && node !== document.body; i++) {
+        var rect = node.getBoundingClientRect();
+        var style = window.getComputedStyle(node);
+        if (rect.height > window.innerHeight * 0.6 &&
+            rect.width >= 160 && rect.width <= 420 &&
+            rect.left < window.innerWidth * 0.5 &&
+            style.display !== 'contents') {
+          right = Math.max(right, rect.right);
+        }
+        node = node.parentElement;
+      }
+    });
+    return right || 300;
+  }
+
+  function setSettingsChannelsActive() {
+    var item = document.getElementById(CHANNELS_SETTINGS_NAV_ID);
+    if (!item) return;
+    var active = isChannelsSettingsPage();
+    item.setAttribute('data-active', active ? '1' : '0');
+    item.style.background = active ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))' : 'transparent';
+    item.style.color = active ? 'var(--twenty-color-purple-50,#9333ea)' : '';
+  }
+
+  function buildSettingsChannelsNavItem(refAnchor) {
+    var cs = window.getComputedStyle(refAnchor);
+    var el = document.createElement('a');
+    el.id = CHANNELS_SETTINGS_NAV_ID;
+    el.href = CHANNELS_SETTINGS_PATH;
+    el.style.cssText = [
+      'display:flex',
+      'align-items:center',
+      'gap:8px',
+      'padding:' + cs.padding,
+      'padding-left:32px',
+      'border-radius:' + cs.borderRadius,
+      'font-size:' + cs.fontSize,
+      'font-weight:' + cs.fontWeight,
+      'color:' + cs.color,
+      'text-decoration:none',
+      'width:100%',
+      'box-sizing:border-box',
+      'cursor:pointer',
+      'transition:background .1s',
+    ].join(';');
+
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.style.cssText = 'flex-shrink:0;';
+    svg.innerHTML = CHANNELS_SVG;
+    var span = document.createElement('span');
+    span.textContent = CHANNELS_SETTINGS_LABEL;
+    span.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
+    el.appendChild(svg);
+    el.appendChild(span);
+    el.addEventListener('mouseenter', function () {
+      if (el.getAttribute('data-active') !== '1') el.style.background = 'var(--twenty-background-tertiary,rgba(0,0,0,.06))';
+    });
+    el.addEventListener('mouseleave', function () {
+      if (el.getAttribute('data-active') !== '1') el.style.background = 'transparent';
+    });
+    return el;
+  }
+
+  function ensureSettingsChannelsNav() {
+    if (!isSettingsPage()) return;
+    var emailAnchor = document.querySelector('a[href="/settings/accounts/emails"]');
+    var accountAnchor = document.querySelector('a[href="/settings/accounts"]');
+    var refAnchor = emailAnchor || accountAnchor;
+    if (!refAnchor || !refAnchor.parentElement) return;
+    var listEl = refAnchor.parentElement.parentElement || refAnchor.parentElement;
+    var existing = document.getElementById(CHANNELS_SETTINGS_NAV_ID);
+    var wrapper = existing ? existing.closest('[data-settings-channels-nav-wrapper="1"]') : null;
+    if (!existing) {
+      existing = buildSettingsChannelsNavItem(refAnchor);
+      wrapper = document.createElement(refAnchor.parentElement.tagName);
+      wrapper.className = refAnchor.parentElement.className;
+      wrapper.setAttribute('data-settings-channels-nav-wrapper', '1');
+      wrapper.appendChild(existing);
+    }
+    if (emailAnchor && emailAnchor.parentElement && wrapper.previousElementSibling !== emailAnchor.parentElement) {
+      emailAnchor.parentElement.insertAdjacentElement('afterend', wrapper);
+    } else if (!emailAnchor && accountAnchor && accountAnchor.parentElement && wrapper.previousElementSibling !== accountAnchor.parentElement) {
+      accountAnchor.parentElement.insertAdjacentElement('afterend', wrapper);
+    } else if (wrapper.parentElement !== listEl) {
+      listEl.appendChild(wrapper);
+    }
+    setSettingsChannelsActive();
+  }
+
+  function statusLabel(status) {
+    if (status === 'WORKING') return '已连接';
+    if (status === 'SCAN_QR_CODE') return '等待扫码';
+    if (status === 'STARTING') return '启动中';
+    if (status === 'STOPPED') return '未启动';
+    return status || '未知';
+  }
+
+  function renderWhatsAppStatus(root, state) {
+    var connected = state && state.connected;
+    var waitingQr = state && state.qrAvailable;
+    root.querySelector('[data-wa-status]').textContent = state ? statusLabel(state.status) : '加载中';
+    root.querySelector('[data-wa-status]').style.background = connected ? '#dcfce7' : waitingQr ? '#fef3c7' : '#f4f4f5';
+    root.querySelector('[data-wa-status]').style.color = connected ? '#166534' : waitingQr ? '#92400e' : '#52525b';
+    root.querySelector('[data-wa-phone]').textContent = connected ? (state.phone || state.accountId || '-') : '-';
+    root.querySelector('[data-wa-name]').textContent = connected ? (state.displayName || '-') : '-';
+    root.querySelector('[data-wa-session]').textContent = state ? state.session : 'default';
+    root.querySelector('[data-wa-help]').textContent = connected
+      ? '该 WhatsApp 已可在对话工作台收发消息。当前 1.0 先绑定到 WAHA default session。'
+      : waitingQr
+        ? '请用 WhatsApp 手机端扫描下方二维码，完成后页面会自动刷新状态。'
+        : '如未显示二维码，请点击“启动/刷新二维码”。';
+    var qrBox = root.querySelector('[data-wa-qr-box]');
+    qrBox.style.display = waitingQr ? 'block' : 'none';
+    if (waitingQr) {
+      root.querySelector('[data-wa-qr]').src = '/conv-api/channel-accounts/whatsapp/qr?t=' + Date.now();
+    }
+  }
+
+  function loadWhatsAppStatus(root) {
+    return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (result) {
+        if (!result.ok) throw new Error(result.data && (result.data.error || result.data.detail) || '状态加载失败');
+        renderWhatsAppStatus(root, result.data);
+      })
+      .catch(function (error) {
+        root.querySelector('[data-wa-error]').textContent = error.message || '状态加载失败';
+      });
+  }
+
+  function renderChannelsSettingsPage() {
+    if (!isChannelsSettingsPage()) {
+      removeChannelsSettingsPage();
+      return;
+    }
+    var existing = document.getElementById(CHANNELS_SETTINGS_PAGE_ID);
+    if (existing) {
+      existing.style.left = settingsDrawerRight() + 'px';
+      return;
+    }
+    var root = document.createElement('div');
+    root.id = CHANNELS_SETTINGS_PAGE_ID;
+    root.style.cssText = [
+      'position:fixed',
+      'top:0',
+      'right:0',
+      'bottom:0',
+      'left:' + settingsDrawerRight() + 'px',
+      'z-index:90',
+      'background:var(--twenty-background-primary,#fff)',
+      'overflow:auto',
+      'padding:32px 40px',
+      'box-sizing:border-box',
+      'font-family:inherit',
+      'color:var(--twenty-font-color-primary,#18181b)',
+    ].join(';');
+    root.innerHTML =
+      '<div style="max-width:760px">' +
+        '<div style="font-size:13px;color:#71717a;margin-bottom:12px">账户 / 渠道</div>' +
+        '<h1 style="font-size:22px;line-height:1.3;margin:0 0 8px;font-weight:700">渠道</h1>' +
+        '<p style="font-size:13px;color:#71717a;margin:0 0 24px">绑定当前用户自己的外部沟通渠道。当前先支持 WhatsApp。</p>' +
+        '<div style="border:1px solid #e4e4e7;border-radius:8px;background:#fff;overflow:hidden">' +
+          '<div style="display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid #f0f0f1">' +
+            '<div style="width:38px;height:38px;border-radius:50%;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;font-weight:800">W</div>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:15px;font-weight:700">WhatsApp</div>' +
+              '<div data-wa-help style="font-size:12.5px;color:#71717a;margin-top:2px">正在加载绑定状态...</div>' +
+            '</div>' +
+            '<span data-wa-status style="font-size:12px;font-weight:700;border-radius:999px;padding:4px 9px;background:#f4f4f5;color:#52525b">加载中</span>' +
+          '</div>' +
+          '<div style="padding:18px 20px;display:grid;grid-template-columns:150px 1fr;gap:12px;font-size:13px">' +
+            '<div style="color:#71717a">绑定号码</div><div data-wa-phone>-</div>' +
+            '<div style="color:#71717a">显示名称</div><div data-wa-name>-</div>' +
+            '<div style="color:#71717a">Session</div><div data-wa-session>default</div>' +
+          '</div>' +
+          '<div data-wa-qr-box style="display:none;padding:0 20px 18px">' +
+            '<div style="display:flex;align-items:center;gap:20px;padding:16px;border:1px solid #e4e4e7;border-radius:8px;background:#fafafa;width:max-content;max-width:100%">' +
+              '<img data-wa-qr alt="WhatsApp QR" style="width:220px;height:220px;object-fit:contain;background:#fff;border:1px solid #e4e4e7;border-radius:6px" />' +
+              '<div style="max-width:260px;font-size:12.5px;color:#71717a;line-height:1.65">打开 WhatsApp 手机端，进入“已关联的设备”，扫描二维码完成绑定。二维码过期后点击刷新。</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid #f0f0f1">' +
+            '<button data-wa-refresh style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#3f3f46;font-size:12.5px;font-weight:600;cursor:pointer">刷新状态</button>' +
+            '<button data-wa-start style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">启动/刷新二维码</button>' +
+            '<span data-wa-error style="font-size:12px;color:#dc2626"></span>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(root);
+    root.querySelector('[data-wa-refresh]').addEventListener('click', function () { loadWhatsAppStatus(root); });
+    root.querySelector('[data-wa-start]').addEventListener('click', function () {
+      root.querySelector('[data-wa-error]').textContent = '';
+      window.fetch('/conv-api/channel-accounts/whatsapp/start', { method: 'POST', credentials: 'same-origin' })
+        .then(function () { return loadWhatsAppStatus(root); })
+        .catch(function (error) { root.querySelector('[data-wa-error]').textContent = error.message || '启动失败'; });
+    });
+    loadWhatsAppStatus(root);
+    if (!window.__settingsChannelsPoller) {
+      window.__settingsChannelsPoller = window.setInterval(function () {
+        var page = document.getElementById(CHANNELS_SETTINGS_PAGE_ID);
+        if (page && isChannelsSettingsPage()) loadWhatsAppStatus(page);
+      }, 6000);
+    }
+  }
+
+  function ensureSettingsAccountsChannelsCard() {
+    if (window.location.pathname !== '/settings/accounts') {
+      var stale = document.getElementById(CHANNELS_SETTINGS_CARD_ID);
+      if (stale) stale.remove();
+      return;
+    }
+    if (document.getElementById(CHANNELS_SETTINGS_CARD_ID)) return;
+    var sections = Array.from(document.querySelectorAll('h2, [role="heading"]'));
+    var settingsHeading = sections.find(function (el) { return (el.textContent || '').trim() === 'Settings'; });
+    if (!settingsHeading) return;
+    var section = settingsHeading.closest('section') || settingsHeading.parentElement;
+    if (!section) return;
+    var cardsHost = Array.from(section.querySelectorAll('div')).find(function (el) {
+      var rect = el.getBoundingClientRect();
+      return rect.width > 300 && rect.height > 40 && window.getComputedStyle(el).display === 'flex';
+    });
+    if (!cardsHost) return;
+    var card = document.createElement('div');
+    card.id = CHANNELS_SETTINGS_CARD_ID;
+    card.style.cssText = 'border:1px solid #e4e4e7;border-radius:8px;padding:16px;min-width:220px;flex:1;cursor:pointer;background:#fff;color:#71717a';
+    card.innerHTML =
+      '<div style="display:flex;align-items:center;gap:12px;color:#3f3f46;font-weight:600">' +
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + CHANNELS_SVG + '</svg>' +
+        '<span style="flex:1">渠道</span><span style="color:#a1a1aa">›</span>' +
+      '</div>' +
+      '<div style="padding-left:32px;margin-top:8px;font-size:13px">绑定 WhatsApp 等外部沟通渠道。</div>';
+    card.addEventListener('click', function () { window.location.href = CHANNELS_SETTINGS_PATH; });
+    cardsHost.appendChild(card);
+  }
+
   function tryInsert() {
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeInjectedNavItems();
+      ensureSettingsChannelsNav();
+      ensureSettingsAccountsChannelsCard();
+      renderChannelsSettingsPage();
+      return;
     }
+    removeChannelsSettingsPage();
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
       var href = a.getAttribute('href') || '';
