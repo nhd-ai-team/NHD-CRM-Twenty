@@ -523,7 +523,8 @@
 
   function renderWhatsAppStatus(root, state) {
     var connected = state && state.connected;
-    var waitingQr = state && state.qrAvailable;
+    var recoverableQr = state && ['FAILED', 'STOPPED', 'STARTING'].indexOf(state.status) !== -1;
+    var waitingQr = state && (state.qrAvailable || recoverableQr);
     root.querySelector('[data-wa-status]').textContent = state ? statusLabel(state.status) : '加载中';
     root.querySelector('[data-wa-status]').style.background = connected ? '#dcfce7' : waitingQr ? '#fef3c7' : '#f4f4f5';
     root.querySelector('[data-wa-status]').style.color = connected ? '#166534' : waitingQr ? '#92400e' : '#52525b';
@@ -533,12 +534,19 @@
     root.querySelector('[data-wa-help]').textContent = connected
       ? '该 WhatsApp 已可在对话工作台收发消息。当前 1.0 先绑定到 WAHA default session。'
       : waitingQr
-        ? '请用 WhatsApp 手机端扫描下方二维码，完成后页面会自动刷新状态。'
+        ? (state.status === 'FAILED' ? '当前会话异常，系统会自动重新生成二维码。请稍等几秒后扫码。' : '请用 WhatsApp 手机端扫描下方二维码，完成后页面会自动刷新状态。')
         : '如未显示二维码，请点击“启动/刷新二维码”。';
     var qrBox = root.querySelector('[data-wa-qr-box]');
     qrBox.style.display = waitingQr ? 'block' : 'none';
     if (waitingQr) {
-      root.querySelector('[data-wa-qr]').src = '/conv-api/channel-accounts/whatsapp/qr?t=' + Date.now();
+      var qr = root.querySelector('[data-wa-qr]');
+      qr.onerror = function () {
+        root.querySelector('[data-wa-error]').textContent = '二维码生成中，请点击“启动/刷新二维码”或稍后刷新状态';
+      };
+      qr.onload = function () {
+        root.querySelector('[data-wa-error]').textContent = '';
+      };
+      qr.src = '/conv-api/channel-accounts/whatsapp/qr?t=' + Date.now();
     }
   }
 

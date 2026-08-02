@@ -950,6 +950,31 @@ function normalizeWahaSession(session = {}) {
   };
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function getWahaSession() {
+  const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || 'WAHA status failed');
+    error.status = response.status;
+    error.detail = data;
+    throw error;
+  }
+  return data;
+}
+
+async function waitForWahaStatus(expectedStatuses, attempts = 8, delayMs = 1200) {
+  for (let i = 0; i < attempts; i++) {
+    const session = await getWahaSession();
+    if (expectedStatuses.includes(session.status)) return session;
+    await sleep(delayMs);
+  }
+  return getWahaSession();
+}
+
 async function upsertWhatsAppChannelAccount(req, normalized) {
   const userId = getTwentyUserIdFromRequest(req);
   if (!userId || !normalized.connected) return;
@@ -981,25 +1006,36 @@ async function upsertWhatsAppChannelAccount(req, normalized) {
 
 app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, res) => {
   try {
-    const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}`);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) return res.status(response.status).json({ error: data.message || 'WAHA status failed', detail: data });
+    const data = await getWahaSession();
     const normalized = normalizeWahaSession(data);
     await upsertWhatsAppChannelAccount(req, normalized);
     res.json({
       channel: 'whatsapp',
       provider: 'waha',
       ...normalized,
-      qrAvailable: normalized.status === 'SCAN_QR_CODE',
+      qrAvailable: ['SCAN_QR_CODE', 'FAILED', 'STOPPED', 'STARTING'].includes(normalized.status),
     });
   } catch (error) {
-    res.status(502).json({ error: 'WhatsApp status failed', detail: error.message });
+    res.status(error.status || 502).json({ error: 'WhatsApp status failed', detail: error.detail || error.message });
   }
 });
 
 app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (_req, res) => {
   try {
-    const response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+    let response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+    if (response.status === 422) {
+      const detail = await response.json().catch(() => ({}));
+      if (['FAILED', 'STOPPED'].includes(detail.status)) {
+        await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
+        await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
+        response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+      } else if (detail.status === 'STARTING') {
+        await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
+        response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+      } else {
+        return res.status(422).json(detail);
+      }
+    }
     const buffer = Buffer.from(await response.arrayBuffer());
     if (!response.ok) {
       return res.status(response.status).type('application/json').send(buffer.toString('utf8'));
@@ -1014,18 +1050,27 @@ app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (_req, res) 
 
 app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, res) => {
   try {
-    const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/start`, { method: 'POST' });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok && response.status !== 422) {
-      return res.status(response.status).json({ error: data.message || 'WAHA start failed', detail: data });
+    let current = await getWahaSession().catch(() => null);
+    if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
+      await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
+    } else if (current.status === 'STARTING') {
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
+    } else if (current.status !== 'SCAN_QR_CODE' && current.status !== 'WORKING') {
+      const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/start`, { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && response.status !== 422) {
+        return res.status(response.status).json({ error: data.message || 'WAHA start failed', detail: data });
+      }
+      current = response.ok ? data : await getWahaSession();
     }
-    const normalized = normalizeWahaSession(data);
+    const normalized = normalizeWahaSession(current);
     await upsertWhatsAppChannelAccount(req, normalized);
-    res.status(response.status === 422 ? 200 : 202).json({
+    res.status(202).json({
       channel: 'whatsapp',
       provider: 'waha',
       ...normalized,
-      qrAvailable: normalized.status === 'SCAN_QR_CODE',
+      qrAvailable: ['SCAN_QR_CODE', 'FAILED', 'STOPPED', 'STARTING'].includes(normalized.status),
     });
   } catch (error) {
     res.status(502).json({ error: 'WhatsApp start failed', detail: error.message });
