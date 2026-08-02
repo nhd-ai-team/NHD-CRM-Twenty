@@ -950,6 +950,10 @@ function normalizeWahaSession(session = {}) {
   };
 }
 
+function normalizeWhatsAppPairingPhone(input) {
+  return String(input || '').replace(/[^\d]/g, '');
+}
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -1104,6 +1108,53 @@ app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, 
     });
   } catch (error) {
     res.status(502).json({ error: 'WhatsApp restart failed', detail: error.message });
+  }
+});
+
+app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (req, res) => {
+  try {
+    const phoneNumber = normalizeWhatsAppPairingPhone(req.body?.phoneNumber);
+    if (phoneNumber.length < 8 || phoneNumber.length > 15) {
+      return res.status(400).json({ error: '请输入带国家区号的 WhatsApp 号码，例如 8617351014319' });
+    }
+
+    let current = await getWahaSession().catch(() => null);
+    if (current?.status === 'WORKING') {
+      const normalized = normalizeWahaSession(current);
+      await upsertWhatsAppChannelAccount(req, normalized);
+      return res.status(409).json({ error: '当前 WhatsApp 已连接，不需要生成配对码', status: normalized.status });
+    }
+    if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
+      await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
+    } else if (current.status === 'STARTING') {
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
+    }
+    if (current?.status === 'WORKING') {
+      const normalized = normalizeWahaSession(current);
+      await upsertWhatsAppChannelAccount(req, normalized);
+      return res.status(409).json({ error: '当前 WhatsApp 已连接，不需要生成配对码', status: normalized.status });
+    }
+
+    const response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/request-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phoneNumber }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(response.status).json({ error: data.message || data.error || 'WhatsApp 配对码生成失败', detail: data });
+    }
+    res.status(201).json({
+      channel: 'whatsapp',
+      provider: 'waha',
+      session: WAHA_SESSION,
+      phoneNumber,
+      code: data.code,
+      expiresHint: '配对码有效时间较短，请立即在 WhatsApp 手机端输入。',
+    });
+  } catch (error) {
+    res.status(502).json({ error: 'WhatsApp 配对码生成失败', detail: error.message });
   }
 });
 

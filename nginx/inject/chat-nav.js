@@ -563,6 +563,16 @@
       startButton.style.cursor = connected ? 'not-allowed' : 'pointer';
       startButton.title = connected ? '已连接时不需要重新生成二维码' : '重启 WhatsApp 会话并生成新的二维码';
     }
+    var codeButton = root.querySelector('[data-wa-code]');
+    var phoneInput = root.querySelector('[data-wa-phone-input]');
+    if (codeButton) {
+      codeButton.setAttribute('data-connected-disabled', connected ? '1' : '0');
+      codeButton.disabled = connected;
+      codeButton.style.opacity = connected ? '0.5' : '';
+      codeButton.style.cursor = connected ? 'not-allowed' : 'pointer';
+      codeButton.title = connected ? '已连接时不需要生成配对码' : '生成 WhatsApp 手机号配对码';
+    }
+    if (phoneInput) phoneInput.disabled = connected;
     root.querySelector('[data-wa-help]').textContent = connected
       ? '该 WhatsApp 已可在对话工作台收发消息。当前 1.0 先绑定到 WAHA default session。'
       : waitingQr
@@ -646,6 +656,20 @@
               '<div style="max-width:260px;font-size:12.5px;color:#71717a;line-height:1.65">打开 WhatsApp 手机端，进入“已关联的设备”，扫描二维码完成绑定。二维码过期后点击刷新。</div>' +
             '</div>' +
           '</div>' +
+          '<div data-wa-pair-box style="padding:0 20px 18px">' +
+            '<div style="border:1px solid #e4e4e7;border-radius:8px;background:#fff;padding:14px 16px">' +
+              '<div style="font-size:13px;font-weight:700;margin-bottom:8px">手机号配对</div>' +
+              '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+                '<input data-wa-phone-input placeholder="输入带国家区号的号码，如 8617351014319" style="height:32px;width:300px;max-width:100%;border:1px solid #d4d4d8;border-radius:6px;padding:0 10px;font-size:12.5px;box-sizing:border-box" />' +
+                '<button data-wa-code style="height:32px;padding:0 12px;border-radius:6px;border:1px solid #16a34a;background:#16a34a;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">生成配对码</button>' +
+              '</div>' +
+              '<div data-wa-code-result style="display:none;margin-top:12px;padding:12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0">' +
+                '<div style="font-size:12px;color:#166534;margin-bottom:6px">在 WhatsApp 手机端：已关联的设备 -> 关联设备 -> 改用手机号关联，然后输入：</div>' +
+                '<div data-wa-code-value style="font-size:24px;line-height:1.2;font-weight:800;letter-spacing:1px;color:#14532d"></div>' +
+                '<div style="font-size:12px;color:#166534;margin-top:6px">配对码有效时间较短，请立即输入。</div>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
           '<div style="display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid #f0f0f1">' +
             '<button data-wa-refresh style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#3f3f46;font-size:12.5px;font-weight:600;cursor:pointer">刷新状态</button>' +
             '<button data-wa-start style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">启动/刷新二维码</button>' +
@@ -669,6 +693,32 @@
         .catch(function (error) { root.querySelector('[data-wa-error]').textContent = error.message || '启动失败'; })
         .finally(function () {
           setWaButtonBusy(root, '[data-wa-start]', '生成中...', false);
+        });
+    });
+    root.querySelector('[data-wa-code]').addEventListener('click', function () {
+      var phoneInput = root.querySelector('[data-wa-phone-input]');
+      var resultBox = root.querySelector('[data-wa-code-result]');
+      var codeValue = root.querySelector('[data-wa-code-value]');
+      root.querySelector('[data-wa-error]').textContent = '';
+      resultBox.style.display = 'none';
+      codeValue.textContent = '';
+      setWaButtonBusy(root, '[data-wa-code]', '生成中...', true);
+      window.fetch('/conv-api/channel-accounts/whatsapp/request-code', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumber: phoneInput.value }),
+      })
+        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+        .then(function (result) {
+          if (!result.ok) throw new Error(result.data && (result.data.error || result.data.detail) || '配对码生成失败');
+          codeValue.textContent = result.data.code || '-';
+          resultBox.style.display = 'block';
+          return loadWhatsAppStatus(root);
+        })
+        .catch(function (error) { root.querySelector('[data-wa-error]').textContent = error.message || '配对码生成失败'; })
+        .finally(function () {
+          setWaButtonBusy(root, '[data-wa-code]', '生成中...', false);
         });
     });
     loadWhatsAppStatus(root);
