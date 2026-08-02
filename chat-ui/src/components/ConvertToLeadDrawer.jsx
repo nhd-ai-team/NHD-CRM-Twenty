@@ -21,6 +21,7 @@ const INITIAL_STAGE = 'XIANSUO'
 const CONTACT_METHOD_STAGE = 'YOUXIAO_XIANSUO'
 
 function applyContactMethodStage(form) {
+  if (form.source === 'GUAN_WANG_BIAO_DAN') return { ...form, stage: INITIAL_STAGE }
   if (!String(form.phone || '').trim() && !String(form.email || '').trim()) return form
   if (form.stage && form.stage !== INITIAL_STAGE) return form
   return { ...form, stage: CONTACT_METHOD_STAGE }
@@ -54,7 +55,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
   const saving = status === 'saving'
   const set = (k) => (e) => setForm((f) => {
     const next = { ...f, [k]: e.target.value }
-    return (k === 'phone' || k === 'email') ? applyContactMethodStage(next) : next
+    return (k === 'phone' || k === 'email' || k === 'source') ? applyContactMethodStage(next) : next
   })
   const safeClose = () => { if (!saving) onClose() } // 保存中不允许点遮罩关闭
 

@@ -1264,10 +1264,12 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     } catch (error) { console.error('[convert-to-lead] company write failed:', error.message); }
   }
   if (companyId) data.companyId = companyId;
-  if (personId) data.pointOfContactId = personId;
-  if (b.stage) data.stage = String(b.stage);
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];
+  const isWebsiteFormSource = source === 'GUAN_WANG_BIAO_DAN';
+  if (personId) data.pointOfContactId = personId;
+  if (b.stage && !isWebsiteFormSource) data.stage = String(b.stage);
   if (source) data.keHuLaiYuan = source;
+  if (isWebsiteFormSource) data.stage = 'XIANSUO';
   if (b.companyType) data.keHuLeiXing = String(b.companyType);
   if (b.product) data.keHuXuQiuChanPin = String(b.product);
   if (b.note) data.message = String(b.note);
@@ -1288,7 +1290,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     if (emails.length > 0 && emails.every((item) => EMAIL_RE.test(item))) data[OPPORTUNITY_EMAIL_FIELD] = emails.join(', ');
     else skipped.push('email');
   }
-  if ((rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
+  if (!isWebsiteFormSource && (rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
   const country = String(b.country || '').trim();
   if (country) data.country = { addressCountry: country };
 

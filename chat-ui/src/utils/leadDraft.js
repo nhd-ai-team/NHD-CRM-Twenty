@@ -9,6 +9,7 @@ export function hasContactMethod(draft) {
 }
 
 export function applyContactMethodStage(draft) {
+  if (draft?.source === 'GUAN_WANG_BIAO_DAN') return { ...draft, stage: INITIAL_STAGE }
   if (!hasContactMethod(draft)) return draft
   if (draft.stage && draft.stage !== INITIAL_STAGE) return draft
   return { ...draft, stage: CONTACT_METHOD_STAGE }

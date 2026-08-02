@@ -21,7 +21,7 @@ export function useLeadForm({ selected, selectedId }) {
 
   const setField = useCallback((k, v) => setDraft((d) => {
     const next = { ...d, [k]: v }
-    return (k === 'phone' || k === 'email') ? applyContactMethodStage(next) : next
+    return (k === 'phone' || k === 'email' || k === 'source') ? applyContactMethodStage(next) : next
   }), [])
 
   const saveDraft = useCallback(async (next) => {
