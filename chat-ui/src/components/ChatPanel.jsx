@@ -4,9 +4,17 @@ import { zhCN } from 'date-fns/locale'
 import {
   UserCheck, Bot,
   Send, Paperclip,
-  Menu,
+  Menu, X, FileText,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
+
+function formatFileSize(size) {
+  const n = Number(size || 0)
+  if (!n) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 
 function StatusBadge({ status }) {
   const map = {
@@ -57,6 +65,10 @@ function MessageBubble({ msg, onAdopt }) {
   const isCustomer = msg.senderType === 'customer'
   const isAI = msg.senderType === 'ai'
   const timeStr = format(msg.sentAt, 'HH:mm')
+  const attachment = Array.isArray(msg.attachments) ? msg.attachments[0] : null
+  const mediaUrl = msg.mediaUrl || attachment?.url || ''
+  const fileName = attachment?.title || msg.content || '附件'
+  const fileMeta = [attachment?.fileType, formatFileSize(attachment?.sizeBytes)].filter(Boolean).join(' · ')
 
   return (
     <div style={{
@@ -83,8 +95,31 @@ function MessageBubble({ msg, onAdopt }) {
           fontSize: 13, lineHeight: 1.55,
           boxShadow: 'var(--shadow-sm)',
         }}>
-          {msg.contentType === 'image' ? (
-            <div style={{ fontSize: 12, color: 'inherit', opacity: .8 }}>📷 图片</div>
+          {msg.contentType === 'image' && mediaUrl ? (
+            <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
+              <img src={mediaUrl} alt={fileName} style={{ display: 'block', maxWidth: 240, maxHeight: 180, borderRadius: 6, objectFit: 'cover' }} />
+              {msg.content && msg.content !== fileName && <div style={{ marginTop: 6 }}>{msg.content}</div>}
+            </a>
+          ) : msg.contentType === 'video' && mediaUrl ? (
+            <div>
+              <video src={mediaUrl} controls style={{ display: 'block', maxWidth: 260, maxHeight: 190, borderRadius: 6 }} />
+              {msg.content && msg.content !== fileName && <div style={{ marginTop: 6 }}>{msg.content}</div>}
+            </div>
+          ) : mediaUrl ? (
+            <a href={mediaUrl} target="_blank" rel="noreferrer" download style={{
+              display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: 8,
+              alignItems: 'center', color: 'inherit', textDecoration: 'none', minWidth: 180,
+            }}>
+              <span style={{
+                width: 28, height: 28, borderRadius: 6, display: 'grid', placeItems: 'center',
+                background: isCustomer ? 'var(--bg-active)' : 'rgba(255,255,255,.18)',
+              }}><FileText size={15} /></span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{fileName}</span>
+                {fileMeta && <span style={{ display: 'block', marginTop: 2, fontSize: 11, opacity: .75 }}>{fileMeta}</span>}
+                {msg.content && msg.content !== fileName && <span style={{ display: 'block', marginTop: 5 }}>{msg.content}</span>}
+              </span>
+            </a>
           ) : msg.content}
         </div>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{timeStr}</span>
@@ -156,10 +191,13 @@ function btnStyle(variant, disabled = false) {
 
 export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar }) {
   const [input, setInput] = useState('')
+  const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
   const [switching, setSwitching] = useState(false)
+  const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const bottomRef = useRef(null)
+  const fileInputRef = useRef(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -174,16 +212,26 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     </div>
   )
 
-  function handleSend() {
+  async function handleSend() {
+    if (sending) return
     const text = input.trim()
-    if (!text) return
+    if (!text && !selectedFile) return
     if (conv.status !== 'takeover') {
       setSendError('请先人工接管会话后再发送消息')
       return
     }
     setSendError('')
-    onSend(conv.id, text).catch(error => setSendError(error.message))
-    setInput('')
+    setSending(true)
+    try {
+      await onSend(conv.id, text, selectedFile)
+      setInput('')
+      setSelectedFile(null)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    } catch (error) {
+      setSendError(error.message)
+    } finally {
+      setSending(false)
+    }
   }
 
   function handleKeyDown(e) {
@@ -204,7 +252,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     }
   }
 
-  const canSend = !!input.trim() && conv.status === 'takeover'
+  const canSend = (!!input.trim() || !!selectedFile) && conv.status === 'takeover' && !sending
   const confirmTitle = pendingAction === 'takeover' ? '确认人工接管？' : '确认 AI 托管？'
   const confirmBody = pendingAction === 'takeover'
     ? '确认后销售可以在工作台回复客户，AI客服将暂停托管此会话。'
@@ -253,6 +301,29 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
 
       {/* Input area */}
       <div style={{ borderTop: '1px solid var(--border)', background: 'var(--bg-primary)', flexShrink: 0 }}>
+        {selectedFile && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, margin: '10px 12px 0',
+            padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6,
+            background: 'var(--bg-surface)', color: 'var(--text-secondary)', fontSize: 12,
+          }}>
+            <FileText size={14} />
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {selectedFile.name}
+            </span>
+            <span style={{ color: 'var(--text-muted)' }}>{formatFileSize(selectedFile.size)}</span>
+            <button
+              onClick={() => {
+                setSelectedFile(null)
+                if (fileInputRef.current) fileInputRef.current.value = ''
+              }}
+              title="移除附件"
+              style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}
@@ -272,11 +343,23 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
           padding: '6px 12px 10px', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', gap: 2 }}>
-            <button title="附件上传" style={{
-              padding: 6, border: 'none', background: 'transparent', cursor: 'pointer',
-              color: 'var(--text-muted)', borderRadius: 4,
-              display: 'flex', alignItems: 'center',
-            }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              style={{ display: 'none' }}
+              onChange={event => setSelectedFile(event.target.files?.[0] || null)}
+            />
+            <button
+              title={conv.status === 'takeover' ? '附件上传' : '请先接管会话'}
+              onClick={() => conv.status === 'takeover' && fileInputRef.current?.click()}
+              disabled={conv.status !== 'takeover' || sending}
+              style={{
+                padding: 6, border: 'none', background: 'transparent',
+                cursor: conv.status === 'takeover' && !sending ? 'pointer' : 'not-allowed',
+                color: 'var(--text-muted)', borderRadius: 4,
+                display: 'flex', alignItems: 'center', opacity: conv.status === 'takeover' ? 1 : .45,
+              }}
+            >
               <Paperclip size={15} />
             </button>
           </div>
@@ -300,7 +383,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
                 transition: 'all .15s',
               }}
             >
-              <Send size={13} /> 发送
+              <Send size={13} /> {sending ? '发送中' : '发送'}
             </button>
           </div>
         </div>

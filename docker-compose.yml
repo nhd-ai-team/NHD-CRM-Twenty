@@ -158,6 +158,10 @@ services:
       META_APP_SECRET: ${META_APP_SECRET:-}
       META_PAGE_ACCESS_TOKEN: ${META_PAGE_ACCESS_TOKEN:-}
       FACEBOOK_PAGE_ACCESS_TOKEN: ${FACEBOOK_PAGE_ACCESS_TOKEN:-}
+      CONVERSATION_UPLOAD_DIR: /app/uploads/conversation-files
+      CONVERSATION_MAX_UPLOAD_MB: ${CONVERSATION_MAX_UPLOAD_MB:-25}
+    volumes:
+      - middleware-uploads:/app/uploads
     depends_on:
       - server
     restart: always
@@ -238,6 +242,11 @@ services:
       INTEGRATION_API_KEY: ${AI_SERVICE_API_KEY}
       INTEGRATION_CLIENT_ID: nhd-crm-middleware
       INTEGRATION_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
+      # 由部署命令从 Mac ~/.hermes/.env 读取；不写入 CRM 仓库。
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_API_BASE: http://host.docker.internal:8787/api/v1
+      OPENROUTER_MODEL: openai/gpt-oss-120b
+      OPENROUTER_TIMEOUT_MS: "20000"
       # 官网 widget 嵌入 chinanhd.com；aichatbot 为预览页自身来源
       ALLOWED_ORIGINS: https://chinanhd.com,https://www.chinanhd.com,https://aichatbot.chinanhd.com,https://staging.chinanhd.com,http://staging.chinanhd.com
       # 官网访客消息转发到 CRM 会话工作台
@@ -253,3 +262,4 @@ volumes:
   evolution-instances:
   waha-sessions:
   ai-service-data:
+  middleware-uploads:

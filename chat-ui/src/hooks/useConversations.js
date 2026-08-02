@@ -46,8 +46,18 @@ export function useConversations() {
 
   const selected = conversations.find(c => c.id === selectedId) ?? null
 
-  async function sendMessage(convId, content) {
-    const response = await fetch(`/conv-api/conversations/${convId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) })
+  async function sendMessage(convId, content, file) {
+    const options = { method: 'POST' }
+    if (file) {
+      const form = new FormData()
+      if (content) form.append('content', content)
+      form.append('file', file)
+      options.body = form
+    } else {
+      options.headers = { 'Content-Type': 'application/json' }
+      options.body = JSON.stringify({ content })
+    }
+    const response = await fetch(`/conv-api/conversations/${convId}/messages`, options)
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
       throw new Error(data.error || '消息发送失败')

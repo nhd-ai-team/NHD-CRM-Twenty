@@ -1,6 +1,9 @@
 const express = require('express');
 const fetch = require('node-fetch');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const { Pool } = require('pg');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
@@ -45,8 +48,26 @@ const IMAP_PASSWORD = process.env.IMAP_PASSWORD || '';
 const IMAP_MAILBOX = process.env.IMAP_MAILBOX || 'INBOX';
 const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 60));
 const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
+const UPLOAD_DIR = process.env.CONVERSATION_UPLOAD_DIR || '/app/uploads/conversation-files';
+const MAX_UPLOAD_BYTES = Math.max(1, Number(process.env.CONVERSATION_MAX_UPLOAD_MB || 25)) * 1024 * 1024;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let workspaceSchemaCache = null;
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '').slice(0, 24);
+      cb(null, `${Date.now()}-${crypto.randomUUID()}${ext}`);
+    },
+  }),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+});
+app.use('/api/uploads/conversation-files', express.static(UPLOAD_DIR, {
+  fallthrough: false,
+  setHeaders: (res) => res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'),
+}));
 
 // 浏览器写端点的同主域白名单：只放行来自 chinanhd.com（及子域）与本地开发的请求。
 // 注意：Origin/Referer 可被非浏览器客户端伪造，这是纵深防御/减速带，非强鉴权。
@@ -67,6 +88,27 @@ function requireSameSite(req, res, next) {
   if (hostAllowed(host)) return next();
   console.warn('[same-site] blocked origin:', source, req.method, req.path);
   return res.status(403).json({ error: 'forbidden origin' });
+}
+
+function publicFileUrl(req, storedName) {
+  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  const isLocalDirect = host.startsWith('localhost:3002') || host.startsWith('127.0.0.1:3002');
+  const proto = req.headers['x-forwarded-proto'] || (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
+  const prefix = isLocalDirect ? '/api' : '/conv-api';
+  const relative = `${prefix}/uploads/conversation-files/${encodeURIComponent(storedName)}`;
+  return host ? `${proto}://${host}${relative}` : relative;
+}
+
+function fileMessageType(file = {}) {
+  const mime = String(file.mimetype || '').toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  return 'file';
+}
+
+function fileTitle(file = {}) {
+  return String(file.originalname || '附件').trim() || '附件';
 }
 
 function getCookieFromRequest(req, name) {
@@ -1265,20 +1307,114 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
 
 // 记录销售在 CRM 内发出的消息。用渠道返回的消息 id 落库，与 message.any webhook 回传的
 // 同一条出站消息（fromMe=true，external_msg_id 同为该 id）去重，避免重复。
-async function recordAgentMessage(conversationId, content, externalId) {
-  await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
-    VALUES ($1, $2, 'agent', $3, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING`,
-    [externalId || null, conversationId, content]);
+async function recordAgentMessage(conversationId, content, externalId, options = {}) {
+  await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
+    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now()) ON CONFLICT(external_msg_id) DO NOTHING`,
+    [
+      externalId || null,
+      conversationId,
+      content,
+      options.contentType || 'text',
+      options.mediaUrl || null,
+      options.attachments ? JSON.stringify(options.attachments) : null,
+    ]);
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
 }
 
-app.post('/api/conversations/:id/messages', requireSameSite, async (req, res) => {
-  const { content } = req.body;
-  if (!content?.trim()) return res.status(400).json({ error: 'content is required' });
+async function sendWebsiteAgentMessage(conversation, content, idempotencyKey, attachment) {
+  if (!AI_SERVICE_URL) throw new Error('AI service url not configured');
+  const auth = Buffer.from(`${AI_AGENT_USER}:${AI_AGENT_PASSWORD}`).toString('base64');
+  const response = await fetch(`${AI_SERVICE_URL}/api/agent/conversations/${encodeURIComponent(conversation.external_chat_id)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+    body: JSON.stringify({
+      content,
+      idempotencyKey,
+      agentId: 'crm',
+      metadata: attachment ? { attachments: [attachment] } : {},
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+async function sendWhatsAppFile(conversation, file, content) {
+  const endpoint = file.mimetype?.startsWith('image/')
+    ? '/api/sendImage'
+    : file.mimetype?.startsWith('video/')
+      ? '/api/sendVideo'
+      : '/api/sendFile';
+  const response = await fetch(`${WAHA_API_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
+    body: JSON.stringify({
+      session: WAHA_SESSION,
+      chatId: conversation.external_chat_id,
+      caption: content || undefined,
+      file: {
+        mimetype: file.mimetype,
+        filename: file.originalname,
+        data: fs.readFileSync(file.path).toString('base64'),
+      },
+    }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file'), async (req, res) => {
+  const content = String(req.body?.content || '').trim();
+  const uploadedFile = req.file || null;
+  if (!content && !uploadedFile) return res.status(400).json({ error: 'content or file is required' });
   const result = await pool.query(`SELECT c.external_chat_id, c.channel, c.status FROM conv.conversations c WHERE c.id = $1`, [req.params.id]);
   const conversation = result.rows[0];
   if (!conversation) return res.status(404).json({ error: 'conversation not found' });
   if (conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
+
+  if (uploadedFile) {
+    const mediaUrl = publicFileUrl(req, uploadedFile.filename);
+    const title = fileTitle(uploadedFile);
+    const messageType = fileMessageType(uploadedFile);
+    const displayContent = content || title;
+    const attachment = {
+      title,
+      fileType: path.extname(title).replace('.', '') || messageType,
+      contentType: uploadedFile.mimetype,
+      sizeBytes: uploadedFile.size,
+      url: mediaUrl,
+    };
+
+    if (conversation.channel === 'whatsapp') {
+      try {
+        const sent = await sendWhatsAppFile(conversation, uploadedFile, content);
+        await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
+          contentType: messageType,
+          mediaUrl,
+          attachments: [attachment],
+        });
+        return res.status(202).json(sent);
+      } catch (error) {
+        return res.status(502).json({ error: 'WhatsApp file send failed', detail: error.message });
+      }
+    }
+
+    if (conversation.channel === 'website') {
+      try {
+        const idempotencyKey = `crm-file:${req.params.id}:${Date.now()}`;
+        const sent = await sendWebsiteAgentMessage(conversation, displayContent, idempotencyKey, attachment);
+        await recordAgentMessage(req.params.id, displayContent, `web:agent:${sent?.messageId || idempotencyKey}`, {
+          contentType: messageType,
+          mediaUrl,
+          attachments: [attachment],
+        });
+        return res.status(202).json(sent);
+      } catch (error) {
+        return res.status(502).json({ error: 'Website file send failed', detail: error.message });
+      }
+    }
+
+    return res.status(400).json({ error: '当前渠道暂不支持发送附件' });
+  }
 
   if (conversation.channel === 'whatsapp') {
     const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
@@ -1315,17 +1451,14 @@ app.post('/api/conversations/:id/messages', requireSameSite, async (req, res) =>
   }
 
   if (conversation.channel === 'website') {
-    if (!AI_SERVICE_URL) return res.status(500).json({ error: 'AI service url not configured' });
     // external_chat_id 即 ai-service 的 conversationId；注入一条 agent 消息，widget 轮询即可看到。
-    const auth = Buffer.from(`${AI_AGENT_USER}:${AI_AGENT_PASSWORD}`).toString('base64');
     const idempotencyKey = `crm:${req.params.id}:${Date.now()}`;
-    const response = await fetch(`${AI_SERVICE_URL}/api/agent/conversations/${encodeURIComponent(conversation.external_chat_id)}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
-      body: JSON.stringify({ content, idempotencyKey, agentId: 'crm' }),
-    });
-    if (!response.ok) return res.status(502).json({ error: 'Website send failed', detail: await response.text() });
-    const sent = await response.json();
+    let sent;
+    try {
+      sent = await sendWebsiteAgentMessage(conversation, content, idempotencyKey);
+    } catch (error) {
+      return res.status(502).json({ error: 'Website send failed', detail: error.message });
+    }
     await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`);
     return res.status(202).json(sent);
   }
