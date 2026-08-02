@@ -58,7 +58,8 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
     filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname || '').slice(0, 24);
+      file.displayName = normalizeUploadFilename(file.originalname || '附件');
+      const ext = path.extname(file.displayName).slice(0, 24);
       cb(null, `${Date.now()}-${crypto.randomUUID()}${ext}`);
     },
   }),
@@ -107,8 +108,21 @@ function fileMessageType(file = {}) {
   return 'file';
 }
 
+function normalizeUploadFilename(name = '') {
+  const raw = String(name || '').trim();
+  if (!raw) return '附件';
+  const mojibakePattern = /[ÃÂâäåæçèéðÐÑ¤¥¦§¨©ª«¬®¯°±²³µ¶·¸¹º¼½¾¿]/;
+  const decoded = Buffer.from(raw, 'latin1').toString('utf8');
+  const candidate = mojibakePattern.test(raw) && decoded && !decoded.includes('�') ? decoded : raw;
+  return candidate
+    .normalize('NFC')
+    .replace(/[\\/:\0-\x1F\x7F]/g, '_')
+    .trim()
+    .slice(0, 180) || '附件';
+}
+
 function fileTitle(file = {}) {
-  return String(file.originalname || '附件').trim() || '附件';
+  return file.displayName || normalizeUploadFilename(file.originalname || '附件');
 }
 
 function getCookieFromRequest(req, name) {
@@ -1344,6 +1358,7 @@ async function sendWhatsAppFile(conversation, file, content) {
     : file.mimetype?.startsWith('video/')
       ? '/api/sendVideo'
       : '/api/sendFile';
+  const filename = fileTitle(file);
   const response = await fetch(`${WAHA_API_URL}${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
@@ -1353,7 +1368,7 @@ async function sendWhatsAppFile(conversation, file, content) {
       caption: content || undefined,
       file: {
         mimetype: file.mimetype,
-        filename: file.originalname,
+        filename,
         data: fs.readFileSync(file.path).toString('base64'),
       },
     }),
