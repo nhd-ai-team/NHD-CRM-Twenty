@@ -858,8 +858,7 @@
         row.getAttribute('aria-selected') === 'true' ||
         row.getAttribute('data-selected') === 'true';
       if (!selected) return;
-      var name = (row.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 24);
-      picked.push({ id: id, name: name || id });
+      picked.push({ id: id, name: '线索 ' + id.slice(0, 8) });
     });
     return picked;
   }
@@ -879,11 +878,11 @@
 
   function convertErrorMessage(status, data) {
     if (!data || typeof data !== 'object') return '请求失败，HTTP ' + status;
-    var parts = [];
-    if (data.error) parts.push(String(data.error));
-    if (data.detail && String(data.detail) !== String(data.error || '')) parts.push(String(data.detail));
-    if (data.code && parts.length === 0) parts.push('错误码：' + data.code);
-    return parts.join('：') || ('请求失败，HTTP ' + status);
+    if (data.code === 'PRODUCT_REQUIRED') return '请先填写「客户需求产品」，再执行转客户。';
+    if (data.detail) return String(data.detail);
+    if (data.error) return String(data.error);
+    if (data.code) return '错误码：' + data.code;
+    return '请求失败，HTTP ' + status;
   }
 
   function escapeHtml(value) {
@@ -967,7 +966,7 @@
     var card = document.createElement('div');
     card.style.cssText = 'width:min(420px,100%);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;';
 
-    var preview = items.slice(0, 5).map(function (it) { return '· ' + it.name; }).join('<br>');
+    var preview = items.slice(0, 5).map(function (it) { return '· ' + escapeHtml(it.name); }).join('<br>');
     var more = items.length > 5 ? '<br>… 等共 ' + items.length + ' 条' : '';
     card.innerHTML =
       '<div style="padding:16px 18px 10px">' +
@@ -997,8 +996,11 @@
           if (sum.created) parts.push('新建 ' + sum.created);
           if (sum.updated) parts.push('更新 ' + sum.updated);
           if (sum.failed) parts.push('失败/跳过 ' + sum.failed);
-          convertToast(sum.failed && !sum.created && !sum.updated ? 'error' : 'ok', '转客户完成：' + (parts.join('，') || '无变化'), sum.failed ? 5200 : 3200);
-          if (sum.failed) window.setTimeout(function () { openConvertResultModal(sum); }, 200);
+          if (sum.failed) {
+            openConvertResultModal(sum);
+          } else {
+            convertToast('ok', '转客户完成：' + (parts.join('，') || '无变化'), 3200);
+          }
           // 转成功后跳到客户列表。Twenty 记录详情无法整页深链(会 404，正常记录亦然)，
           // 故跳列表；刚转的客户 updatedAt 最新、默认排在靠前，销售一眼可见。
           if ((sum.personIds || []).length > 0 && !sum.failed) {
