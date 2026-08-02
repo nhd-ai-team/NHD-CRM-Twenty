@@ -1476,6 +1476,67 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
   return { id: result.rows[0]?.id, created: true };
 }
 
+function convertToPersonFailure(error) {
+  const message = String(error?.message || '').trim();
+  const detail = String(error?.detail || '').trim();
+  const code = error?.code || '';
+  if (code === '23505') {
+    return {
+      code: 'DUPLICATE_VALUE',
+      error: '客户表存在唯一字段冲突',
+      detail: detail || message || '可能是邮箱、电话或关联编码已存在。',
+    };
+  }
+  if (code === '22P02') {
+    return {
+      code: 'INVALID_SELECT_OPTION',
+      error: '下拉选项值不匹配',
+      detail: detail || message || '线索表中的选项值无法写入客户表，请检查客户来源、客户类型等选项是否已补齐。',
+    };
+  }
+  if (code === '23503') {
+    return {
+      code: 'RELATION_NOT_FOUND',
+      error: '关联记录不存在',
+      detail: detail || message || '线索关联的公司、联系人或项目已不存在，无法建立客户关联。',
+    };
+  }
+  if (code === '42703') {
+    return {
+      code: 'FIELD_NOT_FOUND',
+      error: '客户表或线索表字段不存在',
+      detail: detail || message || '可能有字段被停用、重命名或尚未创建。',
+    };
+  }
+  if (code === '42P01') {
+    return {
+      code: 'TABLE_NOT_FOUND',
+      error: 'CRM 数据表不存在',
+      detail: detail || message || '当前工作区数据表结构异常。',
+    };
+  }
+  if (code === '42804') {
+    return {
+      code: 'FIELD_TYPE_MISMATCH',
+      error: '字段类型不匹配',
+      detail: detail || message || '线索字段和客户字段类型不一致，无法同步写入。',
+    };
+  }
+  return {
+    code: code || 'CONVERT_FAILED',
+    error: '转客户失败',
+    detail: detail || message || '未知错误，请联系管理员查看服务日志。',
+  };
+}
+
+async function applyRecordAuditBestEffort(tableName, recordId, actor, operation) {
+  try {
+    await applyRecordAudit(tableName, recordId, actor, operation);
+  } catch (error) {
+    console.warn(`[audit] ${tableName} ${recordId} ${operation} audit failed:`, error.message);
+  }
+}
+
 // 线索表行按钮：把当前线索同步/关联到客户(People)。要求客户需求产品已填写。
 app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req, res) => {
   const auditActor = await resolveAuditActor(req).catch((error) => {
@@ -1517,11 +1578,19 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
     const opportunity = opportunityResult.rows[0];
     if (!opportunity) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'opportunity not found' });
+      return res.status(404).json({
+        code: 'OPPORTUNITY_NOT_FOUND',
+        error: '线索不存在或已删除',
+        detail: '未找到该线索记录，可能已被删除或当前工作区不可见。',
+      });
     }
     if (!nonBlankOrNull(opportunity.keHuXuQiuChanPin)) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: '客户需求产品未填写', code: 'PRODUCT_REQUIRED' });
+      return res.status(409).json({
+        code: 'PRODUCT_REQUIRED',
+        error: '客户需求产品未填写',
+        detail: '请先在线索表填写「客户需求产品」，再执行转客户。',
+      });
     }
 
     if (!nonBlankOrNull(opportunity.syncGroupCode)) {
@@ -1549,8 +1618,8 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
     );
 
     await client.query('COMMIT');
-    await applyRecordAudit('person', person.id, auditActor, person.created ? 'create' : 'update');
-    await applyRecordAudit('opportunity', opportunity.id, auditActor, 'update');
+    await applyRecordAuditBestEffort('person', person.id, auditActor, person.created ? 'create' : 'update');
+    await applyRecordAuditBestEffort('opportunity', opportunity.id, auditActor, 'update');
     res.status(person.created ? 201 : 200).json({
       opportunityId: opportunity.id,
       personId: person.id,
@@ -1559,8 +1628,9 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
     });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('[convert-to-person] failed:', error.message);
-    res.status(502).json({ error: 'convert to person failed', detail: error.message });
+    const failure = convertToPersonFailure(error);
+    console.error('[convert-to-person] failed:', failure.code, failure.error, failure.detail);
+    res.status(502).json(failure);
   } finally {
     client.release();
   }

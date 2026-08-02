@@ -864,7 +864,7 @@
     return picked;
   }
 
-  function convertToast(type, msg) {
+  function convertToast(type, msg, timeoutMs) {
     var el = document.createElement('div');
     el.textContent = msg;
     el.style.cssText = [
@@ -874,7 +874,56 @@
       'background:' + (type === 'ok' ? '#1f9d5f' : '#e1262b'),
     ].join(';');
     document.body.appendChild(el);
-    window.setTimeout(function () { el.remove(); }, 3200);
+    window.setTimeout(function () { el.remove(); }, timeoutMs || 3200);
+  }
+
+  function convertErrorMessage(status, data) {
+    if (!data || typeof data !== 'object') return '请求失败，HTTP ' + status;
+    var parts = [];
+    if (data.error) parts.push(String(data.error));
+    if (data.detail && String(data.detail) !== String(data.error || '')) parts.push(String(data.detail));
+    if (data.code && parts.length === 0) parts.push('错误码：' + data.code);
+    return parts.join('：') || ('请求失败，HTTP ' + status);
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function openConvertResultModal(summary) {
+    var failures = summary.failures || [];
+    if (!failures.length) return;
+    var overlay = document.createElement('div');
+    overlay.id = CONVERT_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(560px,100%);max-height:min(620px,90vh);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;display:flex;flex-direction:column;';
+    var rows = failures.map(function (item) {
+      return '<div style="padding:10px 0;border-top:1px solid #eee">' +
+        '<div style="font-size:12.5px;font-weight:700;color:#222">' + escapeHtml(item.name || item.id || '未命名线索') + '</div>' +
+        '<div style="margin-top:4px;font-size:12px;line-height:1.55;color:#b42318;white-space:pre-wrap">' + escapeHtml(item.reason || '未知失败原因') + '</div>' +
+      '</div>';
+    }).join('');
+    card.innerHTML =
+      '<div style="padding:16px 18px 10px">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">部分线索转客户失败</div>' +
+        '<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:#555">' +
+          '成功新建 <b>' + summary.created + '</b> 条，更新 <b>' + summary.updated + '</b> 条，失败 <b>' + failures.length + '</b> 条。请按以下原因修正后重试。' +
+        '</div>' +
+      '</div>' +
+      '<div style="padding:0 18px;overflow:auto;flex:1">' + rows + '</div>' +
+      '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #eee">' +
+        '<button data-act="close" style="padding:7px 14px;border-radius:6px;border:none;background:#1f2937;color:#fff;cursor:pointer;font-size:12px;font-weight:700">知道了</button>' +
+      '</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeConvertModal(); });
+    card.querySelector('[data-act="close"]').addEventListener('click', closeConvertModal);
+    document.body.appendChild(overlay);
   }
 
   function closeConvertModal() {
@@ -882,31 +931,35 @@
     if (m) m.remove();
   }
 
-  function runConvert(ids, onProgress) {
-    var created = 0, updated = 0, failed = 0, personIds = [];
+  function runConvert(items, onProgress) {
+    var created = 0, updated = 0, personIds = [], failures = [];
     var chain = Promise.resolve();
-    ids.forEach(function (id, idx) {
+    items.forEach(function (item, idx) {
       chain = chain.then(function () {
-        onProgress(idx + 1, ids.length);
-        return window.fetch('/conv-api/opportunities/' + encodeURIComponent(id) + '/convert-to-person', {
+        onProgress(idx + 1, items.length);
+        return window.fetch('/conv-api/opportunities/' + encodeURIComponent(item.id) + '/convert-to-person', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
         }).then(function (r) {
           return r.json().catch(function () { return {}; }).then(function (data) {
-            if (!r.ok) { failed++; return; }
+            if (!r.ok) {
+              failures.push({ id: item.id, name: item.name, reason: convertErrorMessage(r.status, data) });
+              return;
+            }
             if (data && data.personId) personIds.push(data.personId);
             if (data && data.created) created++; else updated++;
           });
-        }).catch(function () { failed++; });
+        }).catch(function (error) {
+          failures.push({ id: item.id, name: item.name, reason: error.message || '网络请求失败' });
+        });
       });
     });
-    return chain.then(function () { return { created: created, updated: updated, failed: failed, personIds: personIds }; });
+    return chain.then(function () { return { created: created, updated: updated, failed: failures.length, failures: failures, personIds: personIds }; });
   }
 
   function openConvertModal(items) {
     closeConvertModal();
-    var ids = items.map(function (it) { return it.id; });
     var overlay = document.createElement('div');
     overlay.id = CONVERT_MODAL_ID;
     overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
@@ -937,17 +990,18 @@
     okBtn.addEventListener('click', function () {
       okBtn.disabled = true;
       okBtn.textContent = '处理中…';
-      runConvert(ids, function (done, total) { okBtn.textContent = '处理中… ' + done + '/' + total; })
+      runConvert(items, function (done, total) { okBtn.textContent = '处理中… ' + done + '/' + total; })
         .then(function (sum) {
           closeConvertModal();
           var parts = [];
           if (sum.created) parts.push('新建 ' + sum.created);
           if (sum.updated) parts.push('更新 ' + sum.updated);
           if (sum.failed) parts.push('失败/跳过 ' + sum.failed);
-          convertToast(sum.failed && !sum.created && !sum.updated ? 'error' : 'ok', '转客户完成：' + (parts.join('，') || '无变化'));
+          convertToast(sum.failed && !sum.created && !sum.updated ? 'error' : 'ok', '转客户完成：' + (parts.join('，') || '无变化'), sum.failed ? 5200 : 3200);
+          if (sum.failed) window.setTimeout(function () { openConvertResultModal(sum); }, 200);
           // 转成功后跳到客户列表。Twenty 记录详情无法整页深链(会 404，正常记录亦然)，
           // 故跳列表；刚转的客户 updatedAt 最新、默认排在靠前，销售一眼可见。
-          if ((sum.personIds || []).length > 0) {
+          if ((sum.personIds || []).length > 0 && !sum.failed) {
             window.setTimeout(function () { window.location.href = '/objects/people'; }, 700);
           }
         });
