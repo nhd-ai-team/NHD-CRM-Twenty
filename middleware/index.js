@@ -1077,6 +1077,36 @@ app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, re
   }
 });
 
+app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, res) => {
+  try {
+    const current = await getWahaSession().catch(() => null);
+    if (current?.status === 'WORKING') {
+      const normalized = normalizeWahaSession(current);
+      await upsertWhatsAppChannelAccount(req, normalized);
+      return res.status(202).json({
+        channel: 'whatsapp',
+        provider: 'waha',
+        ...normalized,
+        qrAvailable: false,
+        skipped: 'already_connected',
+      });
+    }
+
+    await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
+    const session = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
+    const normalized = normalizeWahaSession(session);
+    await upsertWhatsAppChannelAccount(req, normalized);
+    res.status(202).json({
+      channel: 'whatsapp',
+      provider: 'waha',
+      ...normalized,
+      qrAvailable: ['SCAN_QR_CODE', 'FAILED', 'STOPPED', 'STARTING'].includes(normalized.status),
+    });
+  } catch (error) {
+    res.status(502).json({ error: 'WhatsApp restart failed', detail: error.message });
+  }
+});
+
 app.get('/api/companies/search', requireSameSite, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();

@@ -521,6 +521,29 @@
     return status || '未知';
   }
 
+  function formatNow() {
+    var now = new Date();
+    var pad = function (value) { return String(value).padStart(2, '0'); };
+    return pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+  }
+
+  function setWaButtonBusy(root, selector, busyText, isBusy) {
+    var button = root.querySelector(selector);
+    if (!button) return;
+    if (isBusy) {
+      button.setAttribute('data-original-text', button.textContent || '');
+      button.textContent = busyText;
+      button.disabled = true;
+      button.style.opacity = '0.65';
+      button.style.cursor = 'wait';
+      return;
+    }
+    button.textContent = button.getAttribute('data-original-text') || button.textContent;
+    button.disabled = button.getAttribute('data-connected-disabled') === '1';
+    button.style.opacity = button.disabled ? '0.5' : '';
+    button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
+  }
+
   function renderWhatsAppStatus(root, state) {
     var connected = state && state.connected;
     var recoverableQr = state && ['FAILED', 'STOPPED', 'STARTING'].indexOf(state.status) !== -1;
@@ -531,6 +554,15 @@
     root.querySelector('[data-wa-phone]').textContent = connected ? (state.phone || state.accountId || '-') : '-';
     root.querySelector('[data-wa-name]').textContent = connected ? (state.displayName || '-') : '-';
     root.querySelector('[data-wa-session]').textContent = state ? state.session : 'default';
+    root.querySelector('[data-wa-updated]').textContent = '最后刷新 ' + formatNow();
+    var startButton = root.querySelector('[data-wa-start]');
+    if (startButton) {
+      startButton.setAttribute('data-connected-disabled', connected ? '1' : '0');
+      startButton.disabled = connected;
+      startButton.style.opacity = connected ? '0.5' : '';
+      startButton.style.cursor = connected ? 'not-allowed' : 'pointer';
+      startButton.title = connected ? '已连接时不需要重新生成二维码' : '重启 WhatsApp 会话并生成新的二维码';
+    }
     root.querySelector('[data-wa-help]').textContent = connected
       ? '该 WhatsApp 已可在对话工作台收发消息。当前 1.0 先绑定到 WAHA default session。'
       : waitingQr
@@ -551,6 +583,7 @@
   }
 
   function loadWhatsAppStatus(root) {
+    root.querySelector('[data-wa-error]').textContent = '';
     return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin' })
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (result) {
@@ -616,17 +649,27 @@
           '<div style="display:flex;align-items:center;gap:10px;padding:14px 20px;border-top:1px solid #f0f0f1">' +
             '<button data-wa-refresh style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#3f3f46;font-size:12.5px;font-weight:600;cursor:pointer">刷新状态</button>' +
             '<button data-wa-start style="height:30px;padding:0 12px;border-radius:6px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">启动/刷新二维码</button>' +
+            '<span data-wa-updated style="font-size:12px;color:#71717a"></span>' +
             '<span data-wa-error style="font-size:12px;color:#dc2626"></span>' +
           '</div>' +
         '</div>' +
       '</div>';
     document.body.appendChild(root);
-    root.querySelector('[data-wa-refresh]').addEventListener('click', function () { loadWhatsAppStatus(root); });
+    root.querySelector('[data-wa-refresh]').addEventListener('click', function () {
+      setWaButtonBusy(root, '[data-wa-refresh]', '刷新中...', true);
+      loadWhatsAppStatus(root).finally(function () {
+        setWaButtonBusy(root, '[data-wa-refresh]', '刷新中...', false);
+      });
+    });
     root.querySelector('[data-wa-start]').addEventListener('click', function () {
       root.querySelector('[data-wa-error]').textContent = '';
-      window.fetch('/conv-api/channel-accounts/whatsapp/start', { method: 'POST', credentials: 'same-origin' })
+      setWaButtonBusy(root, '[data-wa-start]', '生成中...', true);
+      window.fetch('/conv-api/channel-accounts/whatsapp/restart', { method: 'POST', credentials: 'same-origin' })
         .then(function () { return loadWhatsAppStatus(root); })
-        .catch(function (error) { root.querySelector('[data-wa-error]').textContent = error.message || '启动失败'; });
+        .catch(function (error) { root.querySelector('[data-wa-error]').textContent = error.message || '启动失败'; })
+        .finally(function () {
+          setWaButtonBusy(root, '[data-wa-start]', '生成中...', false);
+        });
     });
     loadWhatsAppStatus(root);
     if (!window.__settingsChannelsPoller) {
