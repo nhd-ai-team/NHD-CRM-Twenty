@@ -2,7 +2,7 @@ import { ContactPanel } from './ContactPanel'
 
 // 右侧资料表单 + 转线索确认弹窗 + toast 的组合，供渠道工作台与邮箱视图共用。
 // form: useLeadForm() 的返回值。
-export function LeadSidebar({ form, selected, inline = true, open = true, onClose }) {
+export function LeadSidebar({ form, selected, inline = true, open = true }) {
   const {
     draft, setField, setFields, saveDraft,
     converting, convertConfirmOpen, setConvertConfirmOpen,
@@ -16,7 +16,6 @@ export function LeadSidebar({ form, selected, inline = true, open = true, onClos
         conv={selected}
         inline={inline}
         open={open}
-        onClose={onClose}
         draft={draft}
         onField={setField}
         onFields={setFields}

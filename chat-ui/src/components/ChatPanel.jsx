@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
 import { format } from 'date-fns'
-import { zhCN } from 'date-fns/locale'
 import {
   UserCheck, Bot,
   Send, Paperclip,
@@ -31,28 +30,7 @@ function StatusBadge({ status }) {
   )
 }
 
-function MessageBubble({ msg, onAdopt }) {
-  // AI 建议（建议模式）：不是已发送消息，是待销售确认的草稿，点击填入输入框
-  if (msg.contentType === 'ai_suggestion') return (
-    <div style={{ display: 'flex', flexDirection: 'row-reverse', marginBottom: 12 }}>
-      <div
-        onClick={() => onAdopt?.(msg.content)}
-        style={{
-          maxWidth: '72%', cursor: 'pointer',
-          border: '1px dashed var(--accent)', borderRadius: '12px 2px 12px 12px',
-          background: 'var(--accent-soft)', color: 'var(--accent-text)',
-          padding: '8px 12px', fontSize: 13, lineHeight: 1.55,
-        }}
-        title="点击填入输入框，确认后发送"
-      >
-        <div style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 600, marginBottom: 3 }}>
-          🤖 AI 建议 · 点击填入输入框
-        </div>
-        {msg.content}
-      </div>
-    </div>
-  )
-
+function MessageBubble({ msg }) {
   if (msg.contentType === 'system') return (
     <div style={{ textAlign: 'center', padding: '6px 0' }}>
       <span style={{
@@ -307,7 +285,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
         {conv.messages.map((msg, i) => (
-          <MessageBubble key={msg.id ?? i} msg={msg} onAdopt={setInput} />
+          <MessageBubble key={msg.id ?? i} msg={msg} />
         ))}
         <div ref={bottomRef} />
       </div>

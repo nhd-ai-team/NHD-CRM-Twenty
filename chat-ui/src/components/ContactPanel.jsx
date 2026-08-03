@@ -131,7 +131,7 @@ function PlaceholderTab({ label }) {
   )
 }
 
-export function ContactPanel({ conv, open = true, onClose, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting }) {
+export function ContactPanel({ conv, open = true, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting }) {
   const [activeTab, setActiveTab] = useState('资料')
   if (!open) return null
 

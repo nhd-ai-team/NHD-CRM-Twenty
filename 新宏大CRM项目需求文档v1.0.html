@@ -630,13 +630,16 @@
   <h1>新宏大集团 CRM 项目<br>需求文档 v1.0</h1>
   <div class="cover-meta">
     <span><strong>版本</strong>v1.0</span>
-    <span><strong>更新日期</strong>2026-07-06</span>
+    <span><strong>更新日期</strong>2026-08-03</span>
     <span><strong>一期交付目标</strong>2026-07-31</span>
-    <span><strong>状态</strong>对齐中</span>
+    <span><strong>状态</strong>按当前代码同步</span>
   </div>
 </div>
 
 <div class="container editable-surface" data-editable-key="container">
+  <div class="info-box">
+    <strong>2026-08-03 当前实现口径</strong>：当前不使用 Chatwoot 作为多渠道聚合工具，采用自研对话中间层 + Twenty CRM。官网表单直接写入 Opportunity，创建时自动补客户来源=官网表单、任务进度=未处理线索（XIANSUO）；官网客服、WhatsApp、邮件沉淀进入对话工作台 / 邮件视图；Instagram 和 Facebook 暂存为待办，待 Meta 资产和权限确认后继续接入。线索表当前提供「转客户」按钮，执行前二次确认，缺少「客户需求产品」时阻断并显示失败原因。
+  </div>
 
   <!-- TOC -->
   <div class="toc">
@@ -801,7 +804,7 @@
         <div class="criteria-card-body">
           <ul>
             <li>邮件往来自动同步至对应客户档案，无需人工录入</li>
-            <li>WhatsApp / 社媒 IM 沟通记录通过 Chatwoot 接入，自动归档到对应客户</li>
+            <li>WhatsApp / 官网客服等 IM 沟通记录通过自研对话中间层接入，自动沉淀到 CRM 对话工作台</li>
             <li>官网智能客服会话结束后，客户信息与对话摘要自动写入 CRM</li>
           </ul>
         </div>
@@ -959,12 +962,12 @@
         </div>
         <div class="feature-row">
           <div class="feature-name">WhatsApp 接入</div>
-          <div>通过 Chatwoot 接入 WhatsApp Business API；聊天记录自动归档到对应客户档案；销售可在 CRM 中查看会话摘要和跳转完整记录</div>
+          <div>通过 WAHA / WhatsApp Web + 自研中间层接入；聊天记录沉淀到 conv 数据库，销售可在 CRM 对话工作台查看上下文并回复</div>
           <div class="feature-value">WhatsApp 沟通不再游离在 CRM 之外</div>
         </div>
         <div class="feature-row">
           <div class="feature-name">Facebook / Instagram 接入</div>
-          <div>通过 Chatwoot 接入 Facebook Messenger 和 Instagram DM；私信记录自动关联到对应客户</div>
+          <div>通过 Meta Graph API + 自研中间层接入 Facebook Messenger 和 Instagram DM；当前暂存待办，待企业资产、主页和权限确认后继续</div>
           <div class="feature-value">社媒私信统一管理，客户全貌可查</div>
         </div>
         <div class="feature-row">
@@ -979,7 +982,7 @@
         </div>
         <div class="feature-row">
           <div class="feature-name">坐席回复</div>
-          <div>销售可在 CRM 联系人页内直接查看 Chatwoot 会话并回复（通过内嵌面板或跳转 Chatwoot），底层消息收发由 Chatwoot 承担</div>
+          <div>销售可在 CRM 对话工作台内直接查看会话并回复；底层消息收发由自研中间层按渠道协议转发</div>
           <div class="feature-value">减少多平台切换，提升响应效率</div>
         </div>
       </div>
@@ -999,7 +1002,7 @@
         </div>
         <div class="feature-row">
           <div class="feature-name">官网聊天窗口</div>
-          <div>官网嵌入 Chatwoot 聊天窗口（或 AI 客服入口），访客可直接发起对话</div>
+          <div>官网嵌入自研 AI 客服入口，访客可直接发起对话；无法回答时引导补充工况、处理量、物料性质和联系方式</div>
           <div class="feature-value">官网从展示页变成获客入口</div>
         </div>
         <div class="feature-row">
@@ -1019,7 +1022,7 @@
         </div>
         <div class="feature-row">
           <div class="feature-name">官网表单自动写入</div>
-          <div>官网询盘表单提交后，通过中间层 API 直接在 CRM 建客户 / 商机，字段自动映射</div>
+          <div>官网询盘表单提交后直接在 CRM 创建线索（Opportunity），系统自动补客户来源=官网表单、任务进度=未处理线索</div>
           <div class="feature-value">表单留资实时进 CRM，无需手动录入</div>
         </div>
       </div>
@@ -1145,8 +1148,8 @@
       </div>
       <div style="padding-left:50px;color:var(--text-muted);font-size:18px;">↓</div>
       <div class="layer">
-        <span class="layer-label" style="background:#0891b2;">Chatwoot</span>
-        <span style="color:var(--text-muted);font-size:12px;font-family:inherit;">多渠道消息收发 · 坐席管理 · 会话上下文 · 附件存储 · webhook 通知</span>
+        <span class="layer-label" style="background:#0891b2;">自研对话中间层</span>
+        <span style="color:var(--text-muted);font-size:12px;font-family:inherit;">多渠道消息收发 · 会话上下文 · 附件存储 · webhook 通知 · AI托管状态</span>
       </div>
       <div style="padding-left:50px;color:var(--text-muted);font-size:18px;">↓</div>
       <div class="layer">
@@ -1168,8 +1171,8 @@
         <th>不负责</th>
       </tr>
       <tr>
-        <td>Chatwoot</td>
-        <td>多渠道消息收发、人工坐席、会话上下文、附件、会话状态管理</td>
+        <td>自研对话中间层</td>
+        <td>多渠道消息收发、会话上下文、附件、会话状态管理、AI 自动回复状态</td>
         <td>CRM 主数据、商机管理、长期客户画像</td>
       </tr>
       <tr>
@@ -1179,8 +1182,8 @@
       </tr>
       <tr>
         <td>中间层</td>
-        <td>webhook 处理、去重、重试、字段映射、摘要写入、官网表单接收</td>
-        <td>替代 Chatwoot 或 Twenty，不直接存储消息</td>
+        <td>webhook 处理、去重、重试、字段映射、官网客服接入、官网表单默认字段兜底</td>
+        <td>替代 Twenty 管理 CRM 主数据</td>
       </tr>
       <tr>
         <td>AI 客服</td>
@@ -1209,17 +1212,17 @@
       <tr>
         <td>容器化</td>
         <td>Docker Compose</td>
-        <td>Twenty + Chatwoot + 中间层统一容器管理</td>
+        <td>Twenty + 自研中间层 + WAHA + AI service 统一容器管理</td>
       </tr>
       <tr>
         <td>域名 / HTTPS</td>
         <td>独立域名 + SSL 证书</td>
-        <td>Chatwoot webhook、官网回调必须 HTTPS</td>
+        <td>官网回调、Meta Webhook、外部渠道回调必须 HTTPS</td>
       </tr>
       <tr>
         <td>数据库</td>
         <td>PostgreSQL 16</td>
-        <td>Twenty 和 Chatwoot 各自独立数据库</td>
+        <td>Twenty 使用 workspace schema；对话消息沉淀在 conv schema；附件保存在中间层上传目录</td>
       </tr>
       <tr>
         <td>队列</td>
@@ -1247,33 +1250,33 @@
       </tr>
       <tr>
         <td>WhatsApp</td>
-        <td>WhatsApp Business API → Chatwoot → 中间层 → CRM</td>
-        <td><span class="tag tag-blue">方案成熟</span></td>
+        <td>WAHA / WhatsApp Web → 自研中间层 → CRM 对话工作台</td>
+        <td><span class="tag tag-green">已接入测试</span></td>
       </tr>
       <tr>
         <td>Facebook</td>
-        <td>Facebook Messenger → Chatwoot → 中间层 → CRM</td>
-        <td><span class="tag tag-blue">方案成熟</span></td>
+        <td>Meta Graph API → 自研中间层 → CRM 对话工作台</td>
+        <td><span class="tag tag-orange">待账号权限确认</span></td>
       </tr>
       <tr>
         <td>Instagram</td>
-        <td>Instagram DM → Chatwoot → 中间层 → CRM</td>
-        <td><span class="tag tag-blue">方案成熟</span></td>
+        <td>Meta Graph API → 自研中间层 → CRM 对话工作台</td>
+        <td><span class="tag tag-orange">待账号权限确认</span></td>
       </tr>
       <tr>
         <td>LinkedIn</td>
-        <td>LinkedIn API 自定义适配器 → Chatwoot → 中间层 → CRM</td>
-        <td><span class="tag tag-orange">需单独验证</span></td>
+        <td>个人账号私信无稳定官方接入路径</td>
+        <td><span class="tag tag-orange">v1.0 不做</span></td>
       </tr>
       <tr>
         <td>官网智能客服</td>
-        <td>AI 客服 webhook → 中间层 → CRM；Chatwoot 承载会话窗口</td>
-        <td><span class="tag tag-blue">方案设计完成</span></td>
+        <td>官网 AI 客服 → 自研中间层 → CRM 对话工作台；AI 回复记录写入 conv.messages</td>
+        <td><span class="tag tag-green">已接入</span></td>
       </tr>
       <tr>
         <td>官网表单</td>
-        <td>表单 POST → 中间层 API → CRM 建档</td>
-        <td><span class="tag tag-blue">方案成熟</span></td>
+        <td>官网表单 POST → CRM Opportunity；数据库触发器兜底补官网表单来源和未处理线索阶段</td>
+        <td><span class="tag tag-green">已支持</span></td>
       </tr>
     </table>
 
@@ -1293,7 +1296,7 @@
       <div class="card">
         <div class="card-icon">🔗</div>
         <h4>客户绑定</h4>
-        <p>Chatwoot contact/conversation 与 Twenty contact 的稳定绑定关系维护</p>
+        <p>conv contact/conversation 与 Twenty Opportunity / People 的稳定绑定关系维护</p>
       </div>
       <div class="card">
         <div class="card-icon">🤖</div>
@@ -1303,7 +1306,7 @@
       <div class="card">
         <div class="card-icon">🔒</div>
         <h4>安全隔离</h4>
-        <p>Twenty API Key、Chatwoot Token 均由中间层保管，不暴露给官网前端</p>
+        <p>Twenty API Key、Meta Token、WAHA API Key 均由中间层保管，不暴露给官网前端</p>
       </div>
       <div class="card">
         <div class="card-icon">📦</div>
@@ -1320,15 +1323,15 @@
       </tr>
       <tr>
         <td>联系人（People）</td>
-        <td>来源渠道、WhatsApp 号码、Chatwoot Contact ID、最近会话时间、最近会话摘要、感兴趣产品、意向等级、主要沟通渠道</td>
+        <td>来源渠道、WhatsApp 号码、最近会话时间、最近会话摘要、感兴趣产品、意向等级、主要沟通渠道</td>
       </tr>
       <tr>
         <td>渠道身份（新增对象）</td>
-        <td>关联联系人、渠道类型、外部用户 ID、渠道显示名、头像、Chatwoot Inbox ID</td>
+        <td>关联联系人、渠道类型、外部用户 ID、渠道显示名、头像、conv contact ID</td>
       </tr>
       <tr>
         <td>会话索引（新增对象）</td>
-        <td>关联联系人、渠道类型、Chatwoot Conversation ID、会话状态、负责人、最后消息时间、摘要、完整会话 URL</td>
+        <td>关联联系人、渠道类型、conv conversation ID、会话状态、负责人、最后消息时间、摘要、完整会话上下文</td>
       </tr>
       <tr>
         <td>商机（Opportunities）</td>
@@ -1352,18 +1355,18 @@
       </tr>
       <tr>
         <td>公网部署是前提</td>
-        <td>当前 CRM 运行在本地 localhost，官网、Chatwoot webhook、多渠道接入均无法连接</td>
+        <td>公网服务或隧道不稳定时，官网 webhook、Meta webhook、多渠道接入可能无法稳定回调</td>
         <td>优先完成公网服务器部署，这是所有后续工作的硬前提</td>
       </tr>
       <tr>
         <td>LinkedIn 接入不稳定</td>
-        <td>LinkedIn 私信 API 限制较多，不是 Chatwoot 的稳定原生渠道</td>
+        <td>LinkedIn 私信 API 限制较多，个人账号无稳定官方接入路径</td>
         <td>单独做技术可行性验证，不作为一期 block 项；先用手动记录过渡</td>
       </tr>
       <tr>
         <td>WhatsApp 规则限制</td>
-        <td>WhatsApp Business API 有 24 小时客服窗口规则，超时需使用消息模板</td>
-        <td>使用官方 Business API，不走个人号灰色方案；提前了解模板审核流程</td>
+        <td>个人 WhatsApp Web 接入存在风控不确定性，频繁主动发送容易触发限制</td>
+        <td>以被动收发和人工接管为主；AI 自动回复默认谨慎开启并限频</td>
       </tr>
       <tr>
         <td>webhook 重复写入</td>
@@ -1383,12 +1386,12 @@
       <tr>
         <td>CRM 数据膨胀</td>
         <td>如果把完整聊天记录和附件全量存入 Twenty，会拖慢系统</td>
-        <td>CRM 只存摘要、标签和 Chatwoot 会话链接；完整记录保留在 Chatwoot</td>
+        <td>完整消息与附件元数据沉淀在 conv 数据库 / 上传目录；Twenty 只保留线索、客户和项目主数据</td>
       </tr>
     </table>
 
     <div class="warn-box">
-      <strong>重要原则</strong>：Chatwoot 直接裸写 Twenty 不可取。所有外部数据必须经过中间层写入 CRM，中间层是稳定性的唯一保障。
+      <strong>重要原则</strong>：外部渠道不要直接裸写 Twenty。所有渠道消息必须经过自研中间层；官网表单即使直接写 Opportunity，也必须通过数据库触发器和字段规则做来源、阶段兜底。
     </div>
   </div>
 

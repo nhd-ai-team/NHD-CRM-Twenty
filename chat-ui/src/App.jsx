@@ -187,7 +187,6 @@ export default function App() {
         selected={selected}
         inline={isWide}
         open={contactOpen}
-        onClose={() => setContactOpen(false)}
       />
     </div>
   )

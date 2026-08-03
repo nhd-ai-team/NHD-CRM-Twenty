@@ -324,7 +324,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
             <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
             <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
-            <tr><td><strong>主线决策</strong></td><td>不使用 Chatwoot（个人账号无法接入）；自研对话中间层 + Evolution API / Meta Graph API 直连渠道；Twenty CRM 为唯一销售工作台</td></tr>
+            <tr><td><strong>主线决策</strong></td><td>不使用 Chatwoot；自研对话中间层 + WAHA / Meta Graph API 直连渠道；Twenty CRM 为唯一销售工作台</td></tr>
           </tbody>
         </table>
       </div>
@@ -495,7 +495,7 @@ td.muted{color:var(--text-tertiary);}
             <div class="arch-group-label">渠道连接层 · Channel Adapter</div>
             <div class="arch-items">
               <div class="arch-box">Website Channel Adapter（WebSocket）</div>
-              <div class="arch-box">Social Channel Connector（Evolution API / Meta Graph API）</div>
+              <div class="arch-box">Social Channel Connector（WAHA / Meta Graph API）</div>
               <div class="arch-box">IMAP/SMTP（邮件）</div>
               <div class="arch-box">表单 API（供应商已接入）</div>
             </div>
@@ -829,9 +829,9 @@ td.muted{color:var(--text-tertiary);}
               <tr>
                 <td><strong>WhatsApp</strong></td>
                 <td>个人号</td>
-                <td>Evolution API（开源自托管，Baileys 协议）</td>
-                <td><span class="badge badge-done">✓ 核心必达</span></td>
-                <td>有历史记录的老号（建议 6 个月以上）；本地测试可先用临时 cloudflared URL，无需购买域名</td>
+                <td>WAHA / WhatsApp Web（自托管，扫码或手机号配对）</td>
+                <td><span class="badge badge-done">✓ 已接入测试</span></td>
+                <td>个人号稳定性需持续观察；绑定入口在设置 → 账户 → 渠道</td>
               </tr>
               <tr>
                 <td><strong>官网客服 Widget</strong></td>
@@ -842,17 +842,17 @@ td.muted{color:var(--text-tertiary);}
               </tr>
               <tr>
                 <td><strong>Instagram</strong></td>
-                <td>个人号（需切专业账号）</td>
+                <td>企业资产 / 专业账号</td>
                 <td>Meta Graph API，Webhook 接收 DM</td>
-                <td><span class="badge badge-wip">目标 7.31</span></td>
-                <td>账号切换为专业账号（设置内免费操作，可逆）</td>
+                <td><span class="badge badge-wip">待办</span></td>
+                <td>确认 Instagram 专业账号、Facebook Page、Meta App 权限和 Webhook 配置</td>
               </tr>
               <tr>
                 <td><strong>Facebook</strong></td>
-                <td>个人号（需主页）</td>
+                <td>企业资产 / Facebook Page</td>
                 <td>Meta Graph API，Webhook 接收主页消息</td>
-                <td><span class="badge badge-wip">目标 7.31</span></td>
-                <td>创建 Facebook 主页，申请 Messenger 权限</td>
+                <td><span class="badge badge-wip">待办</span></td>
+                <td>确认 Facebook Page、Meta App 权限和 Webhook 配置</td>
               </tr>
               <tr>
                 <td><strong>邮件</strong></td>
@@ -864,9 +864,9 @@ td.muted{color:var(--text-tertiary);}
               <tr>
                 <td><strong>官网询盘表单</strong></td>
                 <td>—</td>
-                <td>供应商负责接入，留资数据通过 API 写入 CRM</td>
-                <td><span class="badge badge-wip">测试中</span></td>
-                <td>供应商完成表单接入开发并通过测试</td>
+                <td>官网表单直接写入 Opportunity；数据库兜底补客户来源和未处理线索阶段</td>
+                <td><span class="badge badge-done">✓ 已支持</span></td>
+                <td>官网侧字段继续和 CRM 字段映射对齐</td>
               </tr>
               <tr>
                 <td><strong>LinkedIn</strong></td>
@@ -899,7 +899,7 @@ td.muted{color:var(--text-tertiary);}
 
       <div class="sub">
         <div class="sub-title">WhatsApp 本地测试说明</div>
-        <div class="callout note"><strong>WhatsApp 可先于域名购买前测试：</strong>Evolution API 通过 Webhook 接收消息；本地测试阶段可使用现有 cloudflared 临时 URL 作为 Webhook 地址，无需购买固定域名。域名购买后将临时 URL 替换为固定域名即可，无需重新配置逻辑。官网 Widget 和 Meta Graph API 才需要稳定域名。</div>
+        <div class="callout note"><strong>WhatsApp 当前接入方式：</strong>使用 WAHA / WhatsApp Web 自托管服务，支持二维码和手机号配对码绑定。个人号接入存在平台风控不确定性，v1.0 以低频、被动收发和人工接管为主。</div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>风险</th><th>说明</th><th>规避策略</th></tr></thead>
@@ -1052,44 +1052,44 @@ td.muted{color:var(--text-tertiary);}
         <h2 class="section-title">分阶段交付计划<span class="section-title-en">Delivery Phases</span></h2>
       </div>
 
-      <div class="callout red" style="margin-bottom:20px;"><strong>主线策略：</strong>WhatsApp（临时 URL 即可）→ 中间层 → AI 层，三个阶段串行推进、不依赖域名；域名购买与之并行，域名到位后官网 Widget 和 Meta 渠道再上。这样即使域名延迟，核心链路照样先跑通。</div>
+      <div class="callout red" style="margin-bottom:20px;"><strong>当前策略：</strong>先保证 CRM 主链路稳定：官网表单直接进线索、官网客服 / WhatsApp 进入对话工作台、销售可接管回复并转线索；Instagram / Facebook 企业号接入暂存待办，待 Meta 账号和权限确认后继续。</div>
 
       <div class="phases">
         <div class="phase-row" style="border-top:1px solid var(--border-subtle);">
           <div class="phase-label">Phase 1</div>
           <div>
             <div class="phase-title">WhatsApp 端到端跑通</div>
-            <div class="phase-desc">Evolution API Docker 部署，用现有 cloudflared 临时 URL 配置 Webhook，老号扫码绑定，完成消息收发端到端验证。<strong>当前可立即开始，不依赖域名。</strong></div>
+            <div class="phase-desc">WAHA / WhatsApp Web 接入已纳入设置 → 账户 → 渠道，支持二维码和手机号配对码；消息可进入对话工作台，附件发送已支持 WhatsApp。</div>
           </div>
-          <div><span class="badge badge-todo">立即可做</span></div>
-          <div class="phase-dep">需准备老号</div>
+          <div><span class="badge badge-done">✓ 已支持</span></div>
+          <div class="phase-dep">个人号稳定性仍需观察</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 2</div>
           <div>
             <div class="phase-title">对话服务中间层核心</div>
-            <div class="phase-desc">conv DB schema、统一消息模型、会话状态机（进行中 / 接管 / 关闭）、人工接管逻辑、SSE 实时推送；对话工作台接真实 API 替换 mock 数据（先只挂 WhatsApp 渠道）。这是全渠道和 AI 的公共底座。</div>
+            <div class="phase-desc">conv DB schema、统一消息模型、会话状态机、人工接管 / AI 托管确认、SSE 实时推送、对话工作台真实 API 已落地；官网客服、WhatsApp、邮件沉淀共用该底座。</div>
           </div>
-          <div><span class="badge badge-todo">等 Phase 1</span></div>
-          <div class="phase-dep">依赖 Phase 1 链路</div>
+          <div><span class="badge badge-done">✓ 已支持</span></div>
+          <div class="phase-dep">后续增强搜索和对话历史</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 3</div>
           <div>
             <div class="phase-title">AI 智能客服层</div>
-            <div class="phase-desc">OpenRouter（Claude）接入、意图 / 优先级分类、知识库 RAG、渠道级 AI 模式（关闭 / 建议 / 自动）与时段策略引擎。WhatsApp 先以「建议模式」上线验证质量，再逐步放开自动回复。</div>
+            <div class="phase-desc">当前代码已接入 ai-service，v1.0 只保留渠道级自动回复开关；官网客服可自动回复，人工接管后停止。知识库范围、话术、时段策略后续放入设置页。</div>
           </div>
-          <div><span class="badge badge-todo">等 Phase 2</span></div>
-          <div class="phase-dep">依赖中间层</div>
+          <div><span class="badge badge-done">✓ 部分支持</span></div>
+          <div class="phase-dep">复杂 AI 策略待补</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 4</div>
           <div>
-            <div class="phase-title">管理后台</div>
-            <div class="phase-desc">渠道账号状态、WhatsApp 扫码绑定、AI 渠道开关 / 时段策略 / 兜底话术配置 UI。</div>
+            <div class="phase-title">设置入口与渠道绑定</div>
+            <div class="phase-desc">Twenty 原生设置入口已挪到主菜单底部；设置 → 账户 → 渠道 已新增 WhatsApp 绑定页。AI 配置当前在工作台提供渠道级开关，复杂配置后续进入设置页。</div>
           </div>
-          <div><span class="badge badge-todo">等 Phase 3</span></div>
-          <div class="phase-dep">依赖 Phase 3</div>
+          <div><span class="badge badge-done">✓ 部分支持</span></div>
+          <div class="phase-dep">Instagram / Facebook 待补</div>
         </div>
         <div class="phase-row">
           <div class="phase-label">Phase 5</div>
@@ -1106,7 +1106,7 @@ td.muted{color:var(--text-tertiary);}
             <div class="phase-title">Instagram + Facebook 接入</div>
             <div class="phase-desc">Meta Graph API Webhook 接入 Instagram DM 和 Facebook 主页消息，复用中间层与 AI 层，AI 渠道开关同样生效，对话工作台新增渠道 Tab。</div>
           </div>
-          <div><span class="badge badge-wip">目标 7.31</span></div>
+          <div><span class="badge badge-wip">待账号权限确认</span></div>
           <div class="phase-dep">依赖域名 + Meta 权限</div>
         </div>
         <div class="phase-row">
@@ -1126,13 +1126,11 @@ td.muted{color:var(--text-tertiary);}
           <table>
             <thead><tr><th>#</th><th>待确认项</th><th>影响范围</th><th>状态</th></tr></thead>
             <tbody>
-              <tr><td>1</td><td>准备 WhatsApp 老号（6 个月以上历史记录）</td><td>Phase 1 测试</td><td><span class="badge badge-block">待准备</span></td></tr>
-              <tr><td>2</td><td>购买域名并托管至 Cloudflare DNS</td><td>官网 Widget、Meta API、正式上线</td><td><span class="badge badge-block">待购买</span></td></tr>
-              <tr><td>3</td><td>Instagram 账号切换为专业账号</td><td>Phase 5</td><td><span class="badge badge-todo">待操作</span></td></tr>
-              <tr><td>4</td><td>Facebook 主页确认 / 创建，申请 Messenger 权限</td><td>Phase 5</td><td><span class="badge badge-todo">待确认</span></td></tr>
-              <tr><td>5</td><td>CRM 自定义字段内容与用户端对齐</td><td>Phase 2 配置</td><td><span class="badge badge-later">暂不急</span></td></tr>
-              <tr><td>6</td><td>官网询盘表单接入（供应商负责）</td><td>已自动创建 People 记录；4 个字段待销售手动维护规范确认</td><td><span class="badge badge-done">✓ 已支持</span></td></tr>
-              <tr><td>7</td><td>Twenty Workflows 付费方案确认</td><td>自动化功能是否使用 Twenty 原生能力</td><td><span class="badge badge-todo">待评估</span></td></tr>
+              <tr><td>1</td><td>WhatsApp 个人号长期稳定性观察</td><td>渠道可用性</td><td><span class="badge badge-todo">持续观察</span></td></tr>
+              <tr><td>2</td><td>Instagram / Facebook 企业资产、主页、权限确认</td><td>Meta 渠道接入</td><td><span class="badge badge-todo">待确认</span></td></tr>
+              <tr><td>3</td><td>官网表单字段与 CRM 字段最终确认</td><td>官网表单直写线索</td><td><span class="badge badge-done">✓ 已有默认规则</span></td></tr>
+              <tr><td>4</td><td>对话历史模块</td><td>Boss 查看全量聊天记录</td><td><span class="badge badge-later">待开发</span></td></tr>
+              <tr><td>5</td><td>AI 复杂配置页</td><td>话术、知识库范围、时段策略</td><td><span class="badge badge-later">待开发</span></td></tr>
             </tbody>
           </table>
         </div>
@@ -1149,7 +1147,7 @@ td.muted{color:var(--text-tertiary);}
         <table>
           <thead><tr><th>风险</th><th>说明</th><th>处理策略</th></tr></thead>
           <tbody>
-            <tr><td><strong>WhatsApp 个人号封号</strong></td><td>非官方协议（Baileys），高频主动发送或新号易触发风控</td><td>用 6 个月以上老号；默认「建议模式」；自动回复限频、以被动接收为主</td></tr>
+            <tr><td><strong>WhatsApp 个人号封号</strong></td><td>个人号通过 Web 协议接入，频繁主动发送或新号易触发风控</td><td>以被动收发和人工接管为主；AI 自动回复默认谨慎开启并限频</td></tr>
             <tr><td><strong>渠道 API 限制</strong></td><td>Meta 平台有审核、账号权限、Webhook 校验等限制</td><td>不承诺全渠道一次性上线，Instagram / Facebook 放 Phase 6</td></tr>
             <tr><td><strong>AI 误发消息</strong></td><td>事件重复、状态不同步可能导致人工接管后 AI 仍回复</td><td>会话级回复模式状态机、幂等去重、接管优先原则</td></tr>
             <tr><td><strong>客户跨平台身份重复</strong></td><td>同一客户可能来自多个渠道</td><td>v1.0 按渠道独立 Contact，身份合并后续再做</td></tr>
@@ -1177,8 +1175,8 @@ td.muted{color:var(--text-tertiary);}
             <tr><td><strong>多坐席复杂排班</strong></td><td>当前团队规模不需要，后续视情况扩展</td></tr>
             <tr><td><strong>跨渠道客户身份自动合并</strong></td><td>同一客户在多平台的身份合并逻辑复杂，P0 按渠道独立处理</td></tr>
             <tr><td><strong>完整工单系统</strong></td><td>非当前核心诉求</td></tr>
-            <tr><td><strong>AI 商机阶段判断 / AI 销售助手</strong></td><td>v1.0 不做此类衍生 AI 功能；PRD 中 AI 能力仅保留「AI 智能客服」（渠道级建议 / 自动回复）与 Twenty CRM 原生 AI 能力（如接入 OpenRouter 后的对话能力）</td></tr>
-            <tr><td><strong>WhatsApp 个人号默认 AI 自动发送</strong></td><td>个人号 AI 高频自动发送有封号风险，WhatsApp 默认为「建议模式」，自动回复由管理员按需开启并限频</td></tr>
+            <tr><td><strong>AI 商机阶段判断 / AI 销售助手</strong></td><td>v1.0 不做此类衍生 AI 功能；AI 能力仅保留官网客服自动回复和渠道级自动回复开关</td></tr>
+            <tr><td><strong>AI suggestion / 建议模式</strong></td><td>当前代码不保留 AI 起草建议模式，只有自动回复开启 / 关闭两种状态</td></tr>
           </tbody>
         </table>
       </div>
