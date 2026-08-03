@@ -320,7 +320,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td style="width:180px;"><strong>产品阶段</strong></td><td>多渠道 AI 智能 CRM v1.0（MVP）</td></tr>
             <tr><td><strong>版本定位</strong></td><td>多渠道对话中间层 + AI 智能客服能力层 + Twenty CRM 销售闭环</td></tr>
             <tr><td><strong>创建日期</strong></td><td>2026-07-15</td></tr>
-            <tr><td><strong>最后更新</strong></td><td>2026-07-31：补充当前 CRM 数据模型、编码规则、三表关联同步与字段映射；转客户按钮暂不进入前端。</td></tr>
+            <tr><td><strong>最后更新</strong></td><td>2026-08-03：按当前代码更新官网表单直写线索、线索转客户、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
             <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
             <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
             <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
@@ -378,7 +378,7 @@ td.muted{color:var(--text-tertiary);}
           <tbody>
             <tr><td><strong>客户从哪里来</strong></td><td>WhatsApp、Instagram、Facebook、LinkedIn、官网、邮件</td></tr>
             <tr><td><strong>多渠道消息如何统一承接</strong></td><td>自研对话中间层统一会话模型，所有渠道消息标准化为同一种会话事件</td></tr>
-            <tr><td><strong>AI 如何跨渠道介入</strong></td><td>AI 智能客服作为中间层订阅者，按渠道级 AI 模式（关闭 / 建议 / 自动）+ 时段策略介入</td></tr>
+            <tr><td><strong>AI 如何跨渠道介入</strong></td><td>AI 智能客服作为中间层订阅者，v1.0 只保留渠道级「是否自动回复」开关；复杂话术、问题类型与知识库策略后续放入设置页</td></tr>
             <tr><td><strong>人工如何随时接管</strong></td><td>销售在 CRM 内嵌对话工作台一键接管，接管后 AI 立即停止自动回复</td></tr>
             <tr><td><strong>销售如何形成闭环</strong></td><td>Twenty CRM 承载客户、联系人、公司、商机、任务；会话一键转线索</td></tr>
           </tbody>
@@ -427,31 +427,30 @@ td.muted{color:var(--text-tertiary);}
           <li>Instagram DM 消息可在 CRM 收发</li>
           <li>Facebook Messenger 消息可在 CRM 收发</li>
           <li>邮件归档正常，客户邮件同步显示在联系人时间线</li>
-          <li>官网询盘表单留资自动创建 CRM 联系人（People）记录（供应商已完成接入）；来源渠道、意向等级、所属国家、感兴趣产品等字段需销售手动维护</li>
+          <li>官网询盘表单留资直接创建 CRM 线索（Opportunities）记录；创建时自动补客户来源=官网表单、任务进度=未处理线索（XIANSUO）</li>
           <li>各渠道消息显示渠道来源标识，可按渠道筛选</li>
         </ul>
 
         <div class="sub-title-sm">② CRM 工作台体验</div>
         <ul class="plainlist">
           <li>销售全部操作（查看对话、回复、接管、客户管理、商机跟进）均可在 CRM 内完成</li>
-          <li>对话工作台支持按渠道、状态、关键词搜索</li>
-          <li>消息支持发送与展示文字、图片、链接</li>
+          <li>对话工作台支持按渠道与状态筛选，关键词搜索保留为后续增强项</li>
+          <li>消息支持发送与展示文字、图片、文件附件；当前附件发送优先支持 WhatsApp 渠道</li>
           <li>实时推送：新消息自动出现，无需手动刷新</li>
         </ul>
 
         <div class="sub-title-sm">③ 客户数据沉淀</div>
         <ul class="plainlist">
-          <li>会话可关联到 CRM 联系人 / 公司 / 商机</li>
-          <li>一键「转为线索」自动在 CRM 创建联系人和商机</li>
-          <li>客户最近会话时间、摘要自动写入联系人档案</li>
+          <li>会话可通过右侧资料面板写入或更新 CRM 线索（Opportunity），公司可搜索库内公司，不存在时支持新建</li>
+          <li>线索表支持勾选记录后点击「转客户」，二次确认后同步 / 新建 People；未填写「客户需求产品」时阻断并提示原因</li>
+          <li>线索、客户、项目通过 syncGroupCode 建立隐藏业务关联，并按字段映射双向同步共享字段</li>
         </ul>
 
         <div class="sub-title-sm">④ AI 智能客服（全渠道 · 可配置）</div>
         <ul class="plainlist">
-          <li>AI 智能客服作为中间层接入所有渠道（WhatsApp / Instagram / Facebook / 官网 Widget）LinkedIn暂不在第一阶段（7.31）上线</li><li>每个渠道可独立配置 AI 模式：关闭 / 建议（AI 起草，人工确认发送）/ 自动回复</li>
-          <li>支持按时间段自动开启 AI（如下班时间、周末自动接管）</li>
-          <li>低 / 中优先级问题 AI 自动识别并回复；高优先级自动流转人工，AI 停止介入</li>
-          <li>人工接管后 AI 停止对该会话自动回复</li>
+          <li>AI 智能客服接入官网客服链路；其他渠道具备中间层接入基础，按渠道开关控制是否自动回复</li>
+          <li>v1.0 AI 状态仅保留两类：自动回复开启 / 自动回复关闭；不保留 AI suggestion / 建议模式</li>
+          <li>人工接管前必须点击「接管会话」并二次确认；接管后 AI 停止对该会话自动回复</li>
           <li>所有 AI 回复记录可在 CRM 查看和审计</li>
         </ul>
 
@@ -459,7 +458,7 @@ td.muted{color:var(--text-tertiary);}
         <ul class="plainlist">
           <li>管理员可在后台查看各渠道账号连接状态</li>
           <li>角色权限分级（老板 / 管理员 / 销售主管 / 销售）</li>
-          <li>管理员可配置 AI 开关、服务时间、兜底话术</li>
+          <li>管理员可配置渠道绑定和渠道级 AI 自动回复开关；复杂 AI 配置后续进入设置页</li>
         </ul>
       </div>
 
@@ -653,8 +652,8 @@ td.muted{color:var(--text-tertiary);}
 
       <div class="sub">
         <div class="sub-title">关联与数据打通</div>
-        <p>联系人 ↔ 公司 ↔ 商机 ↔ 项目 ↔ 任务支持关联。邮件归档（Gmail / Outlook / IMAP）同步后，客户邮件自动显示在联系人时间线。对话工作台的会话可关联到 CRM 联系人和商机，形成完整客户档案。官网询盘表单留资（供应商已完成接入）自动创建 CRM 联系人（People）记录；来源渠道、意向等级、所属国家、感兴趣产品等 4 个字段暂需销售手动录入维护。</p>
-        <div class="callout note"><strong>当前状态（2026-07-31）：</strong>前端「线索转客户」按钮已撤销，暂不在表格视图或阶段视图展示。底层编码、关联字段与三表同步能力保留，作为后续自动化流转的基础设施。</div>
+        <p>联系人 ↔ 公司 ↔ 商机 / 线索 ↔ 项目 ↔ 任务支持关联。邮件归档（IMAP）同步后，客户邮件自动沉淀到邮件 / 会话视图。对话工作台的会话可通过右侧资料面板写入或更新线索，线索再通过「转客户」按钮进入 People。官网询盘表单由官网侧直接写入 Opportunity；系统在创建时自动补齐客户来源=官网表单、任务进度=未处理线索（XIANSUO）。</p>
+        <div class="callout note"><strong>当前状态（2026-08-03）：</strong>线索表顶部已提供「转客户」按钮（位于 New Opportunity 左侧），仅在勾选线索后执行；执行前有二次确认，失败时只保留弹窗并展示明确失败原因。底层编码、关联字段与三表同步能力已保留并持续生效。</div>
       </div>
 
       <div class="sub">
@@ -697,7 +696,7 @@ td.muted{color:var(--text-tertiary);}
             </tbody>
           </table>
         </div>
-        <div class="callout red"><strong>注意：</strong>当前只保留底层同步能力；「点击按钮从线索转客户」前端入口已撤销。后续如恢复该入口，应优先在 Twenty 原生 React 表格组件中实现，不再使用页面注入方式。</div>
+        <div class="callout red"><strong>注意：</strong>当前「转客户」按钮通过前端注入放入 Twenty 原生线索表顶部工具栏。按钮只作为 v1.0 MVP 入口；后续如深度产品化，应迁移到 Twenty 原生 React 组件，避免 DOM 注入受 Twenty 升级影响。</div>
       </div>
 
       <div class="sub">
@@ -775,6 +774,17 @@ td.muted{color:var(--text-tertiary);}
             <tbody>
               <tr><td><strong>客户来源 / keHuLaiYuan</strong></td><td>官网表单、官网客服、WhatsApp、ins、Facebook</td><td>线索表与客户表保持一致，枚举值分别为 GUAN_WANG_BIAO_DAN、GUAN_WANG_KE_FU、WHATSAPP、INS、FACEBOOK</td></tr>
               <tr><td><strong>公司类型 / 客户类型 / keHuLeiXing</strong></td><td>线索：中间商、业主、EPC、技术咨询；客户：中间商、业主、EPC、技术咨询、工厂</td><td>共享选项可双向同步；客户表额外「工厂」暂不反向写入线索</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="sub-title-sm">官网表单直写线索规则</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>场景</th><th>客户来源</th><th>任务进度 / stage</th><th>保护规则</th></tr></thead>
+            <tbody>
+              <tr><td>官网表单通过 API 创建线索且未传客户来源</td><td>自动补 GUAN_WANG_BIAO_DAN（官网表单）</td><td>自动设为 XIANSUO（未处理线索）</td><td>数据库触发器兜底，避免官网侧漏传字段</td></tr>
+              <tr><td>API 已明确传入 WhatsApp / Facebook / 官网客服等来源</td><td>保留原来源</td><td>保留原阶段，官网表单除外</td><td>不覆盖已明确渠道来源</td></tr>
+              <tr><td>人工新建或 Excel 导入</td><td>不自动补官网表单</td><td>沿用 Twenty 默认 XIANSUO 或导入值</td><td>避免把人工线索误判为官网表单</td></tr>
             </tbody>
           </table>
         </div>
@@ -910,7 +920,7 @@ td.muted{color:var(--text-tertiary);}
         <h2 class="section-title">对话工作台功能规格<span class="section-title-en">Conversation Workspace</span></h2>
       </div>
 
-      <p>对话工作台嵌入 Twenty CRM 侧边栏，以独立 React 应用运行于 <code>/chat/</code> 路径，与 CRM 同源，主题跟随 Twenty 深色 / 浅色自动切换。整体为三栏布局：左侧对话列表 · 中间聊天窗口 · 右侧固定 AI 助手 + 联系人信息面板。</p>
+      <p>对话工作台嵌入 Twenty CRM 侧边栏，以独立 React 应用运行于 <code>/chat/</code> 路径，与 CRM 同源，主题跟随 Twenty 深色 / 浅色自动切换。整体为三栏布局：左侧对话列表 · 中间聊天窗口 · 右侧固定资料表单；顶部渠道 Tab 固定平铺展示。</p>
 
       <div class="sub" style="margin-top:20px;">
         <div class="sub-title">8.1 对话列表（左栏）</div>
@@ -918,10 +928,10 @@ td.muted{color:var(--text-tertiary);}
           <table>
             <thead><tr><th>功能点</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td><strong>多渠道统一展示</strong></td><td>WhatsApp、Instagram、Facebook、官网客服、LinkedIn均在同一列表，以渠道图标区分</td></tr>
-              <tr><td><strong>按渠道筛选</strong></td><td>Tab 切换：全部 / WhatsApp / Instagram / Facebook / 官网</td></tr>
-              <tr><td><strong>按状态筛选</strong></td><td>进行中 / 未读 / 人工接管 / 已关闭</td></tr>
-              <tr><td><strong>关键词搜索</strong></td><td>按联系人姓名、电话号码、最后消息内容搜索</td></tr>
+              <tr><td><strong>多渠道统一展示</strong></td><td>WhatsApp、官网客服、Instagram、Facebook 在同一工作台展示；LinkedIn 暂不纳入 v1.0</td></tr>
+              <tr><td><strong>按渠道筛选</strong></td><td>顶部 Tab 平铺：全部 / WhatsApp / 官网 / Instagram / Facebook</td></tr>
+              <tr><td><strong>按状态筛选</strong></td><td>全部 / 未读 / 进行中 / 人工接管；已关闭入口当前隐藏</td></tr>
+              <tr><td><strong>关键词搜索</strong></td><td>保留输入框，v1.0 主要用于基础联系人、消息、号码检索；高级筛选作为后续待办</td></tr>
               <tr><td><strong>实时更新</strong></td><td>新消息通过 SSE 推送，自动出现在列表顶部，未读角标实时更新</td></tr>
               <tr><td><strong>会话卡片</strong></td><td>联系人头像、姓名、渠道图标、最后消息预览、时间戳、未读数</td></tr>
             </tbody>
@@ -937,11 +947,11 @@ td.muted{color:var(--text-tertiary);}
             <tbody>
               <tr><td><strong>消息时间线</strong></td><td>气泡样式区分：客户消息（左）/ 销售回复（右，品牌色）/ AI 回复（右，浅色标注）/ 系统消息（居中灰色）</td></tr>
               <tr><td><strong>发送文字</strong></td><td>Enter 发送，Shift + Enter 换行，支持中英文输入法</td></tr>
-              <tr><td><strong>发送图片</strong></td><td>上传本地图片，发送前预览，支持粘贴截图</td></tr>
-              <tr><td><strong>发送链接</strong></td><td>链接自动识别并展示预览卡片</td></tr>
-              <tr><td><strong>消息内搜索</strong></td><td>在当前会话内按关键词搜索历史消息，高亮定位结果</td></tr>
-              <tr><td><strong>接管 / 释放接管</strong></td><td>一键切换人工接管状态，接管后 AI 停止自动回复</td></tr>
-              <tr><td><strong>结束会话</strong></td><td>标记会话为已关闭，不再触发 AI 回复</td></tr>
+              <tr><td><strong>发送附件</strong></td><td>支持选择本地文件发送；当前 WhatsApp 渠道可发送附件，其他渠道按接口能力逐步补齐</td></tr>
+              <tr><td><strong>发送链接</strong></td><td>链接作为文本消息发送，富预览作为后续增强项</td></tr>
+              <tr><td><strong>消息内搜索</strong></td><td>暂不作为 v1.0 必交付；后续在对话历史模块统一设计</td></tr>
+              <tr><td><strong>接管 / AI 托管</strong></td><td>接管和恢复 AI 托管均需二次确认；接管后销售才能回复，AI 停止自动回复</td></tr>
+              <tr><td><strong>结束会话</strong></td><td>当前保留为操作按钮，后续根据销售流程决定是否继续展示</td></tr>
               <tr><td><strong>操作日志</strong></td><td>接管、释放、关闭等操作显示在时间线中，可追溯</td></tr>
             </tbody>
           </table>
@@ -949,14 +959,14 @@ td.muted{color:var(--text-tertiary);}
       </div>
 
       <div class="sub">
-        <div class="sub-title">8.3 右侧面板（固定展示）</div>
-        <p>右侧面板<strong>固定显示在对话工作台右侧</strong>，包含 AI 助手和联系人信息两组内容，通过 Tab 切换。</p>
+        <div class="sub-title">8.3 右侧资料表单（固定展示）</div>
+        <p>右侧表单<strong>固定显示在对话工作台右侧</strong>，用于沉淀客户信息并写入线索。姓名和公司均非必填；填写 WhatsApp 或邮箱任意一个时，线索阶段自动变为有效线索，但官网表单来源例外，始终保持未处理线索。</p>
         <div class="table-wrap">
           <table>
             <thead><tr><th>Tab</th><th>内容</th><th>阶段</th></tr></thead>
             <tbody>
-              <tr><td><strong>资料</strong></td><td>联系人姓名、渠道来源、公司、时区、意向等级、最近会话摘要；关联 CRM 客户 / 商机 / 任务；「转为线索」一键创建 CRM 记录</td><td>v1.0</td></tr>
-              <tr><td><strong>话术</strong></td><td>预设话术库，销售可点击插入输入框（静态版本）</td><td>v1.0</td></tr>
+              <tr><td><strong>资料</strong></td><td>姓名、公司、WhatsApp、邮箱、国家、客户来源、公司类型、线索阶段、客户需求产品、备注；点击「更新线索」写入 Opportunity</td><td>v1.0</td></tr>
+              <tr><td><strong>话术</strong></td><td>保留 Tab 入口，具体话术库后续在设置中的 AI 配置统一维护</td><td>后续</td></tr>
             </tbody>
           </table>
         </div>
@@ -971,15 +981,14 @@ td.muted{color:var(--text-tertiary);}
       </div>
 
       <div class="sub">
-        <div class="sub-title">9.1 AI 智能客服（全渠道中间层 · v1.0 上线）</div>
-        <div class="callout note"><strong>定位：</strong>AI 智能客服是一个<strong>中间层服务</strong>——一边通过渠道连接层接入 WhatsApp、Instagram、Facebook、LinkedIn、官网 Widget 等全部渠道，一边对接 CRM（会话、联系人、商机）。每个渠道可独立配置 AI 模式，且支持按时间段自动开启（如下班后 / 周末自动接管）。</div>
+        <div class="sub-title">9.1 AI 智能客服（渠道级自动回复 · v1.0）</div>
+        <div class="callout note"><strong>定位：</strong>AI 智能客服是一个<strong>中间层服务</strong>。v1.0 在对话工作台只暴露最小配置：每个渠道是否允许 AI 自动回复。复杂策略（话术、允许回答的问题类型、知识库范围、时段策略）后续统一放在设置中的 AI 配置页，不放在工作台里。</div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>AI 模式</th><th>行为</th><th>建议适用渠道</th></tr></thead>
+            <thead><tr><th>AI 状态</th><th>行为</th><th>当前说明</th></tr></thead>
             <tbody>
-              <tr><td><strong>关闭</strong></td><td>纯人工回复，AI 不介入</td><td>任意渠道</td></tr>
-              <tr><td><strong>建议模式</strong></td><td>AI 起草回复放入输入框，销售确认后手动发送</td><td>WhatsApp 个人号（降低封号风险）、重点客户会话</td></tr>
-              <tr><td><strong>自动回复</strong></td><td>低 / 中优先级问题 AI 直接回复，高优先级转人工</td><td>官网 Widget、非工作时段的社媒渠道</td></tr>
+              <tr><td><strong>关闭</strong></td><td>该渠道不触发 AI 自动回复，销售人工处理</td><td>任意渠道可关闭</td></tr>
+              <tr><td><strong>自动回复</strong></td><td>客户消息进入中间层后，请求 AI 服务生成并发送回复；人工接管后停止</td><td>当前主要用于官网客服链路；其他渠道按风控逐步开放</td></tr>
             </tbody>
           </table>
         </div>
@@ -987,14 +996,12 @@ td.muted{color:var(--text-tertiary);}
           <table>
             <thead><tr><th>要素</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td><strong>触发条件</strong></td><td>客户发送消息且当前会话未被人工接管，且该渠道 AI 模式为「自动回复」（含时段策略命中）</td></tr>
-              <tr><td><strong>模型</strong></td><td>OpenRouter API（Claude 模型）</td></tr>
-              <tr><td><strong>低 / 中优先级</strong></td><td>AI 自动识别意图 → 检索知识库 → 生成回复 → 通过对应渠道发送给客户</td></tr>
-              <tr><td><strong>高优先级</strong></td><td>报价、投诉、复杂定制需求等 → 标记转人工，AI 不介入，通知销售处理</td></tr>
+              <tr><td><strong>触发条件</strong></td><td>客户发送文本消息、会话未被人工接管、渠道 AI 自动回复开启、会话处于 AI 托管窗口内</td></tr>
+              <tr><td><strong>模型 / 服务</strong></td><td>通过 ai-service 调用底层模型与知识库；CRM 只负责会话、状态和审计落库</td></tr>
+              <tr><td><strong>自动回复</strong></td><td>AI 服务生成回复后，由中间层按对应渠道发送并写入 conv.messages</td></tr>
+              <tr><td><strong>无法回答</strong></td><td>AI 使用兜底话术，请客户留下具体工况、处理量、物料性质和联系方式</td></tr>
               <tr><td><strong>人工接管后</strong></td><td>AI 立即停止回复，已生成未发送的内容不得发出</td></tr>
-              <tr><td><strong>服务时间外</strong></td><td>按配置发送兜底话术，提示客户联系方式或等待时间</td></tr>
-              <tr><td><strong>无法回答时</strong></td><td>触发兜底话术，引导客户留下联系方式</td></tr>
-              <tr><td><strong>全程可审计</strong></td><td>所有 AI 回复记录时间戳、模型版本、检索命中内容，可在 CRM 查看</td></tr>
+              <tr><td><strong>全程可审计</strong></td><td>客户消息、AI 回复、人工回复均保存在 conv.messages，并在对话工作台展示</td></tr>
             </tbody>
           </table>
         </div>
@@ -1005,14 +1012,14 @@ td.muted{color:var(--text-tertiary);}
         <ul class="checklist">
           <li><span class="chk"></span>会话一旦被人工接管，AI 不再对该会话自动回复</li>
           <li><span class="chk"></span>AI 正在生成回复时发生接管，未发送的 AI 结果不得发出</li>
-          <li><span class="chk"></span>人工可手动释放接管恢复 AI；v1.0 不做自动恢复</li>
+          <li><span class="chk"></span>人工可手动点击「AI 托管」恢复 AI；接管与恢复均需要二次确认</li>
           <li><span class="chk"></span>重复事件、重复接管、重复回复必须幂等，不产生重复消息</li>
         </ul>
       </div>
 
       <div class="sub">
         <div class="sub-title">AI 配置归属原则</div>
-        <p>渠道级 AI 模式、时段策略、服务时间、兜底话术、敏感词等运行时配置，<strong>使用入口在 CRM / 管理后台可见，但能力归属、配置存储和生效逻辑属于 AI 智能客服中间层</strong>。Twenty 不负责这些配置的底层存储与运行时判断，避免与 CRM 核心能力耦合。</p>
+        <p>v1.0 工作台内只做渠道级 AI 自动回复开关。时段策略、服务时间、兜底话术、敏感词、知识库范围、允许回答的问题类型等复杂配置，<strong>后续进入 CRM 设置页的 AI 配置模块</strong>；底层生效逻辑仍属于 AI 智能客服中间层，避免与 Twenty 核心能力耦合。</p>
       </div>
 
     </section>
@@ -1024,18 +1031,16 @@ td.muted{color:var(--text-tertiary);}
         <h2 class="section-title">管理员后台<span class="section-title-en">Admin Panel</span></h2>
       </div>
 
-      <p>管理员专用页面（<code>/admin</code>），供管理员配置渠道连接和 AI 策略，不对普通销售开放。</p>
+      <p>当前不单独建设 <code>/admin</code> 管理后台，优先复用 Twenty 设置入口。设置被放入主菜单最下方；设置 → 账户 → 渠道 用于绑定个人渠道账号，当前先支持 WhatsApp。</p>
 
       <div class="table-wrap" style="margin-top:16px;">
         <table>
           <thead><tr><th>功能</th><th>说明</th></tr></thead>
           <tbody>
-            <tr><td><strong>渠道账号状态</strong></td><td>显示 WhatsApp / Instagram / Facebook /LinkedIn 账号连接状态（绿色已连接 / 红色断线）</td></tr>
-            <tr><td><strong>WhatsApp 扫码绑定</strong></td><td>断线后展示二维码，管理员用手机扫码重新绑定，页面每 5 秒自动刷新状态</td></tr>
-            <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置 AI 模式（关闭 / 建议 / 自动回复），实时生效</td></tr>
-            <tr><td><strong>AI 时段策略</strong></td><td>按时间段自动切换 AI 模式，如工作时间「建议模式」、下班后和周末自动切「自动回复」</td></tr>
-            <tr><td><strong>服务时间配置</strong></td><td>设置 AI 有效响应时段，服务时间外自动发送兜底话术</td></tr>
-            <tr><td><strong>兜底话术配置</strong></td><td>AI 无法回答时的默认回复内容，支持多语言版本</td></tr>
+            <tr><td><strong>渠道账号状态</strong></td><td>显示 WhatsApp 当前连接状态；Instagram / Facebook 暂存为待办</td></tr>
+            <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码绑定和手机号配对码；用于个人 WhatsApp 接入测试</td></tr>
+            <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置是否允许 AI 自动回复，实时生效</td></tr>
+            <tr><td><strong>复杂 AI 配置</strong></td><td>时段策略、兜底话术、知识库范围、允许回答的问题类型后续在设置页补齐</td></tr>
           </tbody>
         </table><br></div>
     </section>
