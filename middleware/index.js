@@ -50,6 +50,20 @@ const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 6
 const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
 const UPLOAD_DIR = process.env.CONVERSATION_UPLOAD_DIR || '/app/uploads/conversation-files';
 const MAX_UPLOAD_BYTES = Math.max(1, Number(process.env.CONVERSATION_MAX_UPLOAD_MB || 25)) * 1024 * 1024;
+const ALLOWED_UPLOAD_EXTENSIONS = new Set([
+  '.pdf',
+  '.doc', '.docx',
+  '.ppt', '.pptx',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.heif',
+]);
+const ALLOWED_UPLOAD_MIME_PREFIXES = ['image/'];
+const ALLOWED_UPLOAD_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let workspaceSchemaCache = null;
 
@@ -106,6 +120,65 @@ function fileMessageType(file = {}) {
   if (mime.startsWith('video/')) return 'video';
   if (mime.startsWith('audio/')) return 'audio';
   return 'file';
+}
+
+function extensionFromName(name = '') {
+  return path.extname(String(name || '').trim()).toLowerCase();
+}
+
+function fileTypeFromName(name = '', fallback = 'file') {
+  const ext = extensionFromName(name).replace('.', '');
+  return ext || fallback;
+}
+
+function uploadFileAllowed(file = {}) {
+  const title = fileTitle(file);
+  const ext = extensionFromName(title);
+  const mime = String(file.mimetype || '').toLowerCase();
+  if (ALLOWED_UPLOAD_EXTENSIONS.has(ext)) return true;
+  if (ALLOWED_UPLOAD_MIME_PREFIXES.some(prefix => mime.startsWith(prefix))) return true;
+  return ALLOWED_UPLOAD_MIME_TYPES.has(mime);
+}
+
+function deleteUploadedFileBestEffort(file = {}) {
+  if (!file.path) return;
+  fs.unlink(file.path, () => {});
+}
+
+function attachmentFromUploadedFile(req, file, content = '') {
+  const title = fileTitle(file);
+  const messageType = fileMessageType(file);
+  return {
+    title,
+    fileType: fileTypeFromName(title, messageType),
+    contentType: file.mimetype || 'application/octet-stream',
+    sizeBytes: file.size || 0,
+    url: publicFileUrl(req, file.filename),
+    caption: content || '',
+  };
+}
+
+function normalizeOutboundAttachment(attachment = {}) {
+  if (!attachment || typeof attachment !== 'object') return null;
+  const url = String(attachment.url || attachment.href || '').trim();
+  if (!url) return null;
+  const title = normalizeUploadFilename(attachment.title || attachment.fileName || attachment.filename || '附件');
+  const fileType = String(attachment.fileType || fileTypeFromName(title, 'file')).replace(/^\./, '').toLowerCase() || 'file';
+  return {
+    attachmentId: attachment.attachmentId || attachment.id || undefined,
+    title,
+    fileType,
+    contentType: attachment.contentType || attachment.mimeType || attachment.mimetype || undefined,
+    sizeBytes: Number(attachment.sizeBytes || attachment.size || 0) || undefined,
+    url,
+  };
+}
+
+function normalizeOutboundAttachments(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(normalizeOutboundAttachment)
+    .filter(Boolean)
+    .slice(0, 10);
 }
 
 function normalizeUploadFilename(name = '') {
@@ -404,11 +477,7 @@ async function syncPerson(phone, displayName) {
 
 function composeAiReplyContent(ai) {
   const text = String(ai.replyText || ai.reply || '').trim();
-  const attachments = Array.isArray(ai.attachments) ? ai.attachments : [];
-  const attachmentLines = attachments
-    .map(item => [item.title, item.url].filter(Boolean).join(': '))
-    .filter(Boolean);
-  return [text, ...attachmentLines].filter(Boolean).join('\n');
+  return text;
 }
 
 const AI_SETTING_CHANNELS = ['website', 'whatsapp', 'instagram', 'facebook'];
@@ -458,12 +527,19 @@ async function loadAiPolicy(conversationId) {
   return result.rows[0] || null;
 }
 
-async function recordAiMessage(conversationId, content, externalId) {
+async function recordAiMessage(conversationId, content, externalId, options = {}) {
   await pool.query(
-    `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
-     VALUES ($1, $2, 'ai', $3, 'text', now())
+    `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
+     VALUES ($1, $2, 'ai', $3, $4, $5, $6, now())
      ON CONFLICT(external_msg_id) DO NOTHING`,
-    [externalId || null, conversationId, content],
+    [
+      externalId || null,
+      conversationId,
+      content,
+      options.contentType || 'text',
+      options.mediaUrl || null,
+      options.attachments ? JSON.stringify(options.attachments) : null,
+    ],
   );
   await pool.query(
     `UPDATE conv.conversations
@@ -474,6 +550,8 @@ async function recordAiMessage(conversationId, content, externalId) {
 }
 
 async function sendAiReplyToChannel(policy, content, idempotencyKey, ai) {
+  const attachments = normalizeOutboundAttachments(ai.attachments);
+  const outboundContent = content || attachments[0]?.title || '附件';
   if (policy.channel === 'website') {
     const response = await fetch(
       `${AI_SERVICE_URL}/api/v1/conversations/${encodeURIComponent(policy.external_chat_id)}/ai-messages`,
@@ -481,14 +559,14 @@ async function sendAiReplyToChannel(policy, content, idempotencyKey, ai) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
         body: JSON.stringify({
-          content,
+          content: outboundContent,
           idempotencyKey,
           metadata: {
             requestId: ai.requestId,
             status: ai.status,
             reasonCode: ai.reasonCode,
             citations: ai.citations || [],
-            attachments: ai.attachments || [],
+            attachments,
           },
         }),
       },
@@ -497,8 +575,36 @@ async function sendAiReplyToChannel(policy, content, idempotencyKey, ai) {
       throw new Error(`Website AI send failed: ${response.status} ${await response.text()}`);
     }
     const sent = await response.json();
-    await recordAiMessage(policy.id, content, idempotencyKey);
+    await recordAiMessage(policy.id, outboundContent, idempotencyKey, {
+      contentType: attachments[0] ? (String(attachments[0].contentType || '').startsWith('image/') ? 'image' : 'file') : 'text',
+      mediaUrl: attachments[0]?.url || null,
+      attachments,
+    });
     return sent;
+  }
+
+  if (policy.channel === 'whatsapp') {
+    if (!WAHA_API_KEY) throw new Error('WAHA api key not configured');
+    let textExternalId = null;
+    if (content) {
+      const response = await fetch(`${WAHA_API_URL}/api/sendText`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
+        body: JSON.stringify({ session: WAHA_SESSION, chatId: policy.external_chat_id, text: content }),
+      });
+      if (!response.ok) throw new Error(`WhatsApp AI text send failed: ${response.status} ${await response.text()}`);
+      const sent = await response.json();
+      textExternalId = sent?.id?._serialized || sent?._data?.id?._serialized || idempotencyKey;
+    }
+    for (const attachment of attachments) {
+      await sendWhatsAppAttachmentFromUrl(policy.external_chat_id, attachment);
+    }
+    await recordAiMessage(policy.id, outboundContent, textExternalId || idempotencyKey, {
+      contentType: attachments[0] ? (String(attachments[0].contentType || '').startsWith('image/') ? 'image' : 'file') : 'text',
+      mediaUrl: attachments[0]?.url || null,
+      attachments,
+    });
+    return { status: 'sent', channel: 'whatsapp' };
   }
 
   throw new Error(`AI auto reply is not implemented for channel ${policy.channel}`);
@@ -1747,6 +1853,7 @@ async function recordAgentMessage(conversationId, content, externalId, options =
 async function sendWebsiteAgentMessage(conversation, content, idempotencyKey, attachment) {
   if (!AI_SERVICE_URL) throw new Error('AI service url not configured');
   const auth = Buffer.from(`${AI_AGENT_USER}:${AI_AGENT_PASSWORD}`).toString('base64');
+  const attachments = normalizeOutboundAttachments(attachment ? [attachment] : []);
   const response = await fetch(`${AI_SERVICE_URL}/api/agent/conversations/${encodeURIComponent(conversation.external_chat_id)}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
@@ -1754,10 +1861,35 @@ async function sendWebsiteAgentMessage(conversation, content, idempotencyKey, at
       content,
       idempotencyKey,
       agentId: 'crm',
-      metadata: attachment ? { attachments: [attachment] } : {},
+      metadata: attachments.length ? { attachments } : {},
     }),
   });
   if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+async function sendWhatsAppAttachmentFromUrl(chatId, attachment) {
+  const contentType = String(attachment.contentType || '').toLowerCase();
+  const fileType = String(attachment.fileType || '').toLowerCase();
+  const endpoint = contentType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(fileType)
+    ? '/api/sendImage'
+    : contentType.startsWith('video/')
+      ? '/api/sendVideo'
+      : '/api/sendFile';
+  const response = await fetch(`${WAHA_API_URL}${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
+    body: JSON.stringify({
+      session: WAHA_SESSION,
+      chatId,
+      file: {
+        mimetype: attachment.contentType || 'application/octet-stream',
+        filename: attachment.title || '附件',
+        url: attachment.url,
+      },
+    }),
+  });
+  if (!response.ok) throw new Error(`WhatsApp attachment send failed: ${response.status} ${await response.text()}`);
   return response.json();
 }
 
@@ -1796,17 +1928,18 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
   if (conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
 
   if (uploadedFile) {
+    if (!uploadFileAllowed(uploadedFile)) {
+      deleteUploadedFileBestEffort(uploadedFile);
+      return res.status(400).json({
+        error: '当前仅支持上传 PDF、PPT、Word 和图片附件',
+        detail: '支持格式：pdf、ppt、pptx、doc、docx、png、jpg、jpeg、gif、webp、bmp、tif、tiff、heic、heif',
+      });
+    }
     const mediaUrl = publicFileUrl(req, uploadedFile.filename);
     const title = fileTitle(uploadedFile);
     const messageType = fileMessageType(uploadedFile);
     const displayContent = content || title;
-    const attachment = {
-      title,
-      fileType: path.extname(title).replace('.', '') || messageType,
-      contentType: uploadedFile.mimetype,
-      sizeBytes: uploadedFile.size,
-      url: mediaUrl,
-    };
+    const attachment = attachmentFromUploadedFile(req, uploadedFile, content);
 
     if (conversation.channel === 'whatsapp') {
       try {
@@ -1888,6 +2021,17 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
   }
 
   res.status(400).json({ error: 'channel is not supported yet' });
+});
+
+app.use((error, _req, res, next) => {
+  if (!error) return next();
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: `附件不能超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB` });
+    }
+    return res.status(400).json({ error: '附件上传失败', detail: error.message });
+  }
+  return next(error);
 });
 
 app.get('/health', async (_req, res) => {

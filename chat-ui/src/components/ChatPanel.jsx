@@ -15,6 +15,32 @@ function formatFileSize(size) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+const ACCEPTED_ATTACHMENT_TYPES = [
+  '.pdf',
+  '.ppt', '.pptx',
+  '.doc', '.docx',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.tif', '.tiff', '.heic', '.heif',
+].join(',')
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
+  'pdf', 'ppt', 'pptx', 'doc', 'docx',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'heic', 'heif',
+])
+
+function fileExtension(name = '') {
+  return String(name).split('.').pop()?.toLowerCase() || ''
+}
+
+function validateAttachment(file) {
+  if (!file) return ''
+  if (file.size > MAX_ATTACHMENT_BYTES) return '附件不能超过 25MB'
+  const ext = fileExtension(file.name)
+  if (!ALLOWED_ATTACHMENT_EXTENSIONS.has(ext) && !String(file.type || '').startsWith('image/')) {
+    return '当前仅支持 PDF、PPT、Word 和图片附件'
+  }
+  return ''
+}
+
 function StatusBadge({ status }) {
   const map = {
     open:     { label: '进行中',   bg: 'var(--green-soft)',   color: 'var(--green)' },
@@ -27,6 +53,43 @@ function StatusBadge({ status }) {
       fontSize: 11, padding: '2px 8px', borderRadius: 10, fontWeight: 600,
       background: s.bg, color: s.color,
     }}>{s.label}</span>
+  )
+}
+
+function AttachmentCard({ attachment, isCustomer, content }) {
+  const mediaUrl = attachment?.url || ''
+  const fileName = attachment?.title || content || '附件'
+  const contentType = String(attachment?.contentType || '').toLowerCase()
+  const fileType = String(attachment?.fileType || fileExtension(fileName) || 'file').toLowerCase()
+  const fileMeta = [fileType, formatFileSize(attachment?.sizeBytes)].filter(Boolean).join(' · ')
+  const isImage = contentType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tif', 'tiff', 'heic', 'heif'].includes(fileType)
+  const isVideo = contentType.startsWith('video/')
+
+  if (isImage && mediaUrl) {
+    return (
+      <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none', display: 'block', marginTop: 6 }}>
+        <img src={mediaUrl} alt={fileName} style={{ display: 'block', maxWidth: 240, maxHeight: 180, borderRadius: 6, objectFit: 'cover' }} />
+      </a>
+    )
+  }
+  if (isVideo && mediaUrl) {
+    return <video src={mediaUrl} controls style={{ display: 'block', maxWidth: 260, maxHeight: 190, borderRadius: 6, marginTop: 6 }} />
+  }
+  return (
+    <a href={mediaUrl || undefined} target="_blank" rel="noreferrer" download style={{
+      display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: 8,
+      alignItems: 'center', color: 'inherit', textDecoration: 'none', minWidth: 180,
+      marginTop: 6, pointerEvents: mediaUrl ? 'auto' : 'none', opacity: mediaUrl ? 1 : .72,
+    }}>
+      <span style={{
+        width: 28, height: 28, borderRadius: 6, display: 'grid', placeItems: 'center',
+        background: isCustomer ? 'var(--bg-active)' : 'rgba(255,255,255,.18)',
+      }}><FileText size={15} /></span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{fileName}</span>
+        {fileMeta && <span style={{ display: 'block', marginTop: 2, fontSize: 11, opacity: .75 }}>{fileMeta}</span>}
+      </span>
+    </a>
   )
 }
 
@@ -43,10 +106,13 @@ function MessageBubble({ msg }) {
   const isCustomer = msg.senderType === 'customer'
   const isAI = msg.senderType === 'ai'
   const timeStr = format(msg.sentAt, 'HH:mm')
-  const attachment = Array.isArray(msg.attachments) ? msg.attachments[0] : null
-  const mediaUrl = msg.mediaUrl || attachment?.url || ''
-  const fileName = attachment?.title || msg.content || '附件'
-  const fileMeta = [attachment?.fileType, formatFileSize(attachment?.sizeBytes)].filter(Boolean).join(' · ')
+  const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
+  const mediaAttachments = attachments.length
+    ? attachments
+    : msg.mediaUrl
+      ? [{ title: msg.content || '附件', fileType: msg.contentType || 'file', url: msg.mediaUrl }]
+      : []
+  const textContent = mediaAttachments.length === 1 && msg.content === mediaAttachments[0]?.title ? '' : msg.content
 
   return (
     <div style={{
@@ -73,32 +139,10 @@ function MessageBubble({ msg }) {
           fontSize: 13, lineHeight: 1.55,
           boxShadow: 'var(--shadow-sm)',
         }}>
-          {msg.contentType === 'image' && mediaUrl ? (
-            <a href={mediaUrl} target="_blank" rel="noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-              <img src={mediaUrl} alt={fileName} style={{ display: 'block', maxWidth: 240, maxHeight: 180, borderRadius: 6, objectFit: 'cover' }} />
-              {msg.content && msg.content !== fileName && <div style={{ marginTop: 6 }}>{msg.content}</div>}
-            </a>
-          ) : msg.contentType === 'video' && mediaUrl ? (
-            <div>
-              <video src={mediaUrl} controls style={{ display: 'block', maxWidth: 260, maxHeight: 190, borderRadius: 6 }} />
-              {msg.content && msg.content !== fileName && <div style={{ marginTop: 6 }}>{msg.content}</div>}
-            </div>
-          ) : mediaUrl ? (
-            <a href={mediaUrl} target="_blank" rel="noreferrer" download style={{
-              display: 'grid', gridTemplateColumns: '28px minmax(0, 1fr)', gap: 8,
-              alignItems: 'center', color: 'inherit', textDecoration: 'none', minWidth: 180,
-            }}>
-              <span style={{
-                width: 28, height: 28, borderRadius: 6, display: 'grid', placeItems: 'center',
-                background: isCustomer ? 'var(--bg-active)' : 'rgba(255,255,255,.18)',
-              }}><FileText size={15} /></span>
-              <span style={{ minWidth: 0 }}>
-                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{fileName}</span>
-                {fileMeta && <span style={{ display: 'block', marginTop: 2, fontSize: 11, opacity: .75 }}>{fileMeta}</span>}
-                {msg.content && msg.content !== fileName && <span style={{ display: 'block', marginTop: 5 }}>{msg.content}</span>}
-              </span>
-            </a>
-          ) : msg.content}
+          {textContent && <div>{textContent}</div>}
+          {mediaAttachments.map((attachment, index) => (
+            <AttachmentCard key={`${attachment.url || attachment.title || index}-${index}`} attachment={attachment} isCustomer={isCustomer} content={textContent} />
+          ))}
         </div>
         <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{timeStr}</span>
       </div>
@@ -243,6 +287,19 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     fileInputRef.current?.click()
   }
 
+  function handleFileChange(event) {
+    const file = event.target.files?.[0] || null
+    const error = validateAttachment(file)
+    if (error) {
+      setSelectedFile(null)
+      setSendError(error)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    setSendError('')
+    setSelectedFile(file)
+  }
+
   const canSend = (!!input.trim() || !!selectedFile) && conv.status === 'takeover' && !sending
   const confirmTitle = pendingAction === 'takeover' ? '确认人工接管？' : '确认 AI 托管？'
   const confirmBody = pendingAction === 'takeover'
@@ -337,8 +394,9 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
             <input
               ref={fileInputRef}
               type="file"
+              accept={ACCEPTED_ATTACHMENT_TYPES}
               style={{ display: 'none' }}
-              onChange={event => setSelectedFile(event.target.files?.[0] || null)}
+              onChange={handleFileChange}
             />
             <button
               title={!supportsAttachments ? '当前渠道暂不支持发送附件' : conv.status === 'takeover' ? '附件上传' : '请先接管会话'}

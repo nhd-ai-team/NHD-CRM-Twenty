@@ -947,7 +947,7 @@ td.muted{color:var(--text-tertiary);}
             <tbody>
               <tr><td><strong>消息时间线</strong></td><td>气泡样式区分：客户消息（左）/ 销售回复（右，品牌色）/ AI 回复（右，浅色标注）/ 系统消息（居中灰色）</td></tr>
               <tr><td><strong>发送文字</strong></td><td>Enter 发送，Shift + Enter 换行，支持中英文输入法</td></tr>
-              <tr><td><strong>发送附件</strong></td><td>支持选择本地文件发送；当前 WhatsApp 渠道可发送附件，其他渠道按接口能力逐步补齐</td></tr>
+              <tr><td><strong>发送附件</strong></td><td>支持选择本地文件发送；当前官网客服与 WhatsApp 均支持附件发送，文件类型覆盖 PDF、PPT、Word 和常见图片，大小默认不超过 25MB</td></tr>
               <tr><td><strong>发送链接</strong></td><td>链接作为文本消息发送，富预览作为后续增强项</td></tr>
               <tr><td><strong>消息内搜索</strong></td><td>暂不作为 v1.0 必交付；后续在对话历史模块统一设计</td></tr>
               <tr><td><strong>接管 / AI 托管</strong></td><td>接管和恢复 AI 托管均需二次确认；接管后销售才能回复，AI 停止自动回复</td></tr>
@@ -999,7 +999,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td><strong>触发条件</strong></td><td>客户发送文本消息、会话未被人工接管、渠道 AI 自动回复开启、当前处于渠道生效时间段、会话处于 AI 托管窗口内</td></tr>
               <tr><td><strong>时间段规则</strong></td><td>按中国时间 Asia/Shanghai 判断；支持全天或按开始/结束时间生效，开始时间晚于结束时间时按跨天时间段处理</td></tr>
               <tr><td><strong>模型 / 服务</strong></td><td>通过 ai-service 调用底层模型与知识库；CRM 只负责会话、状态和审计落库</td></tr>
-              <tr><td><strong>自动回复</strong></td><td>AI 服务生成回复后，由中间层按对应渠道发送并写入 conv.messages</td></tr>
+              <tr><td><strong>自动回复</strong></td><td>AI 服务生成回复后，由中间层按对应渠道发送并写入 conv.messages；如果 AI 返回附件，官网 widget 使用附件卡片展示，WhatsApp 通过渠道附件接口发送</td></tr>
               <tr><td><strong>无法回答</strong></td><td>AI 使用兜底话术，请客户留下具体工况、处理量、物料性质和联系方式</td></tr>
               <tr><td><strong>人工接管后</strong></td><td>AI 立即停止回复，已生成未发送的内容不得发出</td></tr>
               <tr><td><strong>全程可审计</strong></td><td>客户消息、AI 回复、人工回复均保存在 conv.messages，并在对话工作台展示</td></tr>

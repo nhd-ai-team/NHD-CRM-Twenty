@@ -60,7 +60,7 @@ export function useConversations() {
     const response = await fetch(`/conv-api/conversations/${convId}/messages`, options)
     if (!response.ok) {
       const data = await response.json().catch(() => ({}))
-      throw new Error(data.error || '消息发送失败')
+      throw new Error([data.error, data.detail].filter(Boolean).join('：') || '消息发送失败')
     }
     window.setTimeout(() => loadConversations().catch(() => {}), 1000)
   }
