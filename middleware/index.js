@@ -990,7 +990,7 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     await client.query('BEGIN');
     const scheduleActive = aiScheduleActiveExpression('cs');
     const currentResult = await client.query(
-      `SELECT c.id, c.status, COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
+      `SELECT c.id, c.status, c.channel, c.external_chat_id, COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
         ((c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}) AS "inTakeoverWindow"
        FROM conv.conversations c
        LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
@@ -1009,6 +1009,9 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
 
     const nextStatus = action === 'takeover' ? 'takeover' : 'open';
     const systemText = action === 'takeover' ? '销售已人工接管此会话' : '已切换为 AI 托管';
+    if (action === 'release' && conversation.channel === 'website') {
+      await releaseWebsiteAiTakeover(conversation.external_chat_id);
+    }
     await client.query(
       `UPDATE conv.conversations SET status = $2, updated_at = now() WHERE id = $1`,
       [req.params.id, nextStatus],
@@ -1866,6 +1869,16 @@ async function sendWebsiteAgentMessage(conversation, content, idempotencyKey, at
   });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
+}
+
+async function releaseWebsiteAiTakeover(externalChatId) {
+  if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY || !externalChatId) return;
+  const response = await fetch(`${AI_SERVICE_URL}/api/v1/conversations/${encodeURIComponent(externalChatId)}/release-takeover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) throw new Error(await response.text());
 }
 
 async function sendWhatsAppAttachmentFromUrl(chatId, attachment) {
