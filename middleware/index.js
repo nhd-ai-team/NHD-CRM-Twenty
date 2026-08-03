@@ -327,7 +327,15 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS conv.channel_settings (
       channel TEXT PRIMARY KEY,
       ai_enabled BOOLEAN NOT NULL DEFAULT false,
+      ai_schedule_enabled BOOLEAN NOT NULL DEFAULT false,
+      ai_schedule_start TIME,
+      ai_schedule_end TIME,
+      ai_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_schedule_enabled BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_schedule_start TIME;
+    ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_schedule_end TIME;
+    ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
     INSERT INTO conv.channel_settings(channel, ai_enabled) VALUES
       ('website', true), ('whatsapp', false), ('instagram', false), ('facebook', false)
       ON CONFLICT (channel) DO NOTHING;
@@ -403,11 +411,45 @@ function composeAiReplyContent(ai) {
   return [text, ...attachmentLines].filter(Boolean).join('\n');
 }
 
+const AI_SETTING_CHANNELS = ['website', 'whatsapp', 'instagram', 'facebook'];
+const TIME_VALUE_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DEFAULT_AI_TIMEZONE = 'Asia/Shanghai';
+
+function aiScheduleActiveExpression(alias = 'cs') {
+  const prefix = alias ? `${alias}.` : '';
+  const localTime = `(now() AT TIME ZONE COALESCE(${prefix}ai_timezone, '${DEFAULT_AI_TIMEZONE}'))::time`;
+  return `(
+    NOT COALESCE(${prefix}ai_schedule_enabled, false)
+    OR (
+      ${prefix}ai_schedule_start IS NOT NULL
+      AND ${prefix}ai_schedule_end IS NOT NULL
+      AND CASE
+        WHEN ${prefix}ai_schedule_start <= ${prefix}ai_schedule_end
+          THEN (${localTime} >= ${prefix}ai_schedule_start AND ${localTime} < ${prefix}ai_schedule_end)
+        ELSE (${localTime} >= ${prefix}ai_schedule_start OR ${localTime} < ${prefix}ai_schedule_end)
+      END
+    )
+  )`;
+}
+
+function normalizeTimeValue(value) {
+  if (value == null || value === '') return null;
+  const text = String(value).slice(0, 5);
+  if (!TIME_VALUE_RE.test(text)) return null;
+  return text;
+}
+
+function formatTimeValue(value) {
+  if (value == null) return null;
+  return String(value).slice(0, 5);
+}
+
 async function loadAiPolicy(conversationId) {
+  const scheduleActive = aiScheduleActiveExpression('cs');
   const result = await pool.query(
     `SELECT c.id, c.external_chat_id, c.channel, c.status,
             COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
-            (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AS "inAiWindow"
+            ((c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}) AS "inAiWindow"
        FROM conv.conversations c
        LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
       WHERE c.id = $1`,
@@ -771,11 +813,13 @@ app.post('/api/meta/webhook', (req, res) => {
 
 app.get('/api/conversations', async (_req, res) => {
   // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
+  const scheduleActive = aiScheduleActiveExpression('cs');
   const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
     json_build_object(
       'enabled', COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'),
-      'inTakeoverWindow', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now())),
-      'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND c.status NOT IN ('takeover', 'closed'))
+      'scheduleActive', ${scheduleActive},
+      'inTakeoverWindow', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}),
+      'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive} AND c.status NOT IN ('takeover', 'closed'))
     ) AS "aiControl",
     json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'email', ct.email, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
@@ -838,9 +882,10 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const scheduleActive = aiScheduleActiveExpression('cs');
     const currentResult = await client.query(
       `SELECT c.id, c.status, COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
-        (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AS "inTakeoverWindow"
+        ((c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}) AS "inTakeoverWindow"
        FROM conv.conversations c
        LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
        WHERE c.id = $1 FOR UPDATE OF c`,
@@ -878,20 +923,35 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
   }
 });
 
-const AI_SETTING_CHANNELS = ['website', 'whatsapp', 'instagram', 'facebook'];
-
 // 渠道级 AI 自动回复开关（工作台齿轮的「生效范围」）
 app.get('/api/ai-settings', async (_req, res) => {
   try {
+    const scheduleActive = aiScheduleActiveExpression('cs');
     const result = await pool.query(
-      `SELECT channel, ai_enabled AS "enabled" FROM conv.channel_settings ORDER BY channel`,
+      `SELECT channel,
+              ai_enabled AS "enabled",
+              ai_schedule_enabled AS "scheduleEnabled",
+              ai_schedule_start AS "scheduleStart",
+              ai_schedule_end AS "scheduleEnd",
+              ai_timezone AS "timezone",
+              ${scheduleActive} AS "activeNow"
+         FROM conv.channel_settings cs
+        ORDER BY channel`,
     );
-    const map = new Map(result.rows.map(r => [r.channel, r.enabled]));
+    const map = new Map(result.rows.map(r => [r.channel, r]));
     // 保证四个渠道恒定返回，缺失的按官网默认开、其余关兜底
-    res.json(AI_SETTING_CHANNELS.map(channel => ({
-      channel,
-      enabled: map.has(channel) ? map.get(channel) : channel === 'website',
-    })));
+    res.json(AI_SETTING_CHANNELS.map(channel => {
+      const row = map.get(channel);
+      return {
+        channel,
+        enabled: row ? row.enabled : channel === 'website',
+        scheduleEnabled: row ? row.scheduleEnabled : false,
+        scheduleStart: row ? formatTimeValue(row.scheduleStart) : null,
+        scheduleEnd: row ? formatTimeValue(row.scheduleEnd) : null,
+        timezone: row?.timezone || DEFAULT_AI_TIMEZONE,
+        activeNow: row ? row.activeNow : true,
+      };
+    }));
   } catch (error) {
     console.error('[ai-settings] load failed:', error.message);
     res.status(502).json({ error: 'ai settings load failed', detail: error.message });
@@ -901,21 +961,51 @@ app.get('/api/ai-settings', async (_req, res) => {
 app.patch('/api/ai-settings', requireSameSite, async (req, res) => {
   const channel = String(req.body?.channel || '').trim();
   const enabled = req.body?.enabled;
+  const scheduleEnabled = req.body?.scheduleEnabled === undefined ? false : req.body.scheduleEnabled;
+  const scheduleStart = normalizeTimeValue(req.body?.scheduleStart);
+  const scheduleEnd = normalizeTimeValue(req.body?.scheduleEnd);
+  const timezone = String(req.body?.timezone || DEFAULT_AI_TIMEZONE).trim() || DEFAULT_AI_TIMEZONE;
   if (!AI_SETTING_CHANNELS.includes(channel)) return res.status(400).json({ error: 'unsupported channel' });
   if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
+  if (typeof scheduleEnabled !== 'boolean') return res.status(400).json({ error: 'scheduleEnabled must be boolean' });
+  if (req.body?.scheduleStart && !scheduleStart) return res.status(400).json({ error: 'scheduleStart must be HH:mm' });
+  if (req.body?.scheduleEnd && !scheduleEnd) return res.status(400).json({ error: 'scheduleEnd must be HH:mm' });
+  if (scheduleEnabled && (!scheduleStart || !scheduleEnd)) {
+    return res.status(400).json({ error: 'scheduleStart and scheduleEnd are required when schedule is enabled' });
+  }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(
-      `INSERT INTO conv.channel_settings(channel, ai_enabled, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (channel) DO UPDATE SET ai_enabled = EXCLUDED.ai_enabled, updated_at = now()`,
-      [channel, enabled],
+    const saved = await client.query(
+      `INSERT INTO conv.channel_settings(
+         channel, ai_enabled, ai_schedule_enabled, ai_schedule_start, ai_schedule_end, ai_timezone, updated_at
+       ) VALUES ($1, $2, $3, $4::time, $5::time, $6, now())
+       ON CONFLICT (channel) DO UPDATE SET
+         ai_enabled = EXCLUDED.ai_enabled,
+         ai_schedule_enabled = EXCLUDED.ai_schedule_enabled,
+         ai_schedule_start = EXCLUDED.ai_schedule_start,
+         ai_schedule_end = EXCLUDED.ai_schedule_end,
+         ai_timezone = EXCLUDED.ai_timezone,
+         updated_at = now()
+       RETURNING channel, ai_enabled AS "enabled", ai_schedule_enabled AS "scheduleEnabled",
+                 ai_schedule_start AS "scheduleStart", ai_schedule_end AS "scheduleEnd",
+                 ai_timezone AS "timezone", ${aiScheduleActiveExpression('')} AS "activeNow"`,
+      [channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone],
     );
     // 清掉该渠道的会话级覆盖，令现有会话立即继承渠道设置
     await client.query(`UPDATE conv.conversations SET ai_enabled = NULL WHERE channel = $1`, [channel]);
     await client.query('COMMIT');
-    res.json({ channel, enabled });
+    const row = saved.rows[0];
+    res.json({
+      channel: row.channel,
+      enabled: row.enabled,
+      scheduleEnabled: row.scheduleEnabled,
+      scheduleStart: formatTimeValue(row.scheduleStart),
+      scheduleEnd: formatTimeValue(row.scheduleEnd),
+      timezone: row.timezone || DEFAULT_AI_TIMEZONE,
+      activeNow: row.activeNow,
+    });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[ai-settings] update failed:', error.message);

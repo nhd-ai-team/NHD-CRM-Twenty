@@ -76,10 +76,10 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
         </button>
         {aiOpen && (
           <AiConfigPopover
-            anchorRect={gearRef.current?.getBoundingClientRect()}
             settings={aiSettings.settings}
+            loading={aiSettings.loading}
             error={aiSettings.error}
-            onToggle={aiSettings.toggle}
+            onSave={aiSettings.save}
             onClose={() => setAiOpen(false)}
           />
         )}
@@ -108,9 +108,9 @@ export default function App() {
   } = useConversations()
 
   const aiSettings = useAiSettings()
-  // 拨动渠道 AI 开关后立即刷新会话列表，令「接管会话」按钮的灰/亮状态即时联动
-  const handleAiToggle = useCallback(async (channel, enabled) => {
-    const ok = await aiSettings.toggle(channel, enabled)
+  // 保存渠道 AI 配置后立即刷新会话列表，令「接管会话」按钮的灰/亮状态即时联动
+  const handleAiSave = useCallback(async (channel, patch) => {
+    const ok = await aiSettings.save(channel, patch)
     if (ok) reloadConversations().catch(() => {})
   }, [aiSettings, reloadConversations])
 
@@ -146,7 +146,7 @@ export default function App() {
           setActiveChannel={setActiveChannel}
           contactOpen={contactOpen}
           onToggleContact={() => setContactOpen((open) => !open)}
-          aiSettings={{ ...aiSettings, toggle: handleAiToggle }}
+          aiSettings={{ ...aiSettings, save: handleAiSave }}
         />
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>

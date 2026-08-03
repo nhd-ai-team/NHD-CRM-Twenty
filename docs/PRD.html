@@ -448,7 +448,7 @@ td.muted{color:var(--text-tertiary);}
 
         <div class="sub-title-sm">④ AI 智能客服（全渠道 · 可配置）</div>
         <ul class="plainlist">
-          <li>AI 智能客服接入官网客服链路；其他渠道具备中间层接入基础，按渠道开关控制是否自动回复</li>
+          <li>AI 智能客服接入官网客服链路；其他渠道具备中间层接入基础，按渠道开关和生效时间段控制是否自动回复</li>
           <li>v1.0 AI 状态仅保留两类：自动回复开启 / 自动回复关闭；不保留 AI suggestion / 建议模式</li>
           <li>人工接管前必须点击「接管会话」并二次确认；接管后 AI 停止对该会话自动回复</li>
           <li>所有 AI 回复记录可在 CRM 查看和审计</li>
@@ -458,7 +458,7 @@ td.muted{color:var(--text-tertiary);}
         <ul class="plainlist">
           <li>管理员可在后台查看各渠道账号连接状态</li>
           <li>角色权限分级（老板 / 管理员 / 销售主管 / 销售）</li>
-          <li>管理员可配置渠道绑定和渠道级 AI 自动回复开关；复杂 AI 配置后续进入设置页</li>
+          <li>管理员可配置渠道绑定、渠道级 AI 自动回复开关和每日生效时间段；复杂 AI 配置后续进入设置页</li>
         </ul>
       </div>
 
@@ -982,13 +982,13 @@ td.muted{color:var(--text-tertiary);}
 
       <div class="sub">
         <div class="sub-title">9.1 AI 智能客服（渠道级自动回复 · v1.0）</div>
-        <div class="callout note"><strong>定位：</strong>AI 智能客服是一个<strong>中间层服务</strong>。v1.0 在对话工作台只暴露最小配置：每个渠道是否允许 AI 自动回复。复杂策略（话术、允许回答的问题类型、知识库范围、时段策略）后续统一放在设置中的 AI 配置页，不放在工作台里。</div>
+        <div class="callout note"><strong>定位：</strong>AI 智能客服是一个<strong>中间层服务</strong>。v1.0 在对话工作台暴露最小可执行配置：每个渠道是否允许 AI 自动回复，以及每日生效时间段。复杂策略（话术、允许回答的问题类型、知识库范围、敏感词、兜底话术）后续统一放在设置中的 AI 配置页，不放在工作台里。</div>
         <div class="table-wrap">
           <table>
             <thead><tr><th>AI 状态</th><th>行为</th><th>当前说明</th></tr></thead>
             <tbody>
               <tr><td><strong>关闭</strong></td><td>该渠道不触发 AI 自动回复，销售人工处理</td><td>任意渠道可关闭</td></tr>
-              <tr><td><strong>自动回复</strong></td><td>客户消息进入中间层后，请求 AI 服务生成并发送回复；人工接管后停止</td><td>当前主要用于官网客服链路；其他渠道按风控逐步开放</td></tr>
+              <tr><td><strong>自动回复</strong></td><td>客户消息进入中间层后，请求 AI 服务生成并发送回复；人工接管后停止</td><td>仅在渠道开关开启且当前时间处于配置时间段内生效</td></tr>
             </tbody>
           </table>
         </div>
@@ -996,7 +996,8 @@ td.muted{color:var(--text-tertiary);}
           <table>
             <thead><tr><th>要素</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td><strong>触发条件</strong></td><td>客户发送文本消息、会话未被人工接管、渠道 AI 自动回复开启、会话处于 AI 托管窗口内</td></tr>
+              <tr><td><strong>触发条件</strong></td><td>客户发送文本消息、会话未被人工接管、渠道 AI 自动回复开启、当前处于渠道生效时间段、会话处于 AI 托管窗口内</td></tr>
+              <tr><td><strong>时间段规则</strong></td><td>按中国时间 Asia/Shanghai 判断；支持全天或按开始/结束时间生效，开始时间晚于结束时间时按跨天时间段处理</td></tr>
               <tr><td><strong>模型 / 服务</strong></td><td>通过 ai-service 调用底层模型与知识库；CRM 只负责会话、状态和审计落库</td></tr>
               <tr><td><strong>自动回复</strong></td><td>AI 服务生成回复后，由中间层按对应渠道发送并写入 conv.messages</td></tr>
               <tr><td><strong>无法回答</strong></td><td>AI 使用兜底话术，请客户留下具体工况、处理量、物料性质和联系方式</td></tr>
@@ -1019,7 +1020,7 @@ td.muted{color:var(--text-tertiary);}
 
       <div class="sub">
         <div class="sub-title">AI 配置归属原则</div>
-        <p>v1.0 工作台内只做渠道级 AI 自动回复开关。时段策略、服务时间、兜底话术、敏感词、知识库范围、允许回答的问题类型等复杂配置，<strong>后续进入 CRM 设置页的 AI 配置模块</strong>；底层生效逻辑仍属于 AI 智能客服中间层，避免与 Twenty 核心能力耦合。</p>
+        <p>v1.0 工作台内只做渠道级 AI 自动回复开关和每日生效时间段，供销售/管理员快速控制当前渠道是否由 AI 托管。兜底话术、敏感词、知识库范围、允许回答的问题类型等复杂配置，<strong>后续进入 CRM 设置页的 AI 配置模块</strong>；底层生效逻辑仍属于 AI 智能客服中间层，避免与 Twenty 核心能力耦合。</p>
       </div>
 
     </section>
@@ -1040,7 +1041,8 @@ td.muted{color:var(--text-tertiary);}
             <tr><td><strong>渠道账号状态</strong></td><td>显示 WhatsApp 当前连接状态；Instagram / Facebook 暂存为待办</td></tr>
             <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码绑定和手机号配对码；用于个人 WhatsApp 接入测试</td></tr>
             <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置是否允许 AI 自动回复，实时生效</td></tr>
-            <tr><td><strong>复杂 AI 配置</strong></td><td>时段策略、兜底话术、知识库范围、允许回答的问题类型后续在设置页补齐</td></tr>
+            <tr><td><strong>AI 生效时间段</strong></td><td>每个渠道可配置全天或每日开始/结束时间，支持跨天时间段；不在生效时间内不会调用 AI 回复</td></tr>
+            <tr><td><strong>复杂 AI 配置</strong></td><td>兜底话术、知识库范围、允许回答的问题类型后续在设置页补齐</td></tr>
           </tbody>
         </table><br></div>
     </section>
