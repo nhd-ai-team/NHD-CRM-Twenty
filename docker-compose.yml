@@ -110,13 +110,11 @@ services:
       - server
     restart: always
 
-  # ── 对话工作台前端（开发模式，Vite 热重载）────────────────────────────────
+  # ── 对话工作台前端（生产静态构建）──────────────────────────────────────────
   chat-ui:
     build:
       context: ./chat-ui
-      dockerfile: Dockerfile.dev
-    volumes:
-      - ./chat-ui/src:/app/src:ro
+      dockerfile: Dockerfile
     restart: always
 
   # ── 中间层同步服务 ────────────────────────────────────────────────────────

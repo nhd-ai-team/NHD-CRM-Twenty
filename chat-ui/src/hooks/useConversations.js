@@ -13,12 +13,23 @@ export function useConversations() {
     if (!response.ok) throw new Error('无法加载会话')
     // 邮箱是独立板块（见 useEmails），渠道工作台不展示 email 会话
     const list = (await response.json()).filter(c => c.channel !== 'email')
-    const withMessages = await Promise.all(list.map(async conv => {
-      const messages = await fetch(`/conv-api/conversations/${conv.id}/messages?_=${Date.now()}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : [])
-      return { ...conv, messages: messages.map(m => ({ ...m, sentAt: new Date(m.sentAt) })), unread: 0 }
+    setConversations(current => list.map(conv => ({
+      ...conv,
+      messages: current.find(item => item.id === conv.id)?.messages ?? [],
+      unread: 0,
+    })))
+    setSelectedId(current => current || list[0]?.id || null)
+  }
+
+  async function loadMessages(convId) {
+    if (!convId) return
+    const response = await fetch(`/conv-api/conversations/${convId}/messages?_=${Date.now()}`, { cache: 'no-store' })
+    if (!response.ok) throw new Error('无法加载聊天记录')
+    const messages = (await response.json()).map(message => ({
+      ...message,
+      sentAt: new Date(message.sentAt),
     }))
-    setConversations(withMessages)
-    setSelectedId(current => current || withMessages[0]?.id || null)
+    setConversations(current => current.map(conv => conv.id === convId ? { ...conv, messages } : conv))
   }
 
   useEffect(() => {
@@ -26,6 +37,10 @@ export function useConversations() {
     const timer = setInterval(() => loadConversations().catch(() => {}), 10000)
     return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    loadMessages(selectedId).catch(error => console.error(error))
+  }, [selectedId])
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {
@@ -62,7 +77,10 @@ export function useConversations() {
       const data = await response.json().catch(() => ({}))
       throw new Error([data.error, data.detail].filter(Boolean).join('：') || '消息发送失败')
     }
-    window.setTimeout(() => loadConversations().catch(() => {}), 1000)
+    window.setTimeout(() => {
+      loadConversations().catch(() => {})
+      loadMessages(convId).catch(() => {})
+    }, 1000)
   }
 
   async function setTakeover(convId, action) {
