@@ -1108,11 +1108,24 @@
     anchor.parentElement.insertBefore(btn, anchor);
   }
 
+  function localizeDuplicateRecordErrors() {
+    var replacements = {
+      'This record already exists. Please check your data and try again.': '该记录包含重复信息，请检查官网链接、邮箱等字段，并更新已有记录。',
+      'A duplicate entry was detected': '检测到重复记录',
+    };
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    var node;
+    while ((node = walker.nextNode())) {
+      var value = (node.nodeValue || '').trim();
+      if (replacements[value]) node.nodeValue = (node.nodeValue || '').replace(value, replacements[value]);
+    }
+  }
+
   // ── boot ──────────────────────────────────────────────────────────────────
 
   installAuthCapture();
 
-  function tick() { tryInsert(); ensureConvertTopButton(); }
+  function tick() { tryInsert(); ensureConvertTopButton(); localizeDuplicateRecordErrors(); }
 
   var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });
