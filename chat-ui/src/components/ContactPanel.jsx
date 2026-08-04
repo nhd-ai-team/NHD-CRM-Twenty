@@ -3,7 +3,7 @@ import { Loader2, UserPlus } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
-const TABS = ['资料', '话术', '智能物料', '翻译']
+const TABS = ['资料']
 
 // 下拉选项与 Opportunity 的 SELECT 字段选项一一对应（label 显示 / value 入库）。
 const SOURCE_OPTIONS = [
