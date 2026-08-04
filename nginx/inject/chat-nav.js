@@ -597,7 +597,7 @@
     }
     if (phoneInput) phoneInput.disabled = connected;
     root.querySelector('[data-wa-help]').textContent = connected
-      ? '该 WhatsApp 已可在对话工作台收发消息。当前 1.0 先绑定到 WAHA default session。'
+      ? '该 WhatsApp 已可在对话工作台收发消息。'
       : waitingQr
         ? (state.status === 'FAILED' ? '当前会话异常，系统会自动重新生成二维码。请稍等几秒后扫码。' : '请用 WhatsApp 手机端扫描下方二维码，完成后页面会自动刷新状态。')
         : '如未显示二维码，请点击“启动/刷新二维码”。';
