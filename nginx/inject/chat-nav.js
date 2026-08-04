@@ -544,6 +544,29 @@
     button.style.cursor = button.disabled ? 'not-allowed' : 'pointer';
   }
 
+  function readChannelApiResponse(response, fallbackMessage) {
+    return response.text().then(function (body) {
+      var data = null;
+      try {
+        data = body ? JSON.parse(body) : {};
+      } catch (_error) {
+        if (response.status === 502 || response.status === 503 || response.status === 504) {
+          throw new Error('渠道服务暂时不可用，请稍后重试。');
+        }
+        throw new Error('渠道接口返回异常，请刷新页面后重试。');
+      }
+      if (!response.ok) {
+        throw new Error(data && (data.error || data.detail) || fallbackMessage);
+      }
+      return data;
+    }).catch(function (error) {
+      if (error instanceof TypeError) {
+        throw new Error('无法连接渠道服务，请检查网络后重试。');
+      }
+      throw error;
+    });
+  }
+
   function renderWhatsAppStatus(root, state) {
     var connected = state && state.connected;
     var recoverableQr = state && ['FAILED', 'STOPPED', 'STARTING'].indexOf(state.status) !== -1;
@@ -595,11 +618,8 @@
   function loadWhatsAppStatus(root) {
     root.querySelector('[data-wa-error]').textContent = '';
     return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin' })
-      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
-      .then(function (result) {
-        if (!result.ok) throw new Error(result.data && (result.data.error || result.data.detail) || '状态加载失败');
-        renderWhatsAppStatus(root, result.data);
-      })
+      .then(function (response) { return readChannelApiResponse(response, '状态加载失败'); })
+      .then(function (data) { renderWhatsAppStatus(root, data); })
       .catch(function (error) {
         root.querySelector('[data-wa-error]').textContent = error.message || '状态加载失败';
       });
@@ -648,7 +668,7 @@
           '<div style="padding:18px 20px;display:grid;grid-template-columns:150px 1fr;gap:12px;font-size:13px">' +
             '<div style="color:#71717a">绑定号码</div><div data-wa-phone>-</div>' +
             '<div style="color:#71717a">显示名称</div><div data-wa-name>-</div>' +
-            '<div style="color:#71717a">Session</div><div data-wa-session>default</div>' +
+            '<div style="color:#71717a">会话标识</div><div data-wa-session>default</div>' +
           '</div>' +
           '<div data-wa-qr-box style="display:none;padding:0 20px 18px">' +
             '<div style="display:flex;align-items:center;gap:20px;padding:16px;border:1px solid #e4e4e7;border-radius:8px;background:#fafafa;width:max-content;max-width:100%">' +
@@ -660,7 +680,7 @@
             '<div style="border:1px solid #e4e4e7;border-radius:8px;background:#fff;padding:14px 16px">' +
               '<div style="font-size:13px;font-weight:700;margin-bottom:8px">手机号配对</div>' +
               '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-                '<input data-wa-phone-input placeholder="输入带国家区号的号码，如 8617351014319" style="height:32px;width:300px;max-width:100%;border:1px solid #d4d4d8;border-radius:6px;padding:0 10px;font-size:12.5px;box-sizing:border-box" />' +
+                '<input data-wa-phone-input placeholder="输入带国家区号的号码，如 8613800000000（仅示例）" style="height:32px;width:340px;max-width:100%;border:1px solid #d4d4d8;border-radius:6px;padding:0 10px;font-size:12.5px;box-sizing:border-box" />' +
                 '<button data-wa-code style="height:32px;padding:0 12px;border-radius:6px;border:1px solid #16a34a;background:#16a34a;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">生成配对码</button>' +
               '</div>' +
               '<div data-wa-code-result style="display:none;margin-top:12px;padding:12px;border-radius:8px;background:#f0fdf4;border:1px solid #bbf7d0">' +
@@ -689,6 +709,7 @@
       root.querySelector('[data-wa-error]').textContent = '';
       setWaButtonBusy(root, '[data-wa-start]', '生成中...', true);
       window.fetch('/conv-api/channel-accounts/whatsapp/restart', { method: 'POST', credentials: 'same-origin' })
+        .then(function (response) { return readChannelApiResponse(response, '二维码生成失败'); })
         .then(function () { return loadWhatsAppStatus(root); })
         .catch(function (error) { root.querySelector('[data-wa-error]').textContent = error.message || '启动失败'; })
         .finally(function () {
@@ -709,10 +730,9 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumber: phoneInput.value }),
       })
-        .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
-        .then(function (result) {
-          if (!result.ok) throw new Error(result.data && (result.data.error || result.data.detail) || '配对码生成失败');
-          codeValue.textContent = result.data.code || '-';
+        .then(function (response) { return readChannelApiResponse(response, '配对码生成失败'); })
+        .then(function (data) {
+          codeValue.textContent = data.code || '-';
           resultBox.style.display = 'block';
           return loadWhatsAppStatus(root);
         })

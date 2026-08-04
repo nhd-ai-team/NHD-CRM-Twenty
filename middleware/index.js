@@ -1314,7 +1314,7 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
   try {
     const phoneNumber = normalizeWhatsAppPairingPhone(req.body?.phoneNumber);
     if (phoneNumber.length < 8 || phoneNumber.length > 15) {
-      return res.status(400).json({ error: '请输入带国家区号的 WhatsApp 号码，例如 8617351014319' });
+      return res.status(400).json({ error: '请输入带国家区号的 WhatsApp 号码，例如 8613800000000（仅示例）' });
     }
 
     let current = await getWahaSession().catch(() => null);
