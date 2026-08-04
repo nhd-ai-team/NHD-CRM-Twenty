@@ -477,6 +477,11 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(user_id, channel, provider_session));`);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS channel_accounts_active_external_account_unique
+    ON conv.channel_accounts(channel, provider, external_account_id)
+    WHERE external_account_id IS NOT NULL AND status <> 'unbound';
+  `);
   }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -1023,6 +1028,8 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   try {
     const session = normalizeWahaSession(await getWahaSession());
     if (!session.connected) return res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
+    const ownership = await requireCurrentUserWhatsAppBinding(req, res, session);
+    if (!ownership) return;
     if (phoneFromJid(session.accountId) === phone) return res.status(400).json({ error: '不能向当前绑定的 WhatsApp 号码发起会话' });
 
     const checkResponse = await fetchWaha(
@@ -1348,10 +1355,62 @@ async function waitForWahaStatus(expectedStatuses, attempts = 8, delayMs = 1200)
   return getWahaSession();
 }
 
-async function upsertWhatsAppChannelAccount(req, normalized) {
-  const userId = getTwentyUserIdFromRequest(req);
-  if (!userId || !normalized.connected) return;
-  const actor = await resolveAuditActor(req).catch(() => null);
+async function getActiveWhatsAppBindingByAccount(accountId) {
+  if (!accountId) return null;
+  const result = await pool.query(
+    `SELECT ca.*, wm."nameFirstName", wm."nameLastName"
+     FROM conv.channel_accounts ca
+     LEFT JOIN ${await getWorkspaceSchema()}."workspaceMember" wm ON wm.id::text = ca.workspace_member_id
+     WHERE ca.channel = 'whatsapp'
+       AND ca.provider = 'waha'
+       AND ca.external_account_id = $1
+       AND ca.status <> 'unbound'
+     ORDER BY ca.updated_at DESC
+     LIMIT 1`,
+    [accountId],
+  );
+  return result.rows[0] || null;
+}
+
+async function getCurrentUserWhatsAppBinding(userId) {
+  if (!userId) return null;
+  const result = await pool.query(
+    `SELECT *
+     FROM conv.channel_accounts
+     WHERE user_id = $1
+       AND channel = 'whatsapp'
+       AND provider = 'waha'
+       AND provider_session = $2
+       AND status <> 'unbound'
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [userId, WAHA_SESSION],
+  );
+  return result.rows[0] || null;
+}
+
+function formatBindingOwner(binding) {
+  if (!binding) return '';
+  return [binding.nameFirstName, binding.nameLastName].filter(Boolean).join(' ').trim() || '其他 CRM 用户';
+}
+
+async function bindWhatsAppChannelAccount(authenticated, normalized) {
+  if (!authenticated?.userId || !normalized.connected || !normalized.accountId) {
+    throw new Error('WhatsApp 尚未连接，无法绑定');
+  }
+  const existing = await getActiveWhatsAppBindingByAccount(normalized.accountId);
+  if (existing && existing.user_id !== authenticated.userId) {
+    const error = new Error(`该 WhatsApp 已绑定到 ${formatBindingOwner(existing)}，请先由原账号解绑`);
+    error.status = 409;
+    throw error;
+  }
+  const current = await getCurrentUserWhatsAppBinding(authenticated.userId);
+  if (current && current.external_account_id && current.external_account_id !== normalized.accountId) {
+    const error = new Error('当前 CRM 账号已绑定其他 WhatsApp，请先解绑后再绑定新号码');
+    error.status = 409;
+    throw error;
+  }
+  const actor = authenticated.actor || null;
   await pool.query(
     `INSERT INTO conv.channel_accounts(
        user_id, workspace_member_id, channel, provider, provider_session,
@@ -1366,7 +1425,7 @@ async function upsertWhatsAppChannelAccount(req, normalized) {
        metadata = EXCLUDED.metadata,
        updated_at = now()`,
     [
-      userId,
+      authenticated.userId,
       actor?.id || null,
       normalized.session,
       normalized.accountId || null,
@@ -1377,15 +1436,48 @@ async function upsertWhatsAppChannelAccount(req, normalized) {
   );
 }
 
+async function requireCurrentUserWhatsAppBinding(req, res, normalizedSession = null) {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return null;
+  const normalized = normalizedSession || normalizeWahaSession(await getWahaSession());
+  if (!normalized.connected) {
+    res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
+    return null;
+  }
+  const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
+  if (!binding) {
+    res.status(403).json({ error: '当前 WhatsApp 已连接但尚未绑定到 CRM 账号，请先在设置中点击“绑定到我的账号”' });
+    return null;
+  }
+  if (binding.user_id !== authenticated.userId) {
+    res.status(403).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，当前账号不能使用该号码发送消息` });
+    return null;
+  }
+  return { authenticated, binding, session: normalized };
+}
+
 app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
   try {
     const data = await getWahaSession();
     const normalized = normalizeWahaSession(data);
-    await upsertWhatsAppChannelAccount(req, normalized);
+    const binding = normalized.accountId
+      ? await getActiveWhatsAppBindingByAccount(normalized.accountId)
+      : await getCurrentUserWhatsAppBinding(authenticated.userId);
     res.json({
       channel: 'whatsapp',
       provider: 'waha',
       ...normalized,
+      phone: normalized.phone || binding?.metadata?.phone || '',
+      accountId: normalized.accountId || binding?.external_account_id || '',
+      displayName: normalized.displayName || binding?.display_name || '',
+      binding: {
+        bound: !!binding,
+        boundToCurrentUser: !!binding && binding.user_id === authenticated.userId,
+        boundByOther: !!binding && binding.user_id !== authenticated.userId,
+        ownerName: binding && binding.user_id !== authenticated.userId ? formatBindingOwner(binding) : '',
+      },
       qrAvailable: ['SCAN_QR_CODE', 'FAILED', 'STOPPED', 'STARTING'].includes(normalized.status),
     });
   } catch (error) {
@@ -1393,8 +1485,17 @@ app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, re
   }
 });
 
-app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (_req, res) => {
+app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
   try {
+    const current = normalizeWahaSession(await getWahaSession().catch(() => ({})));
+    if (current.connected) {
+      const binding = await getActiveWhatsAppBindingByAccount(current.accountId);
+      if (binding && binding.user_id !== authenticated.userId) {
+        return res.status(409).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，不能获取二维码` });
+      }
+    }
     let response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
     if (response.status === 422) {
       const detail = await response.json().catch(() => ({}));
@@ -1422,6 +1523,8 @@ app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (_req, res) 
 });
 
 app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
   try {
     let current = await getWahaSession().catch(() => null);
     if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
@@ -1438,7 +1541,6 @@ app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, re
       current = response.ok ? data : await getWahaSession();
     }
     const normalized = normalizeWahaSession(current);
-    await upsertWhatsAppChannelAccount(req, normalized);
     res.status(202).json({
       channel: 'whatsapp',
       provider: 'waha',
@@ -1451,11 +1553,16 @@ app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, re
 });
 
 app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
   try {
     const current = await getWahaSession().catch(() => null);
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
-      await upsertWhatsAppChannelAccount(req, normalized);
+      const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
+      if (binding && binding.user_id !== authenticated.userId) {
+        return res.status(409).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，不能刷新二维码` });
+      }
       return res.status(202).json({
         channel: 'whatsapp',
         provider: 'waha',
@@ -1468,7 +1575,6 @@ app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, 
     await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
     const session = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
     const normalized = normalizeWahaSession(session);
-    await upsertWhatsAppChannelAccount(req, normalized);
     res.status(202).json({
       channel: 'whatsapp',
       provider: 'waha',
@@ -1481,6 +1587,8 @@ app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, 
 });
 
 app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
   try {
     const phoneNumber = normalizeWhatsAppPairingPhone(req.body?.phoneNumber);
     if (phoneNumber.length < 8 || phoneNumber.length > 15) {
@@ -1490,7 +1598,10 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
     let current = await getWahaSession().catch(() => null);
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
-      await upsertWhatsAppChannelAccount(req, normalized);
+      const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
+      if (binding && binding.user_id !== authenticated.userId) {
+        return res.status(409).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，不能生成配对码` });
+      }
       return res.status(409).json({ error: '当前 WhatsApp 已连接，不需要生成配对码', status: normalized.status });
     }
     if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
@@ -1501,7 +1612,10 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
     }
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
-      await upsertWhatsAppChannelAccount(req, normalized);
+      const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
+      if (binding && binding.user_id !== authenticated.userId) {
+        return res.status(409).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，不能生成配对码` });
+      }
       return res.status(409).json({ error: '当前 WhatsApp 已连接，不需要生成配对码', status: normalized.status });
     }
 
@@ -1524,6 +1638,65 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
     });
   } catch (error) {
     res.status(502).json({ error: 'WhatsApp 配对码生成失败', detail: error.message });
+  }
+});
+
+app.post('/api/channel-accounts/whatsapp/bind', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  try {
+    const normalized = normalizeWahaSession(await getWahaSession());
+    await bindWhatsAppChannelAccount(authenticated, normalized);
+    res.status(200).json({
+      channel: 'whatsapp',
+      provider: 'waha',
+      ...normalized,
+      binding: { bound: true, boundToCurrentUser: true, boundByOther: false, ownerName: authenticated.actor?.name || '' },
+      qrAvailable: false,
+    });
+  } catch (error) {
+    res.status(error.status || 502).json({ error: error.message || 'WhatsApp 绑定失败' });
+  }
+});
+
+async function logoutWahaSession() {
+  const candidates = [
+    { pathname: `/api/sessions/${encodeURIComponent(WAHA_SESSION)}/logout`, method: 'POST' },
+    { pathname: `/api/${encodeURIComponent(WAHA_SESSION)}/auth/logout`, method: 'POST' },
+  ];
+  let lastText = '';
+  for (const candidate of candidates) {
+    const response = await fetchWaha(candidate.pathname, { method: candidate.method });
+    const text = await response.text().catch(() => '');
+    if (response.ok || response.status === 422) return true;
+    lastText = text || `${response.status}`;
+    if (![404, 405].includes(response.status)) throw new Error(lastText);
+  }
+  throw new Error(lastText || 'WAHA logout endpoint not available');
+}
+
+app.delete('/api/channel-accounts/whatsapp', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  try {
+    const binding = await getCurrentUserWhatsAppBinding(authenticated.userId);
+    if (!binding) return res.status(404).json({ error: '当前 CRM 账号未绑定 WhatsApp' });
+    const normalized = normalizeWahaSession(await getWahaSession().catch(() => ({})));
+    if (normalized.connected && normalized.accountId && normalized.accountId !== binding.external_account_id) {
+      return res.status(409).json({ error: '当前在线 WhatsApp 与该绑定记录不一致，请刷新状态后重试' });
+    }
+    if (normalized.connected) await logoutWahaSession();
+    await pool.query(
+      `UPDATE conv.channel_accounts
+       SET status = 'unbound',
+           metadata = metadata || jsonb_build_object('unboundAt', now(), 'unboundBy', $2),
+           updated_at = now()
+       WHERE id = $1`,
+      [binding.id, authenticated.userId],
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(502).json({ error: 'WhatsApp 解绑失败', detail: error.message });
   }
 });
 
@@ -2242,6 +2415,13 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
   const conversation = result.rows[0];
   if (!conversation) return res.status(404).json({ error: 'conversation not found' });
   if (conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
+  if (conversation.channel === 'whatsapp') {
+    const ownership = await requireCurrentUserWhatsAppBinding(req, res);
+    if (!ownership) {
+      if (uploadedFile) deleteUploadedFileBestEffort(uploadedFile);
+      return;
+    }
+  }
 
   if (uploadedFile) {
     if (!uploadFileAllowed(uploadedFile)) {

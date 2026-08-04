@@ -938,7 +938,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td><strong>关键词搜索</strong></td><td>保留输入框，v1.0 主要用于基础联系人、消息、号码检索；高级筛选作为后续待办</td></tr>
               <tr><td><strong>实时更新</strong></td><td>新消息通过 SSE 推送，自动出现在列表顶部，未读角标实时更新</td></tr>
               <tr><td><strong>会话卡片</strong></td><td>联系人头像、姓名、渠道图标、最后消息预览、时间戳、未读数</td></tr>
-              <tr><td><strong>主动新建 WhatsApp 会话</strong></td><td>点击搜索框右侧的新会话图标，填写带国家区号的 WhatsApp 号码和首条消息；二次确认后发送。系统校验渠道在线、号码已注册且不是当前绑定号码；已有号码复用原会话，不重复建档，并进入人工接管状态</td></tr>
+              <tr><td><strong>主动新建 WhatsApp 会话</strong></td><td>点击搜索框右侧的新会话图标，填写带国家区号的 WhatsApp 号码和首条消息；二次确认后发送。系统校验渠道在线、当前登录用户已绑定该 WhatsApp ID、号码已注册且不是当前绑定号码；已有号码复用原会话，不重复建档，并进入人工接管状态</td></tr>
             </tbody>
           </table>
         </div>
@@ -974,7 +974,7 @@ td.muted{color:var(--text-tertiary);}
             </tbody>
           </table>
         </div>
-        <div class="callout note"><strong>主动外发保护：</strong>新建 WhatsApp 会话必须验证当前 Twenty 登录用户，并使用请求幂等键防止双击或网络重试造成重复发送。号码校验失败、渠道离线、发送失败均需显示明确原因。个人号主动外发存在 WhatsApp 风控风险，v1.0 仅允许人工逐条发起，不提供批量发送。</div>
+        <div class="callout note"><strong>主动外发保护：</strong>新建 WhatsApp 会话必须验证当前 Twenty 登录用户，并确认该用户已绑定当前 WhatsApp ID；同时使用请求幂等键防止双击或网络重试造成重复发送。号码校验失败、渠道离线、未绑定、发送失败均需显示明确原因。个人号主动外发存在 WhatsApp 风控风险，v1.0 仅允许人工逐条发起，不提供批量发送。</div>
       </div>
     </section>
 
@@ -1044,7 +1044,7 @@ td.muted{color:var(--text-tertiary);}
           <thead><tr><th>功能</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td><strong>渠道账号状态</strong></td><td>显示 WhatsApp 当前连接状态；Instagram / Facebook 暂存为待办</td></tr>
-            <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码绑定和手机号配对码；用于个人 WhatsApp 接入测试</td></tr>
+            <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码连接、手机号配对码、绑定到当前 CRM 账号、解绑；同一个 WhatsApp ID 同一时间只能绑定一个 CRM 账号。当前 v1.0 仍使用 WAHA default session，后续多销售并行多号码需升级为用户级独立 session</td></tr>
             <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置是否允许 AI 自动回复，实时生效</td></tr>
             <tr><td><strong>AI 生效时间段</strong></td><td>每个渠道可配置全天或每日开始/结束时间，支持跨天时间段；不在生效时间内不会调用 AI 回复</td></tr>
             <tr><td><strong>复杂 AI 配置</strong></td><td>兜底话术、知识库范围、允许回答的问题类型后续在设置页补齐</td></tr>
@@ -1093,7 +1093,7 @@ td.muted{color:var(--text-tertiary);}
           <div class="phase-label">Phase 4</div>
           <div>
             <div class="phase-title">设置入口与渠道绑定</div>
-            <div class="phase-desc">Twenty 原生设置入口已挪到主菜单底部；设置 → 账户 → 渠道 已新增 WhatsApp 绑定页。AI 配置当前在工作台提供渠道级开关，复杂配置后续进入设置页。</div>
+            <div class="phase-desc">Twenty 原生设置入口已挪到主菜单底部；设置 → 账户 → 渠道 已新增 WhatsApp 绑定页，支持连接状态查看、绑定到当前账号、解绑和 WhatsApp ID 唯一归属校验。AI 配置当前在工作台提供渠道级开关，复杂配置后续进入设置页。</div>
           </div>
           <div><span class="badge badge-done">✓ 部分支持</span></div>
           <div class="phase-dep">Instagram / Facebook 待补</div>

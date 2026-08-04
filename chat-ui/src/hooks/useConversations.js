@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 export function useConversations() {
   const [conversations, setConversations] = useState([])
@@ -68,8 +69,9 @@ export function useConversations() {
       if (content) form.append('content', content)
       form.append('file', file)
       options.body = form
+      options.headers = withTwentyAuthHeaders()
     } else {
-      options.headers = { 'Content-Type': 'application/json' }
+      options.headers = withTwentyAuthHeaders({ 'Content-Type': 'application/json' })
       options.body = JSON.stringify({ content })
     }
     const response = await fetch(`/conv-api/conversations/${convId}/messages`, options)
