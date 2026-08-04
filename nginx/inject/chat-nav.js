@@ -13,6 +13,7 @@
   var CHANNELS_SETTINGS_NAV_ID = '__settings_channels_nav_item__';
   var CHANNELS_SETTINGS_PAGE_ID = '__settings_channels_page__';
   var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
+  var WEBSITE_RELATED_MODAL_ID = '__website_related_modal__';
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__'; // 存当前激活视图：'chat' | 'mail'
   var AUTH_TOKEN = '';
@@ -49,6 +50,125 @@
     return '';
   }
 
+  function findWebsiteUrl(value) {
+    if (!value || typeof value !== 'object') return '';
+    if (value.guanWangLianJie && typeof value.guanWangLianJie === 'object') {
+      return String(value.guanWangLianJie.primaryLinkUrl || '').trim();
+    }
+    for (var key in value) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      var found = findWebsiteUrl(value[key]);
+      if (found) return found;
+    }
+    return '';
+  }
+
+  function websiteMutationObject(query) {
+    var match = String(query || '').match(/\b(?:create|update)(Opportunity|Person|XiangMu)\b/);
+    if (!match) return '';
+    return { Opportunity: 'opportunity', Person: 'person', XiangMu: 'xiangMu' }[match[1]] || '';
+  }
+
+  function closeWebsiteRelatedModal() {
+    var existing = document.getElementById(WEBSITE_RELATED_MODAL_ID);
+    if (existing) existing.remove();
+  }
+
+  function showWebsiteRelatedModal(context, result) {
+    closeWebsiteRelatedModal();
+    var overlay = document.createElement('div');
+    overlay.id = WEBSITE_RELATED_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(520px,100%);max-height:min(620px,90vh);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:auto;font-family:inherit;color:#18181b;';
+    var rows = (result.related || []).map(function (item) {
+      return '<div style="display:grid;grid-template-columns:64px 1fr;gap:10px;padding:9px 0;border-top:1px solid #f0f0f1">' +
+        '<span style="font-size:12px;color:#7c3aed;font-weight:700">' + escapeHtml(item.objectLabel || '') + '</span>' +
+        '<span style="font-size:12.5px;color:#3f3f46">' + escapeHtml(item.name || '未命名') + '</span>' +
+      '</div>';
+    }).join('');
+    card.innerHTML =
+      '<div style="padding:18px 20px 12px">' +
+        '<div style="font-size:16px;font-weight:700">检测到相关记录</div>' +
+        '<div style="margin-top:8px;font-size:13px;line-height:1.65;color:#52525b">官网域名 <b>' + escapeHtml(result.domain || '') + '</b> 已用于以下记录。当前保存已成功，是否将这些记录归入同一客户类别？</div>' +
+        '<div style="margin-top:12px">' + rows + '</div>' +
+        '<div style="margin-top:10px;padding:10px 12px;border-radius:6px;background:#fafafa;font-size:12px;line-height:1.6;color:#71717a">确认后只建立客户分类关系，不会合并、删除记录，也不会覆盖原有字段或业务链编码。</div>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:flex-end;gap:8px;padding:13px 20px 17px;border-top:1px solid #eee">' +
+        '<button data-related-cancel style="height:32px;padding:0 14px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#52525b;cursor:pointer;font-size:12.5px;font-weight:600">暂不归类</button>' +
+        '<button data-related-confirm style="height:32px;padding:0 14px;border-radius:6px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;cursor:pointer;font-size:12.5px;font-weight:700">确认归为同类</button>' +
+      '</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (event) { if (event.target === overlay) closeWebsiteRelatedModal(); });
+    card.querySelector('[data-related-cancel]').addEventListener('click', closeWebsiteRelatedModal);
+    var confirmButton = card.querySelector('[data-related-confirm]');
+    confirmButton.addEventListener('click', function () {
+      confirmButton.disabled = true;
+      confirmButton.textContent = '归类中...';
+      window.fetch('/conv-api/customer-websites/group', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(context),
+      }).then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (data) {
+          if (!response.ok) throw new Error(data.error || data.detail || '归类失败');
+          return data;
+        });
+      }).then(function (data) {
+        closeWebsiteRelatedModal();
+        convertToast('ok', '已将 ' + data.count + ' 条记录归为同类', 3200);
+      }).catch(function (error) {
+        confirmButton.disabled = false;
+        confirmButton.textContent = '确认归为同类';
+        convertToast('error', error.message || '相关记录归类失败', 4200);
+      });
+    });
+    document.body.appendChild(overlay);
+  }
+
+  function checkWebsiteRelatedRecords(context) {
+    window.fetch('/conv-api/customer-websites/check', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(context),
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) {
+        if (!response.ok) throw new Error(data.error || data.detail || '官网重复检查失败');
+        return data;
+      });
+    }).then(function (data) {
+      if (data.requiresConfirmation) showWebsiteRelatedModal(context, data);
+    }).catch(function (error) {
+      convertToast('error', error.message || '官网重复检查失败', 4200);
+    });
+  }
+
+  function inspectWebsiteMutation(input, init, response) {
+    try {
+      var url = typeof input === 'string' ? input : input && input.url;
+      if (!url || String(url).indexOf('/graphql') === -1 || !init || typeof init.body !== 'string') return;
+      var requestBody = JSON.parse(init.body);
+      var objectName = websiteMutationObject(requestBody.query);
+      var websiteUrl = findWebsiteUrl(requestBody.variables);
+      if (!objectName || !websiteUrl) return;
+      response.clone().json().then(function (payload) {
+        if (payload.errors || !payload.data) return;
+        var recordId = requestBody.variables && requestBody.variables.id;
+        if (!recordId) {
+          for (var key in payload.data) {
+            if (payload.data[key] && payload.data[key].id) { recordId = payload.data[key].id; break; }
+          }
+        }
+        if (!recordId) return;
+        window.setTimeout(function () {
+          checkWebsiteRelatedRecords({ objectName: objectName, recordId: recordId, websiteUrl: websiteUrl });
+        }, 150);
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   function installAuthCapture() {
     if (window.__chatAuthCaptureInstalled) return;
     window.__chatAuthCaptureInstalled = true;
@@ -63,7 +183,13 @@
           if (!token && input && input.headers) token = extractBearer(getHeaderValue(input.headers, 'authorization'));
           rememberAuthToken(token);
         } catch (e) {}
-        return originalFetch.apply(this, arguments);
+        var result = originalFetch.apply(this, arguments);
+        var input = arguments[0];
+        var init = arguments[1] || {};
+        return result.then(function (response) {
+          inspectWebsiteMutation(input, init, response);
+          return response;
+        });
       };
     }
 
@@ -1108,24 +1234,11 @@
     anchor.parentElement.insertBefore(btn, anchor);
   }
 
-  function localizeDuplicateRecordErrors() {
-    var replacements = {
-      'This record already exists. Please check your data and try again.': '该记录包含重复信息，请检查官网链接、邮箱等字段，并更新已有记录。',
-      'A duplicate entry was detected': '检测到重复记录',
-    };
-    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    var node;
-    while ((node = walker.nextNode())) {
-      var value = (node.nodeValue || '').trim();
-      if (replacements[value]) node.nodeValue = (node.nodeValue || '').replace(value, replacements[value]);
-    }
-  }
-
   // ── boot ──────────────────────────────────────────────────────────────────
 
   installAuthCapture();
 
-  function tick() { tryInsert(); ensureConvertTopButton(); localizeDuplicateRecordErrors(); }
+  function tick() { tryInsert(); ensureConvertTopButton(); }
 
   var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });

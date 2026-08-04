@@ -1357,6 +1357,139 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
   }
 });
 
+const CUSTOMER_WEBSITE_OBJECTS = {
+  opportunity: { label: '线索' },
+  person: { label: '客户' },
+  xiangMu: { label: '项目' },
+};
+
+async function normalizedWebsiteDomain(client, websiteUrl) {
+  const result = await client.query(
+    'SELECT conv.normalized_website_domain($1) AS domain',
+    [String(websiteUrl || '').trim()],
+  );
+  return result.rows[0]?.domain || null;
+}
+
+async function findWebsiteRelatedRecords(client, schema, domain) {
+  const result = await client.query(
+    `SELECT * FROM (
+       SELECT 'opportunity'::text AS "objectName", '线索'::text AS "objectLabel",
+              id, COALESCE(NULLIF(name, ''), '未命名线索') AS name,
+              "syncGroupCode", "customerIdentityKey", "createdAt"
+       FROM ${schema}.opportunity
+       WHERE "deletedAt" IS NULL
+         AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $1
+       UNION ALL
+       SELECT 'person', '客户', id,
+              COALESCE(NULLIF(concat_ws(' ', "nameFirstName", "nameLastName"), ''), '未命名客户'),
+              "syncGroupCode", "customerIdentityKey", "createdAt"
+       FROM ${schema}.person
+       WHERE "deletedAt" IS NULL
+         AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $1
+       UNION ALL
+       SELECT 'xiangMu', '项目', id, COALESCE(NULLIF(name, ''), '未命名项目'),
+              "syncGroupCode", "customerIdentityKey", "createdAt"
+       FROM ${schema}."_xiangMu"
+       WHERE "deletedAt" IS NULL
+         AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $1
+     ) records
+     ORDER BY "createdAt", id`,
+    [domain],
+  );
+  return result.rows;
+}
+
+app.post('/api/customer-websites/check', requireSameSite, async (req, res) => {
+  const objectName = String(req.body?.objectName || '');
+  const recordId = String(req.body?.recordId || '');
+  const websiteUrl = String(req.body?.websiteUrl || '');
+  if (!CUSTOMER_WEBSITE_OBJECTS[objectName] || !/^[0-9a-f-]{36}$/i.test(recordId)) {
+    return res.status(400).json({ error: '重复检查参数无效' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const schema = await getWorkspaceSchema();
+    const domain = await normalizedWebsiteDomain(client, websiteUrl);
+    if (!domain) return res.json({ domain: null, related: [], requiresConfirmation: false });
+    const records = await findWebsiteRelatedRecords(client, schema, domain);
+    const current = records.find((item) => item.objectName === objectName && item.id === recordId);
+    const related = records.filter((item) => {
+      if (item.objectName === objectName && item.id === recordId) return false;
+      // 相同业务链已由 syncGroupCode 明确关联，不需要再次弹出客户归类确认。
+      if (current?.syncGroupCode && item.syncGroupCode === current.syncGroupCode) return false;
+      return true;
+    });
+    const alreadyGrouped = !!current?.customerIdentityKey
+      && related.length > 0
+      && related.every((item) => item.customerIdentityKey === current.customerIdentityKey);
+    res.json({ domain, related, requiresConfirmation: related.length > 0 && !alreadyGrouped, alreadyGrouped });
+  } catch (error) {
+    console.error('[customer-websites/check] failed:', error.message);
+    res.status(502).json({ error: '官网重复检查失败', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/customer-websites/group', requireSameSite, async (req, res) => {
+  const objectName = String(req.body?.objectName || '');
+  const recordId = String(req.body?.recordId || '');
+  const websiteUrl = String(req.body?.websiteUrl || '');
+  if (!CUSTOMER_WEBSITE_OBJECTS[objectName] || !/^[0-9a-f-]{36}$/i.test(recordId)) {
+    return res.status(400).json({ error: '归类参数无效' });
+  }
+
+  const client = await pool.connect();
+  try {
+    const schema = await getWorkspaceSchema();
+    await client.query('BEGIN');
+    const domain = await normalizedWebsiteDomain(client, websiteUrl);
+    if (!domain) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: '官网链接无效，无法归类' });
+    }
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('customer-website:' || $1))", [domain]);
+    const records = await findWebsiteRelatedRecords(client, schema, domain);
+    if (!records.some((item) => item.objectName === objectName && item.id === recordId)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '当前记录不存在或官网链接已变更' });
+    }
+    if (records.length < 2) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: '当前没有可归类的相关记录' });
+    }
+
+    let customerIdentityKey = records.find((item) => item.customerIdentityKey)?.customerIdentityKey;
+    if (!customerIdentityKey) {
+      const keyResult = await client.query(
+        "SELECT 'NHDWEB-' || upper(substr(encode(digest($1, 'sha256'), 'hex'), 1, 20)) AS key",
+        [domain],
+      );
+      customerIdentityKey = keyResult.rows[0].key;
+    }
+
+    for (const tableName of ['opportunity', 'person', '_xiangMu']) {
+      await client.query(
+        `UPDATE ${schema}."${tableName}"
+         SET "customerIdentityKey" = $2
+         WHERE "deletedAt" IS NULL
+           AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $1`,
+        [domain, customerIdentityKey],
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ grouped: true, domain, customerIdentityKey, count: records.length, records });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[customer-websites/group] failed:', error.message);
+    res.status(502).json({ error: '相关记录归类失败', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/api/companies/search', requireSameSite, async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();

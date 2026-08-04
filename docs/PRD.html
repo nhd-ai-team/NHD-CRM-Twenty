@@ -693,7 +693,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td><strong>线索 Opportunity</strong></td><td>插入 / 更新后</td><td>People、项目</td><td>按 syncGroupCode、关键联系人或来源线索同步共享字段</td></tr>
               <tr><td><strong>客户 People</strong></td><td>插入 / 更新后</td><td>Opportunity、项目</td><td>按 syncGroupCode、sourceOpportunityId、linkedPersonId 同步共享字段</td></tr>
               <tr><td><strong>项目 _xiangMu</strong></td><td>插入 / 更新后</td><td>Opportunity、People</td><td>按 syncGroupCode、sourceOpportunityId、linkedPersonId 同步共享字段</td></tr>
-              <tr><td><strong>线索 / 客户 / 项目</strong></td><td>官网链接写入前</td><td>三表</td><td>按归一化官网域名检查重复；不同关联编码存在相同域名时阻止保存</td></tr>
+              <tr><td><strong>线索 / 客户 / 项目</strong></td><td>官网链接保存后</td><td>三表</td><td>按归一化官网域名检测相关记录；不阻止保存，弹窗确认后写入独立的客户同类分组标识</td></tr>
             </tbody>
           </table>
         </div>
@@ -716,7 +716,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td>keHuLaiYuan</td><td>keHuLaiYuan</td><td>客户来源同步</td></tr>
               <tr><td>keHuLeiXing</td><td>keHuLeiXing</td><td>中间商、业主、EPC、技术咨询可双向同步；客户表额外支持「工厂」，该值不反向写入线索</td></tr>
               <tr><td>zhiWei</td><td>jobTitle</td><td>职位同步</td></tr>
-              <tr><td>guanWangLianJie</td><td>guanWangLianJie</td><td>官网链接同步；协议、www、路径、参数和大小写不影响重复判断</td></tr>
+              <tr><td>guanWangLianJie</td><td>guanWangLianJie</td><td>官网链接同步；协议、www、路径、参数和大小写不影响相关记录判断</td></tr>
             </tbody>
           </table>
         </div>
@@ -734,7 +734,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td>message</td><td>gaiShu</td><td>线索备注 / 背景同步为项目概述</td></tr>
               <tr><td>xiangMuJinDu</td><td>muQianJinDu</td><td>当前项目进度文本同步</td></tr>
               <tr><td>stage</td><td>renWuJinDu</td><td>按阶段枚举映射同步，详见下表</td></tr>
-              <tr><td>guanWangLianJie</td><td>guanWangLianJie</td><td>官网链接同步，并参与三表域名去重</td></tr>
+              <tr><td>guanWangLianJie</td><td>guanWangLianJie</td><td>官网链接同步，并参与三表相关记录检测</td></tr>
             </tbody>
           </table>
         </div>
@@ -750,7 +750,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td>sourceOpportunityId</td><td>sourceOpportunityId</td><td>来源线索保持一致</td></tr>
               <tr><td>linkedProjectId</td><td>id</td><td>项目关联回写到客户</td></tr>
               <tr><td>id</td><td>linkedPersonId</td><td>客户关联回写到项目</td></tr>
-              <tr><td>guanWangLianJie</td><td>guanWangLianJie</td><td>官网链接同步，并参与三表域名去重</td></tr>
+              <tr><td>guanWangLianJie</td><td>guanWangLianJie</td><td>官网链接同步，并参与三表相关记录检测</td></tr>
             </tbody>
           </table>
         </div>
