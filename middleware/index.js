@@ -1350,7 +1350,7 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
       session: WAHA_SESSION,
       phoneNumber,
       code: data.code,
-      expiresHint: '配对码有效时间较短，请立即在 WhatsApp 手机端输入。',
+      expiresHint: '请在生成后 60 秒内在 WhatsApp 手机端输入配对码，超时需重新生成。',
     });
   } catch (error) {
     res.status(502).json({ error: 'WhatsApp 配对码生成失败', detail: error.message });
