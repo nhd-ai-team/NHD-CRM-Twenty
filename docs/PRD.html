@@ -938,6 +938,7 @@ td.muted{color:var(--text-tertiary);}
               <tr><td><strong>关键词搜索</strong></td><td>保留输入框，v1.0 主要用于基础联系人、消息、号码检索；高级筛选作为后续待办</td></tr>
               <tr><td><strong>实时更新</strong></td><td>新消息通过 SSE 推送，自动出现在列表顶部，未读角标实时更新</td></tr>
               <tr><td><strong>会话卡片</strong></td><td>联系人头像、姓名、渠道图标、最后消息预览、时间戳、未读数</td></tr>
+              <tr><td><strong>主动新建 WhatsApp 会话</strong></td><td>点击搜索框右侧的新会话图标，填写带国家区号的 WhatsApp 号码和首条消息；二次确认后发送。系统校验渠道在线、号码已注册且不是当前绑定号码；已有号码复用原会话，不重复建档，并进入人工接管状态</td></tr>
             </tbody>
           </table>
         </div>
@@ -970,10 +971,10 @@ td.muted{color:var(--text-tertiary);}
             <thead><tr><th>Tab</th><th>内容</th><th>阶段</th></tr></thead>
             <tbody>
               <tr><td><strong>资料</strong></td><td>姓名、公司、WhatsApp、邮箱、国家、客户来源、公司类型、线索阶段、客户需求产品、备注；点击「更新线索」写入 Opportunity</td><td>v1.0</td></tr>
-              <tr><td><strong>话术</strong></td><td>保留 Tab 入口，具体话术库后续在设置中的 AI 配置统一维护</td><td>后续</td></tr>
             </tbody>
           </table>
         </div>
+        <div class="callout note"><strong>主动外发保护：</strong>新建 WhatsApp 会话必须验证当前 Twenty 登录用户，并使用请求幂等键防止双击或网络重试造成重复发送。号码校验失败、渠道离线、发送失败均需显示明确原因。个人号主动外发存在 WhatsApp 风控风险，v1.0 仅允许人工逐条发起，不提供批量发送。</div>
       </div>
     </section>
 

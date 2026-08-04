@@ -9,6 +9,7 @@ import { AiConfigPopover } from './components/AiConfigPopover'
 import { installTwentyAuthMessageListener } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
+import { NewWhatsAppConversationModal } from './components/NewWhatsAppConversationModal'
 import { PanelRightOpen, PanelRightClose, Settings } from 'lucide-react'
 
 // Layout breakpoints (iframe width)
@@ -117,6 +118,7 @@ export default function App() {
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [contactOpen, setContactOpen] = useState(true)
+  const [newWhatsAppOpen, setNewWhatsAppOpen] = useState(false)
 
   // 右侧「资料」草稿 + 转线索：抽到 useLeadForm，与邮箱视图共用。
   const leadForm = useLeadForm({ selected, selectedId })
@@ -165,6 +167,7 @@ export default function App() {
               conversations={filtered}
               selectedId={selectedId}
               onSelect={(id) => { selectConversation(id); if (isNarrow) setSidebarOpen(false) }}
+              onNewWhatsApp={() => setNewWhatsAppOpen(true)}
               activeStatus={activeStatus}
               setActiveStatus={setActiveStatus}
               search={search}
@@ -187,6 +190,16 @@ export default function App() {
         selected={selected}
         inline={isWide}
         open={contactOpen}
+      />
+      <NewWhatsAppConversationModal
+        open={newWhatsAppOpen}
+        onClose={() => setNewWhatsAppOpen(false)}
+        onCreated={async (conversationId) => {
+          await reloadConversations()
+          selectConversation(conversationId)
+          setActiveChannel('whatsapp')
+          setActiveStatus('all')
+        }}
       />
     </div>
   )

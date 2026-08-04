@@ -228,6 +228,41 @@ function getTwentyTokenFromRequest(req) {
   return TWENTY_API_KEY;
 }
 
+function getExplicitTwentyTokenFromRequest(req) {
+  const authorization = String(req.headers.authorization || '').trim();
+  if (authorization.toLowerCase().startsWith('bearer ')) return authorization.slice(7).trim();
+  const forwardedToken = String(req.headers['x-twenty-access-token'] || '').trim();
+  if (forwardedToken) return forwardedToken;
+  return getTwentyTokenFromCookie(req);
+}
+
+async function requireAuthenticatedTwentyUser(req, res) {
+  const token = getExplicitTwentyTokenFromRequest(req);
+  const tokenPayload = decodeJwtPayload(token);
+  const userId = tokenPayload?.sub || '';
+  if (!token || !userId || !tokenPayload?.workspaceId) {
+    res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+    return null;
+  }
+  const forwardedUserId = String(req.headers['x-twenty-user-id'] || '').trim();
+  if (forwardedUserId && forwardedUserId !== userId) {
+    res.status(401).json({ error: '用户身份信息不一致，请刷新 CRM 后重试' });
+    return null;
+  }
+  try {
+    await twentyGraphQL('query { opportunities(first: 1) { edges { node { id } } } }', {}, token);
+  } catch {
+    res.status(401).json({ error: '无法验证当前 CRM 用户，请重新登录后重试' });
+    return null;
+  }
+  const actor = await resolveAuditActor(req);
+  if (!actor) {
+    res.status(403).json({ error: '当前账号没有工作区成员权限' });
+    return null;
+  }
+  return { token, userId, actor };
+}
+
 function decodeJwtPayload(token) {
   try {
     const payload = String(token || '').split('.')[1];
@@ -394,6 +429,13 @@ async function ensureSchema() {
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_takeover_until TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS conv.outbound_requests (
+      idempotency_key UUID PRIMARY KEY,
+      channel TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'processing',
+      result JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
     UPDATE conv.conversations SET ai_enabled = (channel = 'website') WHERE ai_enabled IS NULL;
     -- 渠道级 AI 自动回复开关（工作台齿轮）：作为「生效范围」基线，
     -- 会话级 ai_enabled 保留为单会话覆盖位（默认 NULL 时继承此表）。
@@ -938,6 +980,134 @@ app.get('/api/conversations', async (_req, res) => {
 app.get('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
+});
+
+function normalizeOutboundWhatsAppPhone(input) {
+  let digits = String(input || '').trim().replace(/[^\d]/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  return digits;
+}
+
+app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
+  const phone = normalizeOutboundWhatsAppPhone(req.body?.phone);
+  const content = String(req.body?.content || '').trim();
+  const idempotencyKey = String(req.body?.idempotencyKey || '').trim();
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+
+  if (!/^\d{7,15}$/.test(phone)) {
+    return res.status(400).json({ error: '请输入包含国家区号的有效 WhatsApp 号码，例如 +1 202 555 0147' });
+  }
+  if (!content) return res.status(400).json({ error: '请输入首条消息' });
+  if (content.length > 4096) return res.status(400).json({ error: '首条消息不能超过 4096 个字符' });
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(idempotencyKey)) {
+    return res.status(400).json({ error: '请求标识无效，请关闭弹窗后重试' });
+  }
+  const claimed = await pool.query(
+    `INSERT INTO conv.outbound_requests(idempotency_key, channel)
+     VALUES ($1, 'whatsapp') ON CONFLICT DO NOTHING RETURNING idempotency_key`,
+    [idempotencyKey],
+  );
+  if (!claimed.rowCount) {
+    const previous = await pool.query(
+      `SELECT status, result FROM conv.outbound_requests WHERE idempotency_key = $1 AND channel = 'whatsapp'`,
+      [idempotencyKey],
+    );
+    if (previous.rows[0]?.status === 'completed') return res.json(previous.rows[0].result);
+    if (previous.rows[0]?.status === 'sent') {
+      return res.status(409).json({ error: '消息已经发出，CRM 正在归档，请刷新会话列表，勿重复发送' });
+    }
+    return res.status(409).json({ error: '消息正在发送，请勿重复提交' });
+  }
+
+  try {
+    const session = normalizeWahaSession(await getWahaSession());
+    if (!session.connected) return res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
+    if (phoneFromJid(session.accountId) === phone) return res.status(400).json({ error: '不能向当前绑定的 WhatsApp 号码发起会话' });
+
+    const checkResponse = await fetchWaha(
+      `/api/contacts/check-exists?session=${encodeURIComponent(WAHA_SESSION)}&phone=${encodeURIComponent(phone)}`,
+    );
+    const checked = await checkResponse.json().catch(() => ({}));
+    if (!checkResponse.ok) throw new Error(checked.message || 'WhatsApp 号码校验失败');
+    if (!checked.numberExists || !checked.chatId) {
+      return res.status(404).json({ error: '该号码未注册 WhatsApp，请检查国家区号和号码是否正确' });
+    }
+
+    const chatId = checked.chatId;
+    const sentResponse = await fetchWaha('/api/sendText', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: WAHA_SESSION, chatId, text: content }),
+    });
+    const sent = await sentResponse.json().catch(() => ({}));
+    if (!sentResponse.ok) throw new Error(sent.message || 'WhatsApp 消息发送失败');
+
+    const externalMessageId = sent?.id?._serialized || sent?._data?.id?._serialized || null;
+    await pool.query(
+      `UPDATE conv.outbound_requests SET status = 'sent', result = $2, updated_at = now() WHERE idempotency_key = $1`,
+      [idempotencyKey, JSON.stringify({ phone: `+${phone}`, chatId, externalMessageId })],
+    );
+    const actorId = authenticated.userId;
+    const client = await pool.connect();
+    let conversation;
+    let reused = false;
+    try {
+      await client.query('BEGIN');
+      const existing = await client.query(
+        `SELECT id FROM conv.conversations WHERE channel = 'whatsapp' AND external_chat_id = $1`,
+        [chatId],
+      );
+      reused = existing.rowCount > 0;
+      const contactResult = await client.query(
+        `INSERT INTO conv.contacts(channel, external_id, display_name, phone)
+         VALUES ('whatsapp', $1, $2, $3)
+         ON CONFLICT(channel, external_id) DO UPDATE SET
+           phone = COALESCE(conv.contacts.phone, EXCLUDED.phone), updated_at = now()
+         RETURNING id, display_name, phone`,
+        [chatId, `+${phone}`, `+${phone}`],
+      );
+      const conversationResult = await client.query(
+        `INSERT INTO conv.conversations(channel, external_chat_id, contact_id, status, agent_id)
+         VALUES ('whatsapp', $1, $2, 'takeover', $3)
+         ON CONFLICT(channel, external_chat_id) DO UPDATE SET
+           status = 'takeover', agent_id = COALESCE(EXCLUDED.agent_id, conv.conversations.agent_id), updated_at = now()
+         RETURNING id, channel, status, external_chat_id AS "externalChatId"`,
+        [chatId, contactResult.rows[0].id, actorId],
+      );
+      conversation = conversationResult.rows[0];
+      await client.query(
+        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, sent_at)
+         VALUES ($1, $2, 'agent', $3, now()) ON CONFLICT(external_msg_id) DO NOTHING`,
+        [externalMessageId, conversation.id, content],
+      );
+      await client.query(
+        `UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`,
+        [conversation.id, content],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    const result = { conversationId: conversation.id, reused, phone: `+${phone}`, status: conversation.status };
+    await pool.query(
+      `UPDATE conv.outbound_requests SET status = 'completed', result = $2, updated_at = now() WHERE idempotency_key = $1`,
+      [idempotencyKey, JSON.stringify(result)],
+    );
+    return res.status(reused ? 200 : 201).json(result);
+  } catch (error) {
+    console.error('[whatsapp] start conversation failed:', error.message);
+    return res.status(502).json({ error: '无法发起 WhatsApp 会话', detail: error.message });
+  } finally {
+    await pool.query(
+      `DELETE FROM conv.outbound_requests WHERE idempotency_key = $1 AND status = 'processing'`,
+      [idempotencyKey],
+    ).catch(() => {});
+  }
 });
 
 app.get('/api/email/status', async (_req, res) => {

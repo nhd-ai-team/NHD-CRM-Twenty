@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react'
+import { MessageCircle, Search } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { STATUS_FILTERS } from '../data/mock'
@@ -96,15 +96,16 @@ function ConvCard({ conv, isSelected, onSelect }) {
   )
 }
 
-export function ConversationSidebar({ conversations, selectedId, onSelect, activeStatus, setActiveStatus, search, setSearch }) {
+export function ConversationSidebar({ conversations, selectedId, onSelect, onNewWhatsApp, activeStatus, setActiveStatus, search, setSearch }) {
   return (
     <div style={{
       width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
       background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', height: '100%',
     }}>
       {/* Search */}
-      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-soft)', flexShrink: 0 }}>
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-soft)', flexShrink: 0, display: 'flex', gap: 6 }}>
         <div style={{
+          flex: 1,
           display: 'flex', alignItems: 'center', gap: 6,
           background: 'var(--bg-surface)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '5px 10px',
@@ -120,6 +121,9 @@ export function ConversationSidebar({ conversations, selectedId, onSelect, activ
             }}
           />
         </div>
+        <button onClick={onNewWhatsApp} title="新建 WhatsApp 会话" aria-label="新建 WhatsApp 会话" style={{ width: 30, height: 30, flexShrink: 0, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-surface)', color: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+          <MessageCircle size={15} />
+        </button>
       </div>
 
       {/* Status filters */}
