@@ -117,22 +117,17 @@ BEGIN
           THEN COALESCE(conv.first_email(($1)."youXiang"), conv.first_email(($1)."emailPrimaryEmail"))
         ELSE target."emailsPrimaryEmail"
       END,
-      "guoJiaAddressCountry" = COALESCE(NULLIF(($1)."countryAddressCountry", ''), "guoJiaAddressCountry"),
+      "country" = COALESCE(NULLIF(($1)."countryAddressCountry", ''), "country"),
       "keHuXuQiuChanPin" = COALESCE(NULLIF(($1)."keHuXuQiuChanPin", ''), "keHuXuQiuChanPin"),
       "keHuLaiYuan" = CASE
         WHEN ($1)."keHuLaiYuan" IS NULL THEN "keHuLaiYuan"
         ELSE (($1)."keHuLaiYuan"::text)::%I."person_keHuLaiYuan_enum"
       END,
-      "keHuLeiXing" = CASE
-        WHEN ($1)."keHuLeiXing"::text IN ('ZHONG_JIAN_SHANG','YE_ZHU','EPC','JI_SHU_ZI_XUN')
-          THEN (($1)."keHuLeiXing"::text)::%I."person_keHuLeiXing_enum"
-        ELSE "keHuLeiXing"
-      END,
       "jobTitle" = COALESCE(NULLIF(($1)."zhiWei", ''), "jobTitle"),
       "updatedAt" = now()
     WHERE "deletedAt" IS NULL
       AND ("syncGroupCode" = ($1)."syncGroupCode" OR target.id = ($1)."pointOfContactId")
-  $sql$, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA)
+  $sql$, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA)
   USING NEW;
 
   EXECUTE format($sql$
@@ -142,7 +137,7 @@ BEGIN
       "sourceOpportunityId" = COALESCE("sourceOpportunityId", ($1).id),
       "linkedPersonId" = COALESCE("linkedPersonId", ($1)."linkedPersonId", ($1)."pointOfContactId"),
       name = COALESCE(NULLIF(($1).name, ''), name),
-      "guoJiaAddressCountry" = COALESCE(NULLIF(($1)."countryAddressCountry", ''), "guoJiaAddressCountry"),
+      "guoJia" = COALESCE(NULLIF(($1)."countryAddressCountry", ''), "guoJia"),
       "xuQiuChanPin" = COALESCE(NULLIF(($1)."keHuXuQiuChanPin", ''), "xuQiuChanPin"),
       "jinEAmountMicros" = COALESCE(($1)."amountAmountMicros", "jinEAmountMicros"),
       "jinECurrencyCode" = COALESCE(NULLIF(($1)."amountCurrencyCode", ''), "jinECurrencyCode"),
@@ -183,16 +178,11 @@ BEGIN
       "phonePrimaryPhoneCountryCode" = COALESCE(NULLIF(($1)."phonesPrimaryPhoneCountryCode", ''), "phonePrimaryPhoneCountryCode"),
       "phonePrimaryPhoneCallingCode" = COALESCE(NULLIF(($1)."phonesPrimaryPhoneCallingCode", ''), "phonePrimaryPhoneCallingCode"),
       "youXiang" = COALESCE(NULLIF(($1)."emailsPrimaryEmail", ''), "youXiang"),
-      "countryAddressCountry" = COALESCE(NULLIF(($1)."guoJiaAddressCountry", ''), "countryAddressCountry"),
+      "countryAddressCountry" = COALESCE(NULLIF(($1)."country", ''), "countryAddressCountry"),
       "keHuXuQiuChanPin" = COALESCE(NULLIF(($1)."keHuXuQiuChanPin", ''), "keHuXuQiuChanPin"),
       "keHuLaiYuan" = CASE
         WHEN ($1)."keHuLaiYuan" IS NULL THEN "keHuLaiYuan"
         ELSE (($1)."keHuLaiYuan"::text)::%I."opportunity_keHuLaiYuan_enum"
-      END,
-      "keHuLeiXing" = CASE
-        WHEN ($1)."keHuLeiXing"::text IN ('ZHONG_JIAN_SHANG','YE_ZHU','EPC','JI_SHU_ZI_XUN')
-          THEN (($1)."keHuLeiXing"::text)::%I."opportunity_keHuLeiXing_enum"
-        ELSE "keHuLeiXing"
       END,
       "zhiWei" = COALESCE(NULLIF(($1)."jobTitle", ''), "zhiWei"),
       "updatedAt" = now()
@@ -203,7 +193,7 @@ BEGIN
         OR "linkedPersonId" = ($1).id
         OR "pointOfContactId" = ($1).id
       )
-  $sql$, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA)
+  $sql$, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA)
   USING NEW;
 
   EXECUTE format($sql$
@@ -213,7 +203,7 @@ BEGIN
       "linkedPersonId" = COALESCE("linkedPersonId", ($1).id),
       "sourceOpportunityId" = COALESCE("sourceOpportunityId", ($1)."sourceOpportunityId"),
       name = COALESCE(NULLIF(($1)."nameFirstName", ''), name),
-      "guoJiaAddressCountry" = COALESCE(NULLIF(($1)."guoJiaAddressCountry", ''), "guoJiaAddressCountry"),
+      "guoJia" = COALESCE(NULLIF(($1)."country", ''), "guoJia"),
       "xuQiuChanPin" = COALESCE(NULLIF(($1)."keHuXuQiuChanPin", ''), "xuQiuChanPin"),
       "updatedAt" = now()
     WHERE "deletedAt" IS NULL
@@ -240,7 +230,7 @@ BEGIN
       "syncGroupCode" = COALESCE("syncGroupCode", ($1)."syncGroupCode"),
       "linkedProjectId" = COALESCE("linkedProjectId", ($1).id),
       name = COALESCE(NULLIF(($1).name, ''), name),
-      "countryAddressCountry" = COALESCE(NULLIF(($1)."guoJiaAddressCountry", ''), "countryAddressCountry"),
+      "countryAddressCountry" = COALESCE(NULLIF(($1)."guoJia", ''), "countryAddressCountry"),
       "keHuXuQiuChanPin" = COALESCE(NULLIF(($1)."xuQiuChanPin", ''), "keHuXuQiuChanPin"),
       "amountAmountMicros" = COALESCE(($1)."jinEAmountMicros", "amountAmountMicros"),
       "amountCurrencyCode" = COALESCE(NULLIF(($1)."jinECurrencyCode", ''), "amountCurrencyCode"),
@@ -263,7 +253,7 @@ BEGIN
       "linkedProjectId" = COALESCE("linkedProjectId", ($1).id),
       "sourceOpportunityId" = COALESCE("sourceOpportunityId", ($1)."sourceOpportunityId"),
       "nameFirstName" = COALESCE(NULLIF(($1).name, ''), "nameFirstName"),
-      "guoJiaAddressCountry" = COALESCE(NULLIF(($1)."guoJiaAddressCountry", ''), "guoJiaAddressCountry"),
+      "country" = COALESCE(NULLIF(($1)."guoJia", ''), "country"),
       "keHuXuQiuChanPin" = COALESCE(NULLIF(($1)."xuQiuChanPin", ''), "keHuXuQiuChanPin"),
       "updatedAt" = now()
     WHERE "deletedAt" IS NULL

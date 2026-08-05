@@ -18,6 +18,7 @@ const TWENTY_API_KEY = process.env.TWENTY_API_KEY || '';
 const WAHA_API_URL = process.env.WAHA_API_URL || 'http://localhost:3003';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
 const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
+const WAHA_WEBHOOK_URL = process.env.WAHA_WEBHOOK_URL || 'http://host.docker.internal:3002/api/whatsapp/webhook';
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
 const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
 const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
@@ -1334,6 +1335,46 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function isWahaSessionNotFound(error) {
+  return error?.status === 404 || String(error?.detail?.message || error?.message || '').toLowerCase().includes('session not found');
+}
+
+async function createWahaSession() {
+  const response = await fetchWaha('/api/sessions/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: WAHA_SESSION,
+      config: {
+        webhooks: [
+          {
+            url: WAHA_WEBHOOK_URL,
+            events: ['message', 'session.status'],
+          },
+        ],
+      },
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok && response.status !== 409 && response.status !== 422) {
+    const error = new Error(data.message || data.error || 'WAHA session create failed');
+    error.status = response.status;
+    error.detail = data;
+    throw error;
+  }
+  return data;
+}
+
+async function ensureWahaSession() {
+  try {
+    return await getWahaSession();
+  } catch (error) {
+    if (!isWahaSessionNotFound(error)) throw error;
+    await createWahaSession();
+    return waitForWahaStatus(['STARTING', 'SCAN_QR_CODE', 'WORKING', 'FAILED', 'STOPPED'], 10, 1000);
+  }
+}
+
 async function getWahaSession() {
   const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}`);
   const data = await response.json().catch(() => ({}));
@@ -1460,7 +1501,7 @@ app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, re
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const data = await getWahaSession();
+    const data = await ensureWahaSession();
     const normalized = normalizeWahaSession(data);
     const binding = normalized.accountId
       ? await getActiveWhatsAppBindingByAccount(normalized.accountId)
@@ -1489,7 +1530,7 @@ app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (req, res) =
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const current = normalizeWahaSession(await getWahaSession().catch(() => ({})));
+    const current = normalizeWahaSession(await ensureWahaSession().catch(() => ({})));
     if (current.connected) {
       const binding = await getActiveWhatsAppBindingByAccount(current.accountId);
       if (binding && binding.user_id !== authenticated.userId) {
@@ -1526,7 +1567,7 @@ app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, re
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    let current = await getWahaSession().catch(() => null);
+    let current = await ensureWahaSession().catch(() => null);
     if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
       await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
       current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
@@ -1556,7 +1597,7 @@ app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, 
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const current = await getWahaSession().catch(() => null);
+    const current = await ensureWahaSession().catch(() => null);
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
       const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
@@ -1595,7 +1636,7 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
       return res.status(400).json({ error: '请输入带国家区号的 WhatsApp 号码，例如 8613800000000（仅示例）' });
     }
 
-    let current = await getWahaSession().catch(() => null);
+    let current = await ensureWahaSession().catch(() => null);
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
       const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
@@ -1645,7 +1686,7 @@ app.post('/api/channel-accounts/whatsapp/bind', requireSameSite, async (req, res
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const normalized = normalizeWahaSession(await getWahaSession());
+    const normalized = normalizeWahaSession(await ensureWahaSession());
     await bindWhatsAppChannelAccount(authenticated, normalized);
     res.status(200).json({
       channel: 'whatsapp',
@@ -1853,6 +1894,7 @@ const DRAFT_FIELDS = ['name', 'company', 'companyId', 'phone', 'email', 'country
 const OPPORTUNITY_EMAIL_FIELD = 'youXiang';
 const EMAIL_SEPARATOR_RE = /[\s,;，；]+/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const workspaceColumnExistsCache = new Map();
 const normalizeEmailList = (value) => String(value || '')
   .split(EMAIL_SEPARATOR_RE)
   .map((item) => item.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, ''))
@@ -1871,6 +1913,41 @@ const firstValidEmail = (...values) => {
   return null;
 };
 const phoneDigits = (value) => String(value || '').replace(/\D/g, '');
+
+async function workspaceColumnExists(tableName, columnName) {
+  const schema = await getWorkspaceSchema();
+  const cacheKey = `${schema}.${tableName}.${columnName}`;
+  if (workspaceColumnExistsCache.has(cacheKey)) return workspaceColumnExistsCache.get(cacheKey);
+  const result = await pool.query(
+    `SELECT 1
+       FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name = $2
+        AND column_name = $3
+      LIMIT 1`,
+    [schema, tableName, columnName],
+  );
+  const exists = result.rowCount > 0;
+  workspaceColumnExistsCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function stripUnavailableOpportunityFields(data, skipped = []) {
+  const optionalCustomFields = ['keHuLeiXing', OPPORTUNITY_EMAIL_FIELD];
+  for (const field of optionalCustomFields) {
+    if (data[field] !== undefined && !(await workspaceColumnExists('opportunity', field))) {
+      delete data[field];
+      skipped.push(field === 'keHuLeiXing' ? 'companyType' : 'email');
+    }
+  }
+}
+
+async function opportunitySelectExpression(fieldName, fallbackExpression = 'NULL') {
+  return (await workspaceColumnExists('opportunity', fieldName))
+    ? `"${fieldName}"`
+    : `${fallbackExpression} AS "${fieldName}"`;
+}
+
 app.put('/api/conversations/:id/draft', requireSameSite, async (req, res) => {
   const b = req.body || {};
   const draft = {};
@@ -1968,6 +2045,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (!isWebsiteFormSource && (rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
   const country = String(b.country || '').trim();
   if (country) data.country = { addressCountry: country };
+  await stripUnavailableOpportunityFields(data, skipped);
 
   const writeOpp = (d) => (isUpdate
     ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }, twentyToken).then((r) => r?.updateOpportunity)
@@ -2068,7 +2146,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
            ) THEN $9::text
            ELSE target."emailsPrimaryEmail"
          END,
-         "guoJiaAddressCountry" = COALESCE($10, "guoJiaAddressCountry"),
+         "country" = COALESCE($10, "country"),
          "keHuXuQiuChanPin" = COALESCE($11, "keHuXuQiuChanPin"),
          "keHuLaiYuan" = CASE WHEN $12::text IS NULL THEN "keHuLaiYuan" ELSE $12::text::${schema}."person_keHuLaiYuan_enum" END,
          "keHuLeiXing" = CASE WHEN $13::text IS NULL THEN "keHuLeiXing" ELSE $13::text::${schema}."person_keHuLeiXing_enum" END,
@@ -2107,7 +2185,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
        "phonesPrimaryPhoneCountryCode",
        "phonesPrimaryPhoneCallingCode",
        "emailsPrimaryEmail",
-       "guoJiaAddressCountry",
+       "country",
        "keHuXuQiuChanPin",
        "keHuLaiYuan",
        "keHuLeiXing",
@@ -2226,6 +2304,7 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
   const client = await pool.connect();
   try {
     const schema = await getWorkspaceSchema();
+    const opportunityKeHuLeiXingSelect = await opportunitySelectExpression('keHuLeiXing');
     await client.query('BEGIN');
 
     const opportunityResult = await client.query(
@@ -2245,7 +2324,7 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
          "countryAddressCountry",
          "keHuXuQiuChanPin",
          "keHuLaiYuan",
-         "keHuLeiXing",
+         ${opportunityKeHuLeiXingSelect},
          "zhiWei"
        FROM ${schema}.opportunity
        WHERE id = $1 AND "deletedAt" IS NULL

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nhd.crm.autostart</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm/scripts/start-crm-services.zsh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>WorkingDirectory</key>
+  <string>/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm</string>
+  <key>StandardOutPath</key>
+  <string>/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm/.codex-runtime/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm/.codex-runtime/launchd.err.log</string>
+</dict>
+</plist>
