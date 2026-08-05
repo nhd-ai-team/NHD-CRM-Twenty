@@ -1078,6 +1078,7 @@
 
   // ── 线索转客户：线索列表顶部「转客户」按钮（放在 +New opportunity 左侧）──────────
   var CONVERT_BTN_ID = '__lead_convert_top_btn__';
+  var CONVERT_PROJECT_BTN_ID = '__lead_convert_project_top_btn__';
   var CONVERT_MODAL_ID = '__lead_convert_modal__';
 
   function isOpportunityListPage() {
@@ -1116,7 +1117,7 @@
 
   function convertErrorMessage(status, data) {
     if (!data || typeof data !== 'object') return '请求失败，HTTP ' + status;
-    if (data.code === 'PRODUCT_REQUIRED') return '请先填写「客户需求产品」，再执行转客户。';
+    if (data.code === 'PRODUCT_REQUIRED') return String(data.detail || '请先填写「客户需求产品」，再执行。');
     if (data.detail) return String(data.detail);
     if (data.error) return String(data.error);
     if (data.code) return '错误码：' + data.code;
@@ -1132,9 +1133,10 @@
       .replace(/'/g, '&#39;');
   }
 
-  function openConvertResultModal(summary) {
+  function openConvertResultModal(summary, mode) {
     var failures = summary.failures || [];
     if (!failures.length) return;
+    var targetLabel = mode === 'project' ? '项目' : '客户';
     var overlay = document.createElement('div');
     overlay.id = CONVERT_MODAL_ID;
     overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
@@ -1147,8 +1149,8 @@
       '</div>';
     }).join('');
     card.innerHTML =
-      '<div style="padding:16px 18px 10px">' +
-        '<div style="font-size:15px;font-weight:700;color:#111">部分线索转客户失败</div>' +
+        '<div style="padding:16px 18px 10px">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">部分线索转' + targetLabel + '失败</div>' +
         '<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:#555">' +
           '成功新建 <b>' + summary.created + '</b> 条，更新 <b>' + summary.updated + '</b> 条，失败 <b>' + failures.length + '</b> 条。请按以下原因修正后重试。' +
         '</div>' +
@@ -1168,13 +1170,14 @@
     if (m) m.remove();
   }
 
-  function runConvert(items, onProgress) {
-    var created = 0, updated = 0, personIds = [], failures = [];
+  function runConvert(items, mode, onProgress) {
+    var created = 0, updated = 0, personIds = [], projectIds = [], failures = [];
+    var endpoint = mode === 'project' ? 'convert-to-project' : 'convert-to-person';
     var chain = Promise.resolve();
     items.forEach(function (item, idx) {
       chain = chain.then(function () {
         onProgress(idx + 1, items.length);
-        return window.fetch('/conv-api/opportunities/' + encodeURIComponent(item.id) + '/convert-to-person', {
+        return window.fetch('/conv-api/opportunities/' + encodeURIComponent(item.id) + '/' + endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
@@ -1185,6 +1188,7 @@
               return;
             }
             if (data && data.personId) personIds.push(data.personId);
+            if (data && data.projectId) projectIds.push(data.projectId);
             if (data && data.created) created++; else updated++;
           });
         }).catch(function (error) {
@@ -1192,11 +1196,17 @@
         });
       });
     });
-    return chain.then(function () { return { created: created, updated: updated, failed: failures.length, failures: failures, personIds: personIds }; });
+    return chain.then(function () { return { created: created, updated: updated, failed: failures.length, failures: failures, personIds: personIds, projectIds: projectIds }; });
   }
 
-  function openConvertModal(items) {
+  function openConvertModal(items, mode) {
     closeConvertModal();
+    var targetLabel = mode === 'project' ? '项目' : '客户';
+    var targetObject = mode === 'project' ? '项目' : '客户(People)';
+    var actionText = mode === 'project' ? '确认转项目' : '确认转客户';
+    var noteText = mode === 'project'
+      ? '系统会自动补齐客户关联与关联编码。'
+      : '系统会按字段映射写入并生成关联编码。';
     var overlay = document.createElement('div');
     overlay.id = CONVERT_MODAL_ID;
     overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
@@ -1208,16 +1218,16 @@
     var more = items.length > 5 ? '<br>… 等共 ' + items.length + ' 条' : '';
     card.innerHTML =
       '<div style="padding:16px 18px 10px">' +
-        '<div style="font-size:15px;font-weight:700;color:#111">确认转为客户？</div>' +
+        '<div style="font-size:15px;font-weight:700;color:#111">确认转为' + targetLabel + '？</div>' +
         '<div style="margin-top:8px;font-size:12.5px;line-height:1.6;color:#555">' +
-          '将把选中的 <b>' + items.length + '</b> 条线索同步/关联到客户(People)，按字段映射写入并生成关联编码。' +
+          '选中的 <b>' + items.length + '</b> 条线索将同步/关联到' + targetObject + '。' + noteText +
           '<div style="margin-top:8px;color:#777">' + preview + more + '</div>' +
           '<div style="margin-top:8px;color:#a15c00">要求线索已填写「客户需求产品」，未填写的会被跳过并提示。</div>' +
         '</div>' +
       '</div>' +
       '<div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid #eee">' +
         '<button data-act="cancel" style="padding:7px 14px;border-radius:6px;border:1px solid #ddd;background:#fff;color:#555;cursor:pointer;font-size:12px;font-weight:600">取消</button>' +
-        '<button data-act="ok" style="padding:7px 14px;border-radius:6px;border:none;background:#1f9d5f;color:#fff;cursor:pointer;font-size:12px;font-weight:700">确认转客户</button>' +
+        '<button data-act="ok" style="padding:7px 14px;border-radius:6px;border:none;background:#1f9d5f;color:#fff;cursor:pointer;font-size:12px;font-weight:700">' + actionText + '</button>' +
       '</div>';
 
     overlay.appendChild(card);
@@ -1227,7 +1237,7 @@
     okBtn.addEventListener('click', function () {
       okBtn.disabled = true;
       okBtn.textContent = '处理中…';
-      runConvert(items, function (done, total) { okBtn.textContent = '处理中… ' + done + '/' + total; })
+      runConvert(items, mode, function (done, total) { okBtn.textContent = '处理中… ' + done + '/' + total; })
         .then(function (sum) {
           closeConvertModal();
           var parts = [];
@@ -1235,14 +1245,18 @@
           if (sum.updated) parts.push('更新 ' + sum.updated);
           if (sum.failed) parts.push('失败/跳过 ' + sum.failed);
           if (sum.failed) {
-            openConvertResultModal(sum);
+            openConvertResultModal(sum, mode);
           } else {
-            convertToast('ok', '转客户完成：' + (parts.join('，') || '无变化'), 3200);
+            convertToast('ok', '转' + targetLabel + '完成：' + (parts.join('，') || '无变化'), 3200);
           }
-          // 转成功后跳到客户列表。Twenty 记录详情无法整页深链(会 404，正常记录亦然)，
-          // 故跳列表；刚转的客户 updatedAt 最新、默认排在靠前，销售一眼可见。
-          if ((sum.personIds || []).length > 0 && !sum.failed) {
-            window.setTimeout(function () { window.location.href = '/objects/people'; }, 700);
+          // 转成功后跳到目标列表。Twenty 记录详情无法整页深链(会 404，正常记录亦然)，
+          // 故跳列表；刚转的记录 updatedAt 最新、默认排在靠前，销售一眼可见。
+          if (!sum.failed) {
+            if (mode === 'project' && (sum.projectIds || []).length > 0) {
+              window.setTimeout(function () { window.location.href = '/objects/xiangMus'; }, 700);
+            } else if ((sum.personIds || []).length > 0) {
+              window.setTimeout(function () { window.location.href = '/objects/people'; }, 700);
+            }
           }
         });
     });
@@ -1291,39 +1305,45 @@
     if (!isOpportunityListPage() || isChatVisible()) {
       var stale = document.getElementById(CONVERT_BTN_ID);
       if (stale) stale.remove();
+      var staleProject = document.getElementById(CONVERT_PROJECT_BTN_ID);
+      if (staleProject) staleProject.remove();
       return;
     }
     var anchor = findToolbarAnchor();
     if (!anchor || !anchor.parentElement) return;
 
     var existing = document.getElementById(CONVERT_BTN_ID);
-    if (existing) {
-      // Twenty SPA 会在视图切换时替换顶部容器；锚点变化后把按钮重新放回正确位置。
-      if (existing.parentElement !== anchor.parentElement || existing.nextElementSibling !== anchor) {
-        anchor.parentElement.insertBefore(existing, anchor);
-      }
-      return;
-    }
-
     var h = Math.round(anchor.getBoundingClientRect().height) || 26;
-    var btn = document.createElement('button');
-    btn.id = CONVERT_BTN_ID;
-    btn.type = 'button';
-    btn.setAttribute('data-lead-convert-top', '1');
-    btn.textContent = '转客户';
-    btn.style.cssText = [
+    function makeButton(id, text, mode, color, marginRight) {
+      var btn = document.createElement('button');
+      btn.id = id;
+      btn.type = 'button';
+      btn.setAttribute('data-lead-convert-top', '1');
+      btn.textContent = text;
+      btn.style.cssText = [
       'display:inline-flex', 'align-items:center', 'justify-content:center',
-      'height:' + h + 'px', 'margin-right:8px', 'padding:0 12px', 'flex-shrink:0',
-      'border-radius:6px', 'border:1px solid #1f9d5f', 'background:#1f9d5f', 'color:#fff',
+      'height:' + h + 'px', 'margin-right:' + marginRight + 'px', 'padding:0 12px', 'flex-shrink:0',
+      'border-radius:6px', 'border:1px solid ' + color, 'background:' + color, 'color:#fff',
       'font-size:12px', 'font-weight:600', 'font-family:inherit',
       'cursor:pointer', 'white-space:nowrap',
-    ].join(';');
-    btn.addEventListener('click', function () {
-      var sel = getSelectedOpportunities();
-      if (sel.length === 0) { convertToast('error', '请先勾选要转客户的线索'); return; }
-      openConvertModal(sel);
-    });
-    anchor.parentElement.insertBefore(btn, anchor);
+      ].join(';');
+      btn.addEventListener('click', function () {
+        var sel = getSelectedOpportunities();
+        if (sel.length === 0) { convertToast('error', '请先勾选要转' + (mode === 'project' ? '项目' : '客户') + '的线索'); return; }
+        openConvertModal(sel, mode);
+      });
+      return btn;
+    }
+    var projectBtn = document.getElementById(CONVERT_PROJECT_BTN_ID);
+    if (!existing) existing = makeButton(CONVERT_BTN_ID, '转客户', 'person', '#1f9d5f', 8);
+    if (!projectBtn) projectBtn = makeButton(CONVERT_PROJECT_BTN_ID, '转项目', 'project', '#2563eb', 8);
+
+    if (existing.parentElement !== anchor.parentElement || existing.nextElementSibling !== projectBtn) {
+      anchor.parentElement.insertBefore(existing, anchor);
+    }
+    if (projectBtn.parentElement !== anchor.parentElement || projectBtn.nextElementSibling !== anchor) {
+      anchor.parentElement.insertBefore(projectBtn, anchor);
+    }
   }
 
   // ── boot ──────────────────────────────────────────────────────────────────

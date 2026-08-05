@@ -334,7 +334,7 @@ function auditRequestSummary(req) {
 }
 
 async function applyRecordAudit(tableName, recordId, actor, mode = 'update') {
-  if (!actor?.id || !recordId || !['opportunity', 'person', 'company'].includes(tableName)) return;
+  if (!actor?.id || !recordId || !['opportunity', 'person', 'company', '_xiangMu'].includes(tableName)) return;
   const schema = await getWorkspaceSchema();
   const setCreated = mode === 'create';
   const assignments = [
@@ -2284,6 +2284,41 @@ function convertToPersonFailure(error) {
   };
 }
 
+function convertToProjectFailure(error) {
+  const base = convertToPersonFailure(error);
+  if (base.code === 'PRODUCT_REQUIRED') {
+    return {
+      ...base,
+      detail: '请先在线索表填写「客户需求产品」，再执行转项目。',
+    };
+  }
+  if (base.code === 'DUPLICATE_VALUE') {
+    return {
+      ...base,
+      error: '项目表存在唯一字段冲突',
+      detail: base.detail || '可能是关联编码已存在。',
+    };
+  }
+  if (base.code === 'FIELD_NOT_FOUND') {
+    return {
+      ...base,
+      error: '项目表或线索表字段不存在',
+      detail: base.detail || '可能有字段被停用、重命名或尚未创建。',
+    };
+  }
+  if (base.code === 'TABLE_NOT_FOUND') {
+    return {
+      ...base,
+      error: 'CRM 数据表不存在',
+      detail: base.detail || '当前工作区项目表结构异常。',
+    };
+  }
+  return {
+    ...base,
+    error: base.error === '转客户失败' ? '转项目失败' : base.error,
+  };
+}
+
 async function applyRecordAuditBestEffort(tableName, recordId, actor, operation) {
   try {
     await applyRecordAudit(tableName, recordId, actor, operation);
@@ -2386,6 +2421,275 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
     await client.query('ROLLBACK').catch(() => {});
     const failure = convertToPersonFailure(error);
     console.error('[convert-to-person] failed:', failure.code, failure.error, failure.detail);
+    res.status(502).json(failure);
+  } finally {
+    client.release();
+  }
+});
+
+async function findExistingProjectForOpportunity(client, schema, opportunity) {
+  const result = await client.query(
+    `SELECT id
+     FROM ${schema}."_xiangMu"
+     WHERE "deletedAt" IS NULL
+       AND (
+         id = $1
+         OR ($2::text IS NOT NULL AND "syncGroupCode" = $2)
+         OR "sourceOpportunityId" = $3
+       )
+     ORDER BY
+       CASE
+         WHEN id = $1 THEN 0
+         WHEN "syncGroupCode" = $2 THEN 1
+         ELSE 2
+       END
+     LIMIT 1`,
+    [
+      opportunity.linkedProjectId || null,
+      opportunity.syncGroupCode || null,
+      opportunity.id,
+    ],
+  );
+  return result.rows[0] || null;
+}
+
+async function nextProjectPosition(client, schema) {
+  const result = await client.query(
+    `SELECT COALESCE(MAX(position), 0) + 1 AS position
+     FROM ${schema}."_xiangMu"
+     WHERE "deletedAt" IS NULL`,
+  );
+  return Number(result.rows[0]?.position || 1);
+}
+
+async function upsertProjectFromOpportunity(client, schema, opportunity, personId, actor) {
+  const existing = await findExistingProjectForOpportunity(client, schema, opportunity);
+  const taskProgress = await client.query(
+    `SELECT conv.opportunity_stage_to_project_task($1::text) AS value`,
+    [opportunity.stage || null],
+  );
+  const taskValue = taskProgress.rows[0]?.value || null;
+  const name = nonBlankOrNull(opportunity.name) || nonBlankOrNull(opportunity.keHuXuQiuChanPin) || opportunity.syncGroupCode || '未命名项目';
+  const actorName = actor?.name || 'CRM 用户';
+
+  if (existing?.id) {
+    const result = await client.query(
+      `UPDATE ${schema}."_xiangMu" AS target
+       SET
+         "syncGroupCode" = COALESCE("syncGroupCode", $2),
+         "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1),
+         "linkedPersonId" = COALESCE("linkedPersonId", $3),
+         name = COALESCE($4, name),
+         "guoJia" = COALESCE($5, "guoJia"),
+         "xuQiuChanPin" = COALESCE($6, "xuQiuChanPin"),
+         "jinEAmountMicros" = COALESCE($7, "jinEAmountMicros"),
+         "jinECurrencyCode" = COALESCE($8, "jinECurrencyCode"),
+         "gaiShu" = COALESCE($9, "gaiShu"),
+         "muQianJinDu" = COALESCE($10, "muQianJinDu"),
+         "renWuJinDu" = CASE WHEN $11::text IS NULL THEN "renWuJinDu" ELSE $11::text::${schema}."_xiangMu_renWuJinDu_enum" END,
+         "updatedAt" = now()
+       WHERE target.id = $12
+       RETURNING id`,
+      [
+        opportunity.id,
+        opportunity.syncGroupCode,
+        personId || opportunity.linkedPersonId || opportunity.pointOfContactId || null,
+        name,
+        nonBlankOrNull(opportunity.countryAddressCountry),
+        nonBlankOrNull(opportunity.keHuXuQiuChanPin),
+        opportunity.amountAmountMicros || null,
+        nonBlankOrNull(opportunity.amountCurrencyCode),
+        nonBlankOrNull(opportunity.message),
+        nonBlankOrNull(opportunity.xiangMuJinDu),
+        taskValue,
+        existing.id,
+      ],
+    );
+    return { id: result.rows[0]?.id || existing.id, created: false };
+  }
+
+  const position = await nextProjectPosition(client, schema);
+  const result = await client.query(
+    `INSERT INTO ${schema}."_xiangMu" (
+       name,
+       position,
+       "createdBySource",
+       "createdByWorkspaceMemberId",
+       "createdByName",
+       "createdByContext",
+       "updatedBySource",
+       "updatedByWorkspaceMemberId",
+       "updatedByName",
+       "updatedByContext",
+       "guoNeiHaiWai",
+       "guoJia",
+       "xuQiuChanPin",
+       "jinEAmountMicros",
+       "jinECurrencyCode",
+       "gaiShu",
+       "muQianJinDu",
+       "renWuJinDu",
+       "syncGroupCode",
+       "sourceOpportunityId",
+       "linkedPersonId"
+     ) VALUES (
+       $1,
+       $2,
+       'MANUAL',
+       $3,
+       $4,
+       '{}'::jsonb,
+       'MANUAL',
+       $3,
+       $4,
+       '{}'::jsonb,
+       'HAI_WAI',
+       $5,
+       $6,
+       $7,
+       $8,
+       $9,
+       $10,
+       CASE WHEN $11::text IS NULL THEN NULL ELSE $11::text::${schema}."_xiangMu_renWuJinDu_enum" END,
+       $12,
+       $13,
+       $14
+     )
+     RETURNING id`,
+    [
+      name,
+      position,
+      actor?.id || null,
+      actorName,
+      nonBlankOrNull(opportunity.countryAddressCountry),
+      nonBlankOrNull(opportunity.keHuXuQiuChanPin),
+      opportunity.amountAmountMicros || null,
+      nonBlankOrNull(opportunity.amountCurrencyCode),
+      nonBlankOrNull(opportunity.message),
+      nonBlankOrNull(opportunity.xiangMuJinDu),
+      taskValue,
+      opportunity.syncGroupCode,
+      opportunity.id,
+      personId || opportunity.linkedPersonId || opportunity.pointOfContactId || null,
+    ],
+  );
+  return { id: result.rows[0]?.id, created: true };
+}
+
+// 线索表行按钮：把当前线索同步/关联到项目。会先补齐客户(People)关联，保持完整漏斗链路。
+app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (req, res) => {
+  const auditActor = await resolveAuditActor(req).catch((error) => {
+    console.error('[audit] resolve actor failed:', error.message);
+    return null;
+  });
+  if (!auditActor) console.warn('[audit] current user not resolved; record audit will keep API identity');
+  if (!auditActor) console.warn('[audit] request summary:', auditRequestSummary(req));
+
+  const client = await pool.connect();
+  try {
+    const schema = await getWorkspaceSchema();
+    const opportunityKeHuLeiXingSelect = await opportunitySelectExpression('keHuLeiXing');
+    await client.query('BEGIN');
+
+    const opportunityResult = await client.query(
+      `SELECT
+         id,
+         name,
+         "companyId",
+         "pointOfContactId",
+         "syncGroupCode",
+         "linkedPersonId",
+         "linkedProjectId",
+         "phonePrimaryPhoneNumber",
+         "phonePrimaryPhoneCountryCode",
+         "phonePrimaryPhoneCallingCode",
+         "emailPrimaryEmail",
+         "youXiang",
+         "countryAddressCountry",
+         "keHuXuQiuChanPin",
+         "keHuLaiYuan",
+         ${opportunityKeHuLeiXingSelect},
+         "zhiWei",
+         "amountAmountMicros",
+         "amountCurrencyCode",
+         "message",
+         "xiangMuJinDu",
+         stage
+       FROM ${schema}.opportunity
+       WHERE id = $1 AND "deletedAt" IS NULL
+       FOR UPDATE`,
+      [req.params.id],
+    );
+    const opportunity = opportunityResult.rows[0];
+    if (!opportunity) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        code: 'OPPORTUNITY_NOT_FOUND',
+        error: '线索不存在或已删除',
+        detail: '未找到该线索记录，可能已被删除或当前工作区不可见。',
+      });
+    }
+    if (!nonBlankOrNull(opportunity.keHuXuQiuChanPin)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        code: 'PRODUCT_REQUIRED',
+        error: '客户需求产品未填写',
+        detail: '请先在线索表填写「客户需求产品」，再执行转项目。',
+      });
+    }
+
+    if (!nonBlankOrNull(opportunity.syncGroupCode)) {
+      const codeResult = await client.query(
+        `UPDATE ${schema}.opportunity
+         SET "syncGroupCode" = conv.next_sync_group_code("createdAt"), "updatedAt" = now()
+         WHERE id = $1
+         RETURNING "syncGroupCode"`,
+        [opportunity.id],
+      );
+      opportunity.syncGroupCode = codeResult.rows[0]?.syncGroupCode;
+    }
+
+    const person = await upsertPersonFromOpportunity(client, schema, opportunity);
+    if (!person?.id) throw new Error('person upsert failed');
+
+    opportunity.linkedPersonId = person.id;
+    const project = await upsertProjectFromOpportunity(client, schema, opportunity, person.id, auditActor);
+    if (!project?.id) throw new Error('project upsert failed');
+
+    await client.query(
+      `UPDATE ${schema}.opportunity
+       SET
+         "pointOfContactId" = COALESCE("pointOfContactId", $2),
+         "linkedPersonId" = $2,
+         "linkedProjectId" = $3,
+         "updatedAt" = now()
+       WHERE id = $1`,
+      [opportunity.id, person.id, project.id],
+    );
+
+    await client.query(
+      `UPDATE ${schema}.person
+       SET "linkedProjectId" = $2, "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1), "updatedAt" = now()
+       WHERE id = $3`,
+      [opportunity.id, project.id, person.id],
+    );
+
+    await client.query('COMMIT');
+    await applyRecordAuditBestEffort('person', person.id, auditActor, person.created ? 'create' : 'update');
+    await applyRecordAuditBestEffort('_xiangMu', project.id, auditActor, project.created ? 'create' : 'update');
+    await applyRecordAuditBestEffort('opportunity', opportunity.id, auditActor, 'update');
+    res.status(project.created ? 201 : 200).json({
+      opportunityId: opportunity.id,
+      personId: person.id,
+      projectId: project.id,
+      syncGroupCode: opportunity.syncGroupCode,
+      personCreated: person.created,
+      created: project.created,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    const failure = convertToProjectFailure(error);
+    console.error('[convert-to-project] failed:', failure.code, failure.error, failure.detail);
     res.status(502).json(failure);
   } finally {
     client.release();
