@@ -99,8 +99,18 @@ export function useConversations() {
     await loadConversations()
   }
 
-  function closeConversation(convId) {
-    setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, status: 'closed' }))
+  async function closeConversation(convId) {
+    if (!convId) return
+    const response = await fetch(`/conv-api/conversations/${convId}/status`, {
+      method: 'PATCH',
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ action: 'close' }),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.error || '关闭会话失败')
+    }
+    await loadConversations()
   }
 
   function markRead(convId) {

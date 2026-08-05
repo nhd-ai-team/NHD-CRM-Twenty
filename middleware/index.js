@@ -1161,7 +1161,7 @@ app.post('/api/email/sync-now', requireSameSite, async (_req, res) => {
 
 app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => {
   const action = String(req.body?.action || '').trim();
-  if (!['takeover', 'release'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
+  if (!['takeover', 'release', 'close'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
 
   const client = await pool.connect();
   try {
@@ -1180,13 +1180,17 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'conversation not found' });
     }
-    if (!conversation.aiEnabled || !conversation.inTakeoverWindow) {
+    if (action !== 'close' && (!conversation.aiEnabled || !conversation.inTakeoverWindow)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'AI客服未激活或不在托管时间内' });
     }
 
-    const nextStatus = action === 'takeover' ? 'takeover' : 'open';
-    const systemText = action === 'takeover' ? '销售已人工接管此会话' : '已切换为 AI 托管';
+    const nextStatus = action === 'takeover' ? 'takeover' : action === 'close' ? 'closed' : 'open';
+    const systemText = action === 'takeover'
+      ? '销售已人工接管此会话'
+      : action === 'close'
+        ? '会话已关闭'
+        : '已切换为 AI 托管';
     if (action === 'release' && conversation.channel === 'website') {
       await releaseWebsiteAiTakeover(conversation.external_chat_id);
     }
