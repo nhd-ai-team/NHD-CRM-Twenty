@@ -10,7 +10,10 @@ export function useConversations() {
 
   async function loadConversations() {
     // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
-    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, { cache: 'no-store' })
+    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, {
+      cache: 'no-store',
+      headers: withTwentyAuthHeaders(),
+    })
     if (!response.ok) throw new Error('无法加载会话')
     // 邮箱是独立板块（见 useEmails），渠道工作台不展示 email 会话
     const list = (await response.json()).filter(c => c.channel !== 'email')
@@ -24,7 +27,10 @@ export function useConversations() {
 
   async function loadMessages(convId) {
     if (!convId) return
-    const response = await fetch(`/conv-api/conversations/${convId}/messages?_=${Date.now()}`, { cache: 'no-store' })
+    const response = await fetch(`/conv-api/conversations/${convId}/messages?_=${Date.now()}`, {
+      cache: 'no-store',
+      headers: withTwentyAuthHeaders(),
+    })
     if (!response.ok) throw new Error('无法加载聊天记录')
     const messages = (await response.json()).map(message => ({
       ...message,
@@ -89,7 +95,7 @@ export function useConversations() {
     if (!convId) return
     const response = await fetch(`/conv-api/conversations/${convId}/status`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ action }),
     })
     if (!response.ok) {

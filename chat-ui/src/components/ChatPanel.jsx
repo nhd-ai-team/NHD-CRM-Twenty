@@ -154,10 +154,13 @@ function ActionBar({ conv, onRequestAction }) {
   const isTakeover = conv.status === 'takeover'
   const isClosed = conv.status === 'closed'
   const aiControl = conv.aiControl || {}
+  const permissions = conv.permissions || {}
   const aiReady = !!aiControl.enabled && !!aiControl.inTakeoverWindow
-  const canTakeover = !isClosed && !isTakeover && aiReady
-  const canAiHost = !isClosed && isTakeover && aiReady
-  const disabledReason = !aiControl.enabled
+  const canTakeover = !isClosed && !isTakeover && aiReady && permissions.canTakeover !== false
+  const canAiHost = !isClosed && isTakeover && aiReady && permissions.canReply !== false
+  const disabledReason = permissions.viewerRole === 'boss'
+    ? 'Boss 当前仅有查看权限'
+    : !aiControl.enabled
     ? 'AI客服未激活，暂不可人工接管'
     : !aiControl.inTakeoverWindow
       ? '当前不在AI客服托管时间内'
@@ -242,6 +245,10 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
       setSendError('请先人工接管会话后再发送消息')
       return
     }
+    if (conv.permissions?.canReply === false) {
+      setSendError('该会话未由当前账号接管，不能发送消息')
+      return
+    }
     setSendError('')
     setSending(true)
     try {
@@ -284,6 +291,10 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
       setSendError('请先点击「接管会话」后再发送附件')
       return
     }
+    if (conv.permissions?.canReply === false) {
+      setSendError('该会话未由当前账号接管，不能发送附件')
+      return
+    }
     fileInputRef.current?.click()
   }
 
@@ -300,7 +311,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     setSelectedFile(file)
   }
 
-  const canSend = (!!input.trim() || !!selectedFile) && conv.status === 'takeover' && !sending
+  const canSend = (!!input.trim() || !!selectedFile) && conv.status === 'takeover' && conv.permissions?.canReply !== false && !sending
   const confirmTitle = pendingAction === 'takeover' ? '确认人工接管？' : '确认 AI 托管？'
   const confirmBody = pendingAction === 'takeover'
     ? '确认后销售可以在工作台回复客户，AI客服将暂停托管此会话。'

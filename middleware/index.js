@@ -40,6 +40,10 @@ const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || INSTAGRAM_VERIFY_TOKE
 const META_APP_SECRET = process.env.META_APP_SECRET || INSTAGRAM_APP_SECRET;
 const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN || INSTAGRAM_PAGE_ACCESS_TOKEN;
 const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
+const CONVERSATION_BOSS_EMAILS = new Set((process.env.CONVERSATION_BOSS_EMAILS || '826815587@qq.com')
+  .split(',')
+  .map(email => email.trim().toLowerCase())
+  .filter(Boolean));
 // 邮箱（IMAP 只读收取，沉淀到对话工作台的 email 渠道；不回复、不接 AI）
 const IMAP_HOST = process.env.IMAP_HOST || 'imap.qiye.163.com';
 const IMAP_PORT = Number(process.env.IMAP_PORT || 993);
@@ -309,6 +313,100 @@ async function resolveAuditActor(req) {
   return { id: member.id, name };
 }
 
+async function resolveConversationViewer(req) {
+  const token = getExplicitTwentyTokenFromRequest(req);
+  const tokenPayload = decodeJwtPayload(token);
+  const userId = tokenPayload?.sub || '';
+  if (!token || !userId || !tokenPayload?.workspaceId) return null;
+  const schema = await getWorkspaceSchema();
+  const result = await pool.query(
+    `SELECT id, "userId", "userEmail", "nameFirstName", "nameLastName"
+       FROM ${schema}."workspaceMember"
+      WHERE "userId" = $1 AND "deletedAt" IS NULL
+      LIMIT 1`,
+    [userId],
+  );
+  const member = result.rows[0];
+  if (!member?.id) return null;
+  const email = String(member.userEmail || '').trim().toLowerCase();
+  return {
+    userId,
+    workspaceMemberId: String(member.id),
+    email,
+    name: [member.nameFirstName, member.nameLastName].filter(Boolean).join(' ').trim() || email || 'CRM 用户',
+    isBoss: CONVERSATION_BOSS_EMAILS.has(email),
+  };
+}
+
+function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1) {
+  if (!viewer || viewer.isBoss) return { sql: 'TRUE', params: [] };
+  const memberParam = `$${startIndex}`;
+  const userParam = `$${startIndex + 1}`;
+  return {
+    sql: `((
+      ${alias}.channel = 'website'
+      AND (
+        ${alias}.status = 'open'
+        OR ${alias}.agent_id = ${memberParam}
+        OR EXISTS (
+          SELECT 1
+          FROM conv.conversation_participants cp
+          WHERE cp.conversation_id = ${alias}.id
+            AND cp.workspace_member_id = ${memberParam}
+        )
+      )
+    ) OR (
+      ${alias}.channel = 'whatsapp'
+      AND EXISTS (
+        SELECT 1
+        FROM conv.channel_accounts ca
+        WHERE ca.channel = 'whatsapp'
+          AND ca.provider = 'waha'
+          AND ca.status <> 'unbound'
+          AND ca.user_id = ${userParam}
+      )
+    ) OR ${alias}.channel IN ('email', 'instagram', 'facebook'))`,
+    params: [viewer.workspaceMemberId, viewer.userId],
+  };
+}
+
+async function requireConversationAccess(req, res, options = {}) {
+  const viewer = await resolveConversationViewer(req);
+  const conversationResult = await pool.query(
+    `SELECT c.id, c.channel, c.status, c.agent_id, c.external_chat_id
+       FROM conv.conversations c
+      WHERE c.id = $1`,
+    [req.params.id],
+  );
+  const conversation = conversationResult.rows[0];
+  if (!conversation) {
+    res.status(404).json({ error: 'conversation not found' });
+    return null;
+  }
+  if (!viewer) return { viewer, conversation };
+  if (viewer.isBoss) {
+    if (options.write) {
+      res.status(403).json({ error: 'Boss 当前仅有查看权限，不能接管或发送消息' });
+      return null;
+    }
+    return { viewer, conversation };
+  }
+  const visibility = conversationVisibilityWhere(viewer, 'c', 2);
+  const visibleResult = await pool.query(
+    `SELECT EXISTS(SELECT 1 FROM conv.conversations c WHERE c.id = $1 AND ${visibility.sql}) AS visible`,
+    [conversation.id, ...visibility.params],
+  );
+  if (!visibleResult.rows[0]?.visible) {
+    res.status(403).json({ error: '当前账号无权查看该会话' });
+    return null;
+  }
+  if (options.reply && !(conversation.status === 'takeover' && conversation.agent_id === viewer.workspaceMemberId)) {
+    res.status(403).json({ error: '该会话未由当前账号接管，不能发送消息' });
+    return null;
+  }
+  return { viewer, conversation };
+}
+
 function auditRequestSummary(req) {
   const authorization = String(req.headers.authorization || '');
   const forwardedToken = String(req.headers['x-twenty-access-token'] || '');
@@ -421,6 +519,14 @@ async function ensureSchema() {
       contact_id UUID REFERENCES conv.contacts(id), status TEXT DEFAULT 'open', agent_id TEXT,
       last_message_at TIMESTAMPTZ, last_message_preview TEXT, created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now(), UNIQUE(channel, external_chat_id));
+    CREATE TABLE IF NOT EXISTS conv.conversation_participants (
+      conversation_id UUID REFERENCES conv.conversations(id) ON DELETE CASCADE,
+      workspace_member_id TEXT NOT NULL,
+      user_id TEXT,
+      role TEXT NOT NULL DEFAULT 'takeover',
+      first_joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY(conversation_id, workspace_member_id));
     CREATE TABLE IF NOT EXISTS conv.messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), external_msg_id TEXT UNIQUE,
       conversation_id UUID REFERENCES conv.conversations(id), sender_type TEXT NOT NULL,
@@ -438,6 +544,8 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
     UPDATE conv.conversations SET ai_enabled = (channel = 'website') WHERE ai_enabled IS NULL;
+    CREATE INDEX IF NOT EXISTS conversation_participants_member_idx
+      ON conv.conversation_participants(workspace_member_id, last_joined_at DESC);
     -- 渠道级 AI 自动回复开关（工作台齿轮）：作为「生效范围」基线，
     -- 会话级 ai_enabled 保留为单会话覆盖位（默认 NULL 时继承此表）。
     CREATE TABLE IF NOT EXISTS conv.channel_settings (
@@ -970,25 +1078,51 @@ app.post('/api/meta/webhook', (req, res) => {
   return res.status(400).json({ error: 'unsupported Meta webhook object' });
 });
 
-app.get('/api/conversations', async (_req, res) => {
-  // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
-  const scheduleActive = aiScheduleActiveExpression('cs');
-  const result = await pool.query(`SELECT c.id, c.channel, c.status, c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
+app.get('/api/conversations', async (req, res) => {
+  try {
+    // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
+    const scheduleActive = aiScheduleActiveExpression('cs');
+    const viewer = await resolveConversationViewer(req);
+    const visibility = conversationVisibilityWhere(viewer);
+    const viewerRole = viewer?.isBoss ? "'boss'" : viewer ? "'sales'" : "'anonymous'";
+    const canReplyExpression = viewer?.isBoss ? 'false' : viewer ? `(c.status = 'takeover' AND c.agent_id = $1)` : `(c.status = 'takeover')`;
+    const canTakeoverExpression = viewer?.isBoss ? 'false' : viewer ? `(c.status = 'open')` : `(c.status = 'open')`;
+    const assignedToMeExpression = viewer && !viewer.isBoss ? `(c.agent_id = $1)` : 'false';
+    const takenBeforeExpression = viewer && !viewer.isBoss ? `EXISTS (
+      SELECT 1 FROM conv.conversation_participants cp
+      WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
+    )` : 'false';
+    const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
     json_build_object(
       'enabled', COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'),
       'scheduleActive', ${scheduleActive},
       'inTakeoverWindow', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}),
       'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive} AND c.status NOT IN ('takeover', 'closed'))
     ) AS "aiControl",
+    json_build_object(
+      'viewerRole', ${viewerRole},
+      'canView', true,
+      'canReply', ${canReplyExpression},
+      'canTakeover', ${canTakeoverExpression},
+      'isAssignedToMe', ${assignedToMeExpression},
+      'hasTakenOverBefore', ${takenBeforeExpression}
+    ) AS permissions,
     json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'email', ct.email, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
-    ORDER BY c.last_message_at DESC NULLS LAST`);
-  res.json(result.rows);
+    WHERE ${visibility.sql}
+    ORDER BY c.last_message_at DESC NULLS LAST`, visibility.params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('[conversations] list failed:', error.message);
+    res.status(502).json({ error: '无法加载会话', detail: error.message });
+  }
 });
 
 app.get('/api/conversations/:id/messages', async (req, res) => {
+  const access = await requireConversationAccess(req, res);
+  if (!access) return;
   const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
 });
@@ -1167,13 +1301,18 @@ app.post('/api/email/sync-now', requireSameSite, async (_req, res) => {
 app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => {
   const action = String(req.body?.action || '').trim();
   if (!['takeover', 'release', 'close'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
+  if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能接管或释放会话' });
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const scheduleActive = aiScheduleActiveExpression('cs');
     const currentResult = await client.query(
-      `SELECT c.id, c.status, c.channel, c.external_chat_id, COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
+      `SELECT c.id, c.status, c.channel, c.agent_id, c.external_chat_id, COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
         ((c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}) AS "inTakeoverWindow"
        FROM conv.conversations c
        LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
@@ -1189,6 +1328,14 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'AI客服未激活或不在托管时间内' });
     }
+    if (action === 'takeover' && conversation.status === 'takeover' && conversation.agent_id !== viewer.workspaceMemberId) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: '该会话已被其他销售接管' });
+    }
+    if ((action === 'release' || action === 'close') && conversation.status === 'takeover' && conversation.agent_id !== viewer.workspaceMemberId) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: '该会话不是当前账号接管，不能操作' });
+    }
 
     const nextStatus = action === 'takeover' ? 'takeover' : action === 'close' ? 'closed' : 'open';
     const systemText = action === 'takeover'
@@ -1199,9 +1346,19 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     if (action === 'release' && conversation.channel === 'website') {
       await releaseWebsiteAiTakeover(conversation.external_chat_id);
     }
+    if (action === 'takeover') {
+      await client.query(
+        `INSERT INTO conv.conversation_participants(conversation_id, workspace_member_id, user_id, role, first_joined_at, last_joined_at)
+         VALUES ($1, $2, $3, 'takeover', now(), now())
+         ON CONFLICT(conversation_id, workspace_member_id)
+         DO UPDATE SET last_joined_at = now(), user_id = EXCLUDED.user_id, role = EXCLUDED.role`,
+        [req.params.id, viewer.workspaceMemberId, viewer.userId],
+      );
+    }
+    const nextAgentId = action === 'takeover' ? viewer.workspaceMemberId : null;
     await client.query(
-      `UPDATE conv.conversations SET status = $2, updated_at = now() WHERE id = $1`,
-      [req.params.id, nextStatus],
+      `UPDATE conv.conversations SET status = $2, agent_id = $3, updated_at = now() WHERE id = $1`,
+      [req.params.id, nextStatus, nextAgentId],
     );
     await client.query(
       `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
@@ -2803,9 +2960,12 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
   const content = String(req.body?.content || '').trim();
   const uploadedFile = req.file || null;
   if (!content && !uploadedFile) return res.status(400).json({ error: 'content or file is required' });
-  const result = await pool.query(`SELECT c.external_chat_id, c.channel, c.status FROM conv.conversations c WHERE c.id = $1`, [req.params.id]);
-  const conversation = result.rows[0];
-  if (!conversation) return res.status(404).json({ error: 'conversation not found' });
+  const access = await requireConversationAccess(req, res, { reply: true, write: true });
+  if (!access) {
+    if (uploadedFile) deleteUploadedFileBestEffort(uploadedFile);
+    return;
+  }
+  const { conversation } = access;
   if (conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
   if (conversation.channel === 'whatsapp') {
     const ownership = await requireCurrentUserWhatsAppBinding(req, res);
