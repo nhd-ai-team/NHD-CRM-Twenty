@@ -89,7 +89,6 @@ BEGIN
     SELECT id
     FROM %I.opportunity AS target
     WHERE target."deletedAt" IS NULL
-      AND target.id <> $1
       AND target."keHuLaiYuan" IS NOT NULL
       AND target."keHuLaiYuan"::text = 'GUAN_WANG_BIAO_DAN'
       AND (
@@ -120,11 +119,11 @@ BEGIN
   INTO target_id
   USING NEW.id, email_key, phone_key;
 
-  IF target_id IS NULL THEN
+  IF target_id IS NULL OR target_id = NEW.id THEN
     EXECUTE format($sql$
       UPDATE %I.opportunity
       SET
-        "websiteFormSubmissionCount" = COALESCE("websiteFormSubmissionCount", 0) + 1,
+        "websiteFormSubmissionCount" = GREATEST(COALESCE("websiteFormSubmissionCount", 0), 1),
         "websiteFormFirstSubmittedAt" = COALESCE("websiteFormFirstSubmittedAt", ($1)."createdAt", now()),
         "websiteFormLastSubmittedAt" = COALESCE(($1)."createdAt", now()),
         "websiteFormLatestSnapshot" = $2,
@@ -142,6 +141,27 @@ BEGIN
       submitted_at
     )
     VALUES (NEW.id, NULL, email_key, phone_key, payload, COALESCE(NEW."createdAt", now()));
+
+    EXECUTE format($sql$
+      UPDATE %I.opportunity AS target
+      SET
+        "websiteFormSubmissionCount" = stats.submission_count,
+        "websiteFormFirstSubmittedAt" = stats.first_submitted_at,
+        "websiteFormLastSubmittedAt" = stats.last_submitted_at,
+        "websiteFormLatestSnapshot" = stats.latest_payload,
+        "updatedAt" = now()
+      FROM (
+        SELECT
+          count(*)::integer AS submission_count,
+          min(submitted_at) AS first_submitted_at,
+          max(submitted_at) AS last_submitted_at,
+          (array_agg(payload ORDER BY submitted_at DESC, created_at DESC))[1] AS latest_payload
+        FROM conv.website_form_submissions
+        WHERE primary_opportunity_id = $1
+      ) AS stats
+      WHERE target.id = $1
+    $sql$, TG_TABLE_SCHEMA)
+    USING NEW.id;
 
     RETURN NEW;
   END IF;
@@ -188,6 +208,27 @@ BEGIN
     TG_TABLE_SCHEMA
   )
   USING NEW.id;
+
+  EXECUTE format($sql$
+    UPDATE %I.opportunity AS target
+    SET
+      "websiteFormSubmissionCount" = stats.submission_count,
+      "websiteFormFirstSubmittedAt" = stats.first_submitted_at,
+      "websiteFormLastSubmittedAt" = stats.last_submitted_at,
+      "websiteFormLatestSnapshot" = stats.latest_payload,
+      "updatedAt" = now()
+    FROM (
+      SELECT
+        count(*)::integer AS submission_count,
+        min(submitted_at) AS first_submitted_at,
+        max(submitted_at) AS last_submitted_at,
+        (array_agg(payload ORDER BY submitted_at DESC, created_at DESC))[1] AS latest_payload
+      FROM conv.website_form_submissions
+      WHERE primary_opportunity_id = $1
+    ) AS stats
+    WHERE target.id = $1
+  $sql$, TG_TABLE_SCHEMA)
+  USING target_id;
 
   RETURN NEW;
 END;

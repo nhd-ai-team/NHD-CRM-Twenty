@@ -782,7 +782,7 @@ async function persistWebsiteMessage(body) {
       DO UPDATE SET updated_at = now() RETURNING *`, [sessionId, contact.id]);
     const conversation = conversationResult.rows[0];
     // 按发送方给 external_msg_id 加前缀，避免访客/AI 消息 id 撞车导致漏存。
-    const dedupeId = externalMessageId ? `web:${senderType}:${externalMessageId}` : null;
+    const dedupeId = externalMessageId ? `web:${sessionId}:${senderType}:${externalMessageId}` : null;
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
       VALUES ($1, $2, $3, $4, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
       [dedupeId, conversation.id, senderType, content]);
@@ -800,8 +800,13 @@ app.post('/api/website/webhook', async (req, res) => {
   if (WEBSITE_INGEST_SECRET && req.headers['x-webhook-secret'] !== WEBSITE_INGEST_SECRET) {
     return res.status(401).json({ error: 'unauthorized' });
   }
-  res.status(200).json({ received: true });
-  persistWebsiteMessage(req.body).catch(error => console.error('[website] ingest failed:', error.message));
+  try {
+    await persistWebsiteMessage(req.body);
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('[website] ingest failed:', error.message);
+    res.status(502).json({ error: 'website message ingest failed', detail: error.message });
+  }
 });
 
 // ── Instagram（Meta Graph API，企业官方账号）──────────────────────────────
