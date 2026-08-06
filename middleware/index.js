@@ -911,7 +911,16 @@ async function persistWhatsAppMessage(payload) {
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
     // 规则（2026-07-24）：消息只落对话工作台，不自动同步 People/Companies。
-    // 客户信息由销售在工作台右侧表单确认后一键写入 Opportunity（另行实现）。
+    // 规则（2026-08-06）：WhatsApp/官网客服客户首条入站自动创建 Opportunity，后续资料由销售在工作台右侧表单补全。
+    if (inserted.rowCount && !fromMe) {
+      ensureOpportunityForInboundConversation({
+        conversationId: conversation.id,
+        contactId: contact.id,
+        channel: 'whatsapp',
+        fallbackName: displayName,
+        phone: phone ? `+${phone}` : null,
+      }).catch(error => console.error('[auto-lead] whatsapp failed:', error.message));
+    }
     // 新的客户入站消息（非人工接管、文本类）按渠道 AI 策略决定是否自动回复。
     if (inserted.rowCount && !fromMe && conversation.status !== 'takeover' && parsed.type === 'text') {
       requestAiReplyIfAllowed(conversation, externalMessageId, parsed.content)
@@ -981,6 +990,12 @@ async function persistWebsiteMessage(body) {
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, content]);
     await client.query('COMMIT');
     if (inserted.rowCount && senderType === 'customer') {
+      ensureOpportunityForInboundConversation({
+        conversationId: conversation.id,
+        contactId: contact.id,
+        channel: 'website',
+        fallbackName: displayName,
+      }).catch(error => console.error('[auto-lead] website failed:', error.message));
       const aiMessageId = dedupeId || `web:${conversation.id}:${inserted.rows[0].id}`;
       requestAiReplyIfAllowed(conversation, aiMessageId, content)
         .catch(error => console.error('[ai] website auto reply failed:', error.message));
@@ -2384,6 +2399,52 @@ async function stripUnavailableOpportunityFields(data, skipped = []) {
       delete data[field];
       skipped.push(field === 'keHuLeiXing' ? 'companyType' : 'email');
     }
+  }
+}
+
+async function ensureOpportunityForInboundConversation({ conversationId, contactId, channel, fallbackName, phone }) {
+  if (!conversationId || !contactId || !['whatsapp', 'website'].includes(channel)) return null;
+  const source = SOURCE_BY_CHANNEL[channel];
+  const existing = await pool.query(
+    'SELECT twenty_opportunity_id FROM conv.contacts WHERE id = $1 LIMIT 1',
+    [contactId],
+  );
+  if (existing.rows[0]?.twenty_opportunity_id) return existing.rows[0].twenty_opportunity_id;
+
+  const data = {
+    name: nonBlankOrNull(fallbackName) || `${channel === 'whatsapp' ? 'WhatsApp' : '官网客服'}线索`,
+    stage: 'XIANSUO',
+  };
+  if (source) data.keHuLaiYuan = source;
+  const rawPhone = String(phone || '').replace(/[\s()-]+/g, '');
+  if (rawPhone && /^\+?\d{5,15}$/.test(rawPhone)) {
+    data.phone = rawPhone.startsWith('+')
+      ? { primaryPhoneNumber: rawPhone }
+      : { primaryPhoneNumber: rawPhone, primaryPhoneCallingCode: '+86', primaryPhoneCountryCode: 'CN' };
+  }
+  await stripUnavailableOpportunityFields(data, []);
+
+  try {
+    const result = await twentyGraphQL(
+      'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
+      { data },
+      TWENTY_API_KEY,
+    );
+    const opportunity = result?.createOpportunity;
+    if (!opportunity?.id) throw new Error('createOpportunity returned empty id');
+    await pool.query(
+      'UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1 AND twenty_opportunity_id IS NULL',
+      [contactId, opportunity.id],
+    );
+    await recordAuditEvent('conversation.auto_created_lead', {
+      channel,
+      conversationId,
+      payload: { opportunityId: opportunity.id, stage: 'XIANSUO', source },
+    });
+    return opportunity.id;
+  } catch (error) {
+    console.error('[auto-lead] create opportunity failed:', error.message);
+    return null;
   }
 }
 

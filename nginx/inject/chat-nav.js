@@ -472,6 +472,24 @@
     });
   }
 
+  function renameLegacyConversationHistoryNavItems() {
+    Array.from(document.querySelectorAll('a[href],button,[role="button"]')).forEach(function (el) {
+      var href = el.getAttribute('href') || '';
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text !== '对话历史' && !/^\/objects\/duiHuaLiShis(\/|$|\?)/.test(href) && !/^\/objects\/duiHuaLiShi(\/|$|\?)/.test(href)) return;
+      var rect = el.getBoundingClientRect();
+      if (rect.left > 360 || rect.width > 420) return;
+      Array.from(el.querySelectorAll('span,div')).some(function (node) {
+        if ((node.textContent || '').trim() !== '对话历史') return false;
+        node.textContent = '沟通状态';
+        return true;
+      });
+      if ((el.textContent || '').replace(/\s+/g, ' ').trim() === '对话历史') el.textContent = '沟通状态';
+      el.setAttribute('title', '沟通状态');
+      el.setAttribute('aria-label', '沟通状态');
+    });
+  }
+
   // ── build and insert nav item ──────────────────────────────────────────────
 
   function buildNavItem(refAnchor, opts) {
@@ -1005,6 +1023,7 @@
   }
 
   function tryInsert() {
+    renameLegacyConversationHistoryNavItems();
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeInjectedNavItems();
