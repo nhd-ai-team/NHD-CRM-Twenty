@@ -320,7 +320,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td style="width:180px;"><strong>产品阶段</strong></td><td>多渠道 AI 智能 CRM v1.0（MVP）</td></tr>
             <tr><td><strong>版本定位</strong></td><td>多渠道对话中间层 + AI 智能客服能力层 + Twenty CRM 销售闭环</td></tr>
             <tr><td><strong>创建日期</strong></td><td>2026-07-15</td></tr>
-            <tr><td><strong>最后更新</strong></td><td>2026-08-03：按当前代码更新官网表单直写线索、线索转客户、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
+            <tr><td><strong>最后更新</strong></td><td>2026-08-06：按当前代码更新官网表单重复提交方案 C、线索转客户 / 转项目、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
             <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
             <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
             <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
@@ -787,6 +787,7 @@ td.muted{color:var(--text-tertiary);}
             <thead><tr><th>场景</th><th>客户来源</th><th>任务进度 / stage</th><th>保护规则</th></tr></thead>
             <tbody>
               <tr><td>官网表单通过 API 创建线索且未传客户来源</td><td>自动补 GUAN_WANG_BIAO_DAN（官网表单）</td><td>自动设为 XIANSUO（未处理线索）</td><td>数据库触发器兜底，避免官网侧漏传字段</td></tr>
+              <tr><td>官网表单按邮箱 / 电话命中已有官网表单线索</td><td>保留主线索来源</td><td>保留未处理线索阶段</td><td>不新增可见重复线索；不覆盖主线索已有非空核心字段；只补空字段，提交次数 +1，并保存最新表单快照和完整提交历史</td></tr>
               <tr><td>API 已明确传入 WhatsApp / Facebook / 官网客服等来源</td><td>保留原来源</td><td>保留原阶段，官网表单除外</td><td>不覆盖已明确渠道来源</td></tr>
               <tr><td>人工新建或 Excel 导入</td><td>不自动补官网表单</td><td>沿用 Twenty 默认 XIANSUO 或导入值</td><td>避免把人工线索误判为官网表单</td></tr>
             </tbody>
@@ -868,7 +869,7 @@ td.muted{color:var(--text-tertiary);}
               <tr>
                 <td><strong>官网询盘表单</strong></td>
                 <td>—</td>
-                <td>官网表单直接写入 Opportunity；数据库兜底补客户来源和未处理线索阶段</td>
+                <td>官网表单直接写入 Opportunity；数据库兜底补客户来源和未处理线索阶段；重复提交按邮箱 / 电话归入主线索并保存提交历史</td>
                 <td><span class="badge badge-done">✓ 已支持</span></td>
                 <td>官网侧字段继续和 CRM 字段映射对齐</td>
               </tr>

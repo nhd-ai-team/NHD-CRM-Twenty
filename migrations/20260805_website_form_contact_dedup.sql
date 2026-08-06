@@ -1,10 +1,32 @@
--- 官网表单按邮箱 / 电话去重。
+-- 官网表单按邮箱 / 电话去重与提交历史沉淀（方案 C）。
 -- 官网侧可能直接写入 Opportunity。为避免绕过 middleware，去重放在数据库触发器兜底：
 -- 1. 仅处理客户来源为官网表单(GUAN_WANG_BIAO_DAN)的新线索。
--- 2. 命中已有未删除线索时，更新已有线索，软删除本次重复插入行。
--- 3. 不合并、删除已有业务链编码；已有线索继续作为主记录。
+-- 2. 首次提交正常保留为主线索；每次提交都写入 conv.website_form_submissions。
+-- 3. 重复命中已有未删除线索时，只补齐主线索空字段，不覆盖已有非空核心字段。
+-- 4. 主线索维护提交次数、首次/最近提交时间、最新表单快照；重复插入行软删除。
+-- 5. 不合并、删除已有业务链编码；已有线索继续作为主记录。
 
 CREATE SCHEMA IF NOT EXISTS conv;
+
+CREATE TABLE IF NOT EXISTS conv.website_form_submissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  primary_opportunity_id UUID NOT NULL,
+  duplicate_opportunity_id UUID,
+  email_key TEXT,
+  phone_key TEXT,
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS website_form_submissions_primary_idx
+  ON conv.website_form_submissions(primary_opportunity_id, submitted_at DESC);
+CREATE INDEX IF NOT EXISTS website_form_submissions_email_idx
+  ON conv.website_form_submissions(email_key)
+  WHERE email_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS website_form_submissions_phone_idx
+  ON conv.website_form_submissions(phone_key)
+  WHERE phone_key IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION conv.normalized_contact_email(p_value text)
 RETURNS text
@@ -33,6 +55,24 @@ DECLARE
   );
   phone_key text := conv.normalized_contact_phone(NEW."phonePrimaryPhoneNumber");
   target_id uuid;
+  payload jsonb := jsonb_build_object(
+    'opportunityId', NEW.id,
+    'name', NEW.name,
+    'companyId', NEW."companyId",
+    'pointOfContactId', NEW."pointOfContactId",
+    'phone', NEW."phonePrimaryPhoneNumber",
+    'phoneCountryCode', NEW."phonePrimaryPhoneCountryCode",
+    'phoneCallingCode', NEW."phonePrimaryPhoneCallingCode",
+    'email', COALESCE(NEW."youXiang", NEW."emailPrimaryEmail"),
+    'country', NEW."countryAddressCountry",
+    'product', NEW."keHuXuQiuChanPin",
+    'message', NEW."message",
+    'websiteUrl', NEW."guanWangLianJiePrimaryLinkUrl",
+    'websiteLabel', NEW."guanWangLianJiePrimaryLinkLabel",
+    'source', CASE WHEN NEW."keHuLaiYuan" IS NULL THEN NULL ELSE NEW."keHuLaiYuan"::text END,
+    'stage', CASE WHEN NEW.stage IS NULL THEN NULL ELSE NEW.stage::text END,
+    'createdAt', NEW."createdAt"
+  );
 BEGIN
   IF pg_trigger_depth() > 1 THEN
     RETURN NEW;
@@ -62,7 +102,16 @@ BEGIN
         )
         OR (
           $3::text IS NOT NULL
-          AND $3::text = conv.normalized_contact_phone(target."phonePrimaryPhoneNumber")
+          AND conv.normalized_contact_phone(target."phonePrimaryPhoneNumber") IS NOT NULL
+          AND (
+            $3::text = conv.normalized_contact_phone(target."phonePrimaryPhoneNumber")
+            OR (
+              length($3::text) >= 8
+              AND length(conv.normalized_contact_phone(target."phonePrimaryPhoneNumber")) >= 8
+              AND right($3::text, LEAST(length($3::text), length(conv.normalized_contact_phone(target."phonePrimaryPhoneNumber"))))
+                = right(conv.normalized_contact_phone(target."phonePrimaryPhoneNumber"), LEAST(length($3::text), length(conv.normalized_contact_phone(target."phonePrimaryPhoneNumber"))))
+            )
+          )
         )
       )
     ORDER BY target."createdAt" ASC, target.id ASC
@@ -72,31 +121,67 @@ BEGIN
   USING NEW.id, email_key, phone_key;
 
   IF target_id IS NULL THEN
+    EXECUTE format($sql$
+      UPDATE %I.opportunity
+      SET
+        "websiteFormSubmissionCount" = COALESCE("websiteFormSubmissionCount", 0) + 1,
+        "websiteFormFirstSubmittedAt" = COALESCE("websiteFormFirstSubmittedAt", ($1)."createdAt", now()),
+        "websiteFormLastSubmittedAt" = COALESCE(($1)."createdAt", now()),
+        "websiteFormLatestSnapshot" = $2,
+        "updatedAt" = now()
+      WHERE id = ($1).id
+    $sql$, TG_TABLE_SCHEMA)
+    USING NEW, payload;
+
+    INSERT INTO conv.website_form_submissions(
+      primary_opportunity_id,
+      duplicate_opportunity_id,
+      email_key,
+      phone_key,
+      payload,
+      submitted_at
+    )
+    VALUES (NEW.id, NULL, email_key, phone_key, payload, COALESCE(NEW."createdAt", now()));
+
     RETURN NEW;
   END IF;
 
   EXECUTE format($sql$
     UPDATE %I.opportunity AS target
     SET
-      name = COALESCE(NULLIF(($1).name, ''), target.name),
-      "companyId" = COALESCE(($1)."companyId", target."companyId"),
-      "pointOfContactId" = COALESCE(($1)."pointOfContactId", target."pointOfContactId"),
-      "phonePrimaryPhoneNumber" = COALESCE(NULLIF(($1)."phonePrimaryPhoneNumber", ''), target."phonePrimaryPhoneNumber"),
-      "phonePrimaryPhoneCountryCode" = COALESCE(NULLIF(($1)."phonePrimaryPhoneCountryCode", ''), target."phonePrimaryPhoneCountryCode"),
-      "phonePrimaryPhoneCallingCode" = COALESCE(NULLIF(($1)."phonePrimaryPhoneCallingCode", ''), target."phonePrimaryPhoneCallingCode"),
-      "emailPrimaryEmail" = COALESCE(NULLIF(($1)."emailPrimaryEmail", ''), target."emailPrimaryEmail"),
-      "youXiang" = COALESCE(NULLIF(($1)."youXiang", ''), target."youXiang"),
-      "countryAddressCountry" = COALESCE(NULLIF(($1)."countryAddressCountry", ''), target."countryAddressCountry"),
-      "keHuXuQiuChanPin" = COALESCE(NULLIF(($1)."keHuXuQiuChanPin", ''), target."keHuXuQiuChanPin"),
-      "message" = COALESCE(NULLIF(($1)."message", ''), target."message"),
-      "guanWangLianJiePrimaryLinkUrl" = COALESCE(NULLIF(($1)."guanWangLianJiePrimaryLinkUrl", ''), target."guanWangLianJiePrimaryLinkUrl"),
-      "guanWangLianJiePrimaryLinkLabel" = COALESCE(NULLIF(($1)."guanWangLianJiePrimaryLinkLabel", ''), target."guanWangLianJiePrimaryLinkLabel"),
-      "guanWangLianJieSecondaryLinks" = COALESCE(($1)."guanWangLianJieSecondaryLinks", target."guanWangLianJieSecondaryLinks"),
+      name = COALESCE(NULLIF(target.name, ''), NULLIF(($1).name, '')),
+      "companyId" = COALESCE(target."companyId", ($1)."companyId"),
+      "pointOfContactId" = COALESCE(target."pointOfContactId", ($1)."pointOfContactId"),
+      "phonePrimaryPhoneNumber" = COALESCE(NULLIF(target."phonePrimaryPhoneNumber", ''), NULLIF(($1)."phonePrimaryPhoneNumber", '')),
+      "phonePrimaryPhoneCountryCode" = COALESCE(NULLIF(target."phonePrimaryPhoneCountryCode", ''), NULLIF(($1)."phonePrimaryPhoneCountryCode", '')),
+      "phonePrimaryPhoneCallingCode" = COALESCE(NULLIF(target."phonePrimaryPhoneCallingCode", ''), NULLIF(($1)."phonePrimaryPhoneCallingCode", '')),
+      "emailPrimaryEmail" = COALESCE(NULLIF(target."emailPrimaryEmail", ''), NULLIF(($1)."emailPrimaryEmail", '')),
+      "youXiang" = COALESCE(NULLIF(target."youXiang", ''), NULLIF(($1)."youXiang", '')),
+      "countryAddressCountry" = COALESCE(NULLIF(target."countryAddressCountry", ''), NULLIF(($1)."countryAddressCountry", '')),
+      "keHuXuQiuChanPin" = COALESCE(NULLIF(target."keHuXuQiuChanPin", ''), NULLIF(($1)."keHuXuQiuChanPin", '')),
+      "message" = COALESCE(NULLIF(target."message", ''), NULLIF(($1)."message", '')),
+      "guanWangLianJiePrimaryLinkUrl" = COALESCE(NULLIF(target."guanWangLianJiePrimaryLinkUrl", ''), NULLIF(($1)."guanWangLianJiePrimaryLinkUrl", '')),
+      "guanWangLianJiePrimaryLinkLabel" = COALESCE(NULLIF(target."guanWangLianJiePrimaryLinkLabel", ''), NULLIF(($1)."guanWangLianJiePrimaryLinkLabel", '')),
+      "guanWangLianJieSecondaryLinks" = COALESCE(target."guanWangLianJieSecondaryLinks", ($1)."guanWangLianJieSecondaryLinks"),
       stage = 'XIANSUO'::%I.opportunity_stage_enum,
+      "websiteFormSubmissionCount" = GREATEST(COALESCE(target."websiteFormSubmissionCount", 0), 1) + 1,
+      "websiteFormFirstSubmittedAt" = COALESCE(target."websiteFormFirstSubmittedAt", target."createdAt", ($1)."createdAt", now()),
+      "websiteFormLastSubmittedAt" = COALESCE(($1)."createdAt", now()),
+      "websiteFormLatestSnapshot" = $3,
       "updatedAt" = now()
     WHERE target.id = $2
   $sql$, TG_TABLE_SCHEMA, TG_TABLE_SCHEMA)
-  USING NEW, target_id;
+  USING NEW, target_id, payload;
+
+  INSERT INTO conv.website_form_submissions(
+    primary_opportunity_id,
+    duplicate_opportunity_id,
+    email_key,
+    phone_key,
+    payload,
+    submitted_at
+  )
+  VALUES (target_id, NEW.id, email_key, phone_key, payload, COALESCE(NEW."createdAt", now()));
 
   EXECUTE format(
     'UPDATE %I.opportunity SET "deletedAt" = now(), "updatedAt" = now() WHERE id = $1',
@@ -118,6 +203,22 @@ BEGIN
     WHERE table_name = 'opportunity'
       AND table_schema LIKE 'workspace_%'
   LOOP
+    EXECUTE format(
+      'ALTER TABLE %I.opportunity ADD COLUMN IF NOT EXISTS "websiteFormSubmissionCount" integer NOT NULL DEFAULT 0',
+      ws
+    );
+    EXECUTE format(
+      'ALTER TABLE %I.opportunity ADD COLUMN IF NOT EXISTS "websiteFormFirstSubmittedAt" timestamptz',
+      ws
+    );
+    EXECUTE format(
+      'ALTER TABLE %I.opportunity ADD COLUMN IF NOT EXISTS "websiteFormLastSubmittedAt" timestamptz',
+      ws
+    );
+    EXECUTE format(
+      'ALTER TABLE %I.opportunity ADD COLUMN IF NOT EXISTS "websiteFormLatestSnapshot" jsonb',
+      ws
+    );
     EXECUTE format(
       'CREATE INDEX IF NOT EXISTS opportunity_website_form_email_idx ON %I.opportunity (conv.normalized_contact_email(COALESCE("youXiang", "emailPrimaryEmail"))) WHERE "deletedAt" IS NULL',
       ws
