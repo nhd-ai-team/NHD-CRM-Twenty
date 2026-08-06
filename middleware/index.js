@@ -443,6 +443,117 @@ async function recordAuditEvent(eventType, options = {}) {
   }
 }
 
+function followUpBlocknote(content) {
+  return JSON.stringify([{
+    id: crypto.randomUUID(),
+    type: 'paragraph',
+    props: { backgroundColor: 'default', textColor: 'default', textAlignment: 'left' },
+    content: [{ type: 'text', text: String(content || ''), styles: {} }],
+    children: [],
+  }]);
+}
+
+async function resolveFollowUpTargets(client, schema, subjectType, subjectId) {
+  const targets = { opportunityId: null, personId: null, projectId: null, conversationId: null };
+  if (subjectType === 'conversation') {
+    targets.conversationId = subjectId;
+    const result = await client.query(
+      `SELECT ct.twenty_opportunity_id
+         FROM conv.conversations c
+         JOIN conv.contacts ct ON ct.id = c.contact_id
+        WHERE c.id = $1
+        LIMIT 1`,
+      [subjectId],
+    );
+    targets.opportunityId = result.rows[0]?.twenty_opportunity_id || null;
+  } else if (subjectType === 'opportunity') {
+    targets.opportunityId = subjectId;
+  } else if (subjectType === 'person') {
+    targets.personId = subjectId;
+  } else if (subjectType === 'project') {
+    targets.projectId = subjectId;
+  }
+  if (targets.opportunityId) {
+    const result = await client.query(
+      `SELECT "linkedPersonId", "linkedProjectId"
+         FROM ${schema}.opportunity
+        WHERE id = $1 AND "deletedAt" IS NULL
+        LIMIT 1`,
+      [targets.opportunityId],
+    );
+    targets.personId = targets.personId || result.rows[0]?.linkedPersonId || null;
+    targets.projectId = targets.projectId || result.rows[0]?.linkedProjectId || null;
+  }
+  return targets;
+}
+
+async function attachNoteTarget(client, schema, noteId, targetColumn, targetId, actor) {
+  if (!noteId || !targetColumn || !targetId) return;
+  const exists = await client.query(
+    `SELECT 1 FROM ${schema}."noteTarget"
+      WHERE "noteId" = $1 AND "${targetColumn}" = $2 AND "deletedAt" IS NULL
+      LIMIT 1`,
+    [noteId, targetId],
+  );
+  if (exists.rowCount) return;
+  await client.query(
+    `INSERT INTO ${schema}."noteTarget" (
+       "noteId", "${targetColumn}",
+       "createdBySource", "createdByWorkspaceMemberId", "createdByName", "createdByContext",
+       "updatedBySource", "updatedByWorkspaceMemberId", "updatedByName", "updatedByContext"
+     ) VALUES (
+       $1, $2,
+       'API'::${schema}."noteTarget_createdBySource_enum", $3, $4, '{}'::jsonb,
+       'API'::${schema}."noteTarget_updatedBySource_enum", $3, $4, '{}'::jsonb
+     )`,
+    [noteId, targetId, actor?.id || null, actor?.name || 'CRM 用户'],
+  );
+}
+
+async function createFollowUpNote(client, schema, content, actor) {
+  const result = await client.query(
+    `INSERT INTO ${schema}.note (
+       title, "bodyV2Markdown", "bodyV2Blocknote",
+       "createdBySource", "createdByWorkspaceMemberId", "createdByName", "createdByContext",
+       "updatedBySource", "updatedByWorkspaceMemberId", "updatedByName", "updatedByContext"
+     ) VALUES (
+       $1, $2, $3,
+       'API'::${schema}."note_createdBySource_enum", $4, $5, '{}'::jsonb,
+       'API'::${schema}."note_updatedBySource_enum", $4, $5, '{}'::jsonb
+     )
+     RETURNING id`,
+    ['跟进记录', content, followUpBlocknote(content), actor?.id || null, actor?.name || 'CRM 用户'],
+  );
+  return result.rows[0]?.id || null;
+}
+
+async function syncFollowUpNoteTargets(client, schema, noteId, subjectType, subjectId, actor) {
+  const targets = await resolveFollowUpTargets(client, schema, subjectType, subjectId);
+  await attachNoteTarget(client, schema, noteId, 'targetOpportunityId', targets.opportunityId, actor);
+  await attachNoteTarget(client, schema, noteId, 'targetPersonId', targets.personId, actor);
+  await attachNoteTarget(client, schema, noteId, 'targetXiangMuId', targets.projectId, actor);
+}
+
+async function syncOpportunityFollowUpsToProject(client, schema, opportunityId, projectId, actor) {
+  if (!opportunityId || !projectId) return;
+  const result = await client.query(
+    `SELECT DISTINCT fu.twenty_note_id
+       FROM conv.follow_ups fu
+       LEFT JOIN conv.conversations c ON c.id = fu.conversation_id
+       LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+      WHERE fu.deleted_at IS NULL
+        AND fu.twenty_note_id IS NOT NULL
+        AND (
+          (fu.subject_type = 'opportunity' AND fu.subject_id = $1::text)
+          OR ct.twenty_opportunity_id = $1::text
+        )`,
+    [opportunityId],
+  );
+  for (const row of result.rows) {
+    await attachNoteTarget(client, schema, row.twenty_note_id, 'targetXiangMuId', projectId, actor);
+  }
+}
+
 function auditRequestSummary(req) {
   const authorization = String(req.headers.authorization || '');
   const forwardedToken = String(req.headers['x-twenty-access-token'] || '');
@@ -607,6 +718,7 @@ async function ensureSchema() {
       subject_type TEXT NOT NULL,
       subject_id TEXT NOT NULL,
       conversation_id UUID REFERENCES conv.conversations(id) ON DELETE SET NULL,
+      twenty_note_id UUID,
       content TEXT NOT NULL,
       created_by_user_id TEXT,
       created_by_workspace_member_id TEXT,
@@ -614,6 +726,7 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       deleted_at TIMESTAMPTZ);
+    ALTER TABLE conv.follow_ups ADD COLUMN IF NOT EXISTS twenty_note_id UUID;
     CREATE INDEX IF NOT EXISTS follow_ups_subject_idx
       ON conv.follow_ups(subject_type, subject_id, created_at DESC)
       WHERE deleted_at IS NULL;
@@ -1316,38 +1429,56 @@ app.post('/api/follow-ups', requireSameSite, async (req, res) => {
     if (!access) return;
   }
 
-  const result = await pool.query(
-    `INSERT INTO conv.follow_ups(
-       subject_type, subject_id, conversation_id, content,
-       created_by_user_id, created_by_workspace_member_id, created_by_name
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id,
-               subject_type AS "subjectType",
-               subject_id AS "subjectId",
-               conversation_id AS "conversationId",
-               content,
-               created_by_workspace_member_id AS "createdByWorkspaceMemberId",
-               created_by_name AS "createdByName",
-               created_at AS "createdAt",
-               updated_at AS "updatedAt"`,
-    [
-      subjectType,
-      subjectId,
-      subjectType === 'conversation' ? subjectId : null,
-      content,
-      authenticated.userId,
-      authenticated.actor.id,
-      authenticated.actor.name,
-    ],
-  );
+  const client = await pool.connect();
+  let row;
+  try {
+    const schema = await getWorkspaceSchema();
+    await client.query('BEGIN');
+    const noteId = await createFollowUpNote(client, schema, content, authenticated.actor);
+    await syncFollowUpNoteTargets(client, schema, noteId, subjectType, subjectId, authenticated.actor);
+    const result = await client.query(
+      `INSERT INTO conv.follow_ups(
+         subject_type, subject_id, conversation_id, twenty_note_id, content,
+         created_by_user_id, created_by_workspace_member_id, created_by_name
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id,
+                 subject_type AS "subjectType",
+                 subject_id AS "subjectId",
+                 conversation_id AS "conversationId",
+                 twenty_note_id AS "twentyNoteId",
+                 content,
+                 created_by_workspace_member_id AS "createdByWorkspaceMemberId",
+                 created_by_name AS "createdByName",
+                 created_at AS "createdAt",
+                 updated_at AS "updatedAt"`,
+      [
+        subjectType,
+        subjectId,
+        subjectType === 'conversation' ? subjectId : null,
+        noteId,
+        content,
+        authenticated.userId,
+        authenticated.actor.id,
+        authenticated.actor.name,
+      ],
+    );
+    row = result.rows[0];
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[follow-ups] create failed:', error.message);
+    return res.status(502).json({ error: '新增跟进记录失败', detail: error.message });
+  } finally {
+    client.release();
+  }
   await recordAuditEvent('follow_up.created', {
     channel: subjectType,
     conversationId: subjectType === 'conversation' ? subjectId : null,
     actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
     requestSummary: auditRequestSummary(req),
-    payload: { subjectType, subjectId, followUpId: result.rows[0]?.id },
+    payload: { subjectType, subjectId, followUpId: row?.id, twentyNoteId: row?.twentyNoteId },
   });
-  res.status(201).json(result.rows[0]);
+  res.status(201).json(row);
 });
 
 app.delete('/api/follow-ups/:id', requireSameSite, async (req, res) => {
@@ -1356,19 +1487,40 @@ app.delete('/api/follow-ups/:id', requireSameSite, async (req, res) => {
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
   if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能删除跟进记录' });
-  const result = await pool.query(
-    `UPDATE conv.follow_ups
-        SET deleted_at = now(), updated_at = now()
-      WHERE id = $1
-        AND deleted_at IS NULL
-        AND created_by_workspace_member_id = $2
-      RETURNING id, subject_type AS "subjectType", subject_id AS "subjectId", conversation_id AS "conversationId"`,
-    [req.params.id, viewer.workspaceMemberId],
-  );
-  if (!result.rowCount) return res.status(404).json({ error: '跟进记录不存在或无权删除' });
+  const client = await pool.connect();
+  let row;
+  try {
+    const schema = await getWorkspaceSchema();
+    await client.query('BEGIN');
+    const result = await client.query(
+      `UPDATE conv.follow_ups
+          SET deleted_at = now(), updated_at = now()
+        WHERE id = $1
+          AND deleted_at IS NULL
+          AND created_by_workspace_member_id = $2
+        RETURNING id, subject_type AS "subjectType", subject_id AS "subjectId", conversation_id AS "conversationId", twenty_note_id AS "twentyNoteId"`,
+      [req.params.id, viewer.workspaceMemberId],
+    );
+    if (!result.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '跟进记录不存在或无权删除' });
+    }
+    row = result.rows[0];
+    if (row.twentyNoteId) {
+      await client.query(`UPDATE ${schema}."noteTarget" SET "deletedAt" = now(), "updatedAt" = now() WHERE "noteId" = $1 AND "deletedAt" IS NULL`, [row.twentyNoteId]);
+      await client.query(`UPDATE ${schema}.note SET "deletedAt" = now(), "updatedAt" = now() WHERE id = $1 AND "deletedAt" IS NULL`, [row.twentyNoteId]);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[follow-ups] delete failed:', error.message);
+    return res.status(502).json({ error: '删除跟进记录失败', detail: error.message });
+  } finally {
+    client.release();
+  }
   await recordAuditEvent('follow_up.deleted', {
-    channel: result.rows[0].subjectType,
-    conversationId: result.rows[0].conversationId,
+    channel: row.subjectType,
+    conversationId: row.conversationId,
     actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
     requestSummary: auditRequestSummary(req),
     payload: { followUpId: req.params.id },
@@ -3216,6 +3368,8 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
        WHERE id = $3`,
       [opportunity.id, project.id, person.id],
     );
+
+    await syncOpportunityFollowUpsToProject(client, schema, opportunity.id, project.id, auditActor);
 
     await client.query('COMMIT');
     await applyRecordAuditBestEffort('person', person.id, auditActor, person.created ? 'create' : 'update');
