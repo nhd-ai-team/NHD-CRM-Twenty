@@ -96,7 +96,7 @@ function ConvCard({ conv, isSelected, onSelect }) {
   )
 }
 
-export function ConversationSidebar({ conversations, selectedId, onSelect, onNewWhatsApp, activeStatus, setActiveStatus, search, setSearch }) {
+export function ConversationSidebar({ conversations, selectedId, onSelect, onNewWhatsApp, activeStatus, setActiveStatus, search, setSearch, showNewWhatsApp = true }) {
   return (
     <div style={{
       width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
@@ -121,9 +121,11 @@ export function ConversationSidebar({ conversations, selectedId, onSelect, onNew
             }}
           />
         </div>
-        <button onClick={onNewWhatsApp} title="新建 WhatsApp 会话" aria-label="新建 WhatsApp 会话" style={{ width: 30, height: 30, flexShrink: 0, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-surface)', color: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-          <MessageCircle size={15} />
-        </button>
+        {showNewWhatsApp && (
+          <button onClick={onNewWhatsApp} title="新建 WhatsApp 会话" aria-label="新建 WhatsApp 会话" style={{ width: 30, height: 30, flexShrink: 0, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-surface)', color: 'var(--green)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+            <MessageCircle size={15} />
+          </button>
+        )}
       </div>
 
       {/* Status filters */}

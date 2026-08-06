@@ -93,7 +93,7 @@ function AttachmentCard({ attachment, isCustomer, content }) {
   )
 }
 
-function MessageBubble({ msg }) {
+export function MessageBubble({ msg }) {
   if (msg.contentType === 'system') return (
     <div style={{ textAlign: 'center', padding: '6px 0' }}>
       <span style={{

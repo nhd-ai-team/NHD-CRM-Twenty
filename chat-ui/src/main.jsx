@@ -3,12 +3,14 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.jsx'
 import { MailApp } from './components/MailApp.jsx'
+import { HistoryApp } from './components/HistoryApp.jsx'
 import { useTheme } from './hooks/useTheme.js'
 
-// 视图路由：hash 含 view=mail → 邮箱视图；否则渠道工作台。两者共用 twenty auth hash。
+// 视图路由：hash 含 view=mail/history → 邮箱/沟通状态视图；否则渠道工作台。三者共用 twenty auth hash。
 function getView() {
   const hash = window.location.hash?.replace(/^#/, '') || ''
-  return new URLSearchParams(hash).get('view') === 'mail' ? 'mail' : 'chat'
+  const view = new URLSearchParams(hash).get('view')
+  return view === 'mail' || view === 'history' ? view : 'chat'
 }
 
 function Root() {
@@ -20,7 +22,9 @@ function Root() {
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
-  return view === 'mail' ? <MailApp /> : <App />
+  if (view === 'mail') return <MailApp />
+  if (view === 'history') return <HistoryApp />
+  return <App />
 }
 
 createRoot(document.getElementById('root')).render(

@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
-export function useConversations() {
+export function useConversations({ includeEmail = false } = {}) {
   const [conversations, setConversations] = useState([])
   const [activeChannel, setActiveChannel] = useState('all')
   const [activeStatus, setActiveStatus] = useState('all')
@@ -15,8 +15,8 @@ export function useConversations() {
       headers: withTwentyAuthHeaders(),
     })
     if (!response.ok) throw new Error('无法加载会话')
-    // 邮箱是独立板块（见 useEmails），渠道工作台不展示 email 会话
-    const list = (await response.json()).filter(c => c.channel !== 'email')
+    // 邮箱是独立板块（见 useEmails），渠道工作台默认不展示 email 会话；只读历史页可按需复用全量接口。
+    const list = (await response.json()).filter(c => includeEmail || c.channel !== 'email')
     setConversations(current => list.map(conv => ({
       ...conv,
       messages: current.find(item => item.id === conv.id)?.messages ?? [],
@@ -43,7 +43,7 @@ export function useConversations() {
     loadConversations().catch(error => console.error(error))
     const timer = setInterval(() => loadConversations().catch(() => {}), 10000)
     return () => clearInterval(timer)
-  }, [])
+  }, [includeEmail])
 
   useEffect(() => {
     loadMessages(selectedId).catch(error => console.error(error))

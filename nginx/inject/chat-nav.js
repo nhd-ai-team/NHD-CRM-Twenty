@@ -281,6 +281,7 @@
     var token = getTwentyAccessToken();
     var hash = token ? '#twentyAccessToken=' + encodeURIComponent(token) : '';
     if (view === 'mail') hash += (hash ? '&' : '#') + 'view=mail';
+    if (view === 'history') hash += (hash ? '&' : '#') + 'view=history';
     return CHAT_SRC + hash;
   }
 
@@ -413,6 +414,11 @@
       if (!a) return;
       var href = a.getAttribute('href') || '';
       // Is this a Twenty internal nav link (not our chat link)?
+      if (/^\/objects\/duiHuaLiShis(\/|$|\?)/.test(href || '') || /^\/objects\/duiHuaLiShi(\/|$|\?)/.test(href || '')) {
+        e.preventDefault();
+        showView('history');
+        return;
+      }
       if (a.id !== NAV_ID &&
           a.id !== SETTINGS_NAV_ID &&
           !href.startsWith('/chat') &&
@@ -1179,7 +1185,7 @@
         onProgress(idx + 1, items.length);
         return window.fetch('/conv-api/opportunities/' + encodeURIComponent(item.id) + '/' + endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
           credentials: 'same-origin',
         }).then(function (r) {
           return r.json().catch(function () { return {}; }).then(function (data) {

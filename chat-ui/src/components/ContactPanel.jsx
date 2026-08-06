@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Loader2, UserPlus } from 'lucide-react'
+import { Loader2, UserPlus, Trash2 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
-const TABS = ['资料']
+const TABS = ['资料', '跟进']
 
 // 下拉选项与 Opportunity 的 SELECT 字段选项一一对应（label 显示 / value 入库）。
 const SOURCE_OPTIONS = [
@@ -131,6 +131,150 @@ function PlaceholderTab({ label }) {
   )
 }
 
+function formatFollowUpTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function FollowUpTab({ conv }) {
+  const [items, setItems] = useState([])
+  const [content, setContent] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const canWrite = conv?.permissions?.viewerRole !== 'boss'
+
+  async function load() {
+    if (!conv?.id) return
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`/conv-api/follow-ups?subjectType=conversation&subjectId=${encodeURIComponent(conv.id)}&_=${Date.now()}`, {
+        cache: 'no-store',
+        headers: withTwentyAuthHeaders(),
+      })
+      const data = await res.json().catch(() => [])
+      if (!res.ok) throw new Error(data.error || '无法加载跟进记录')
+      setItems(Array.isArray(data) ? data : [])
+    } catch (e) {
+      setError(e.message || '无法加载跟进记录')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [conv?.id])
+
+  async function addFollowUp() {
+    const text = content.trim()
+    if (!text || !conv?.id || saving || !canWrite) return
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch('/conv-api/follow-ups', {
+        method: 'POST',
+        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ subjectType: 'conversation', subjectId: conv.id, content: text }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || '新增跟进记录失败')
+      setItems((current) => [data, ...current])
+      setContent('')
+    } catch (e) {
+      setError(e.message || '新增跟进记录失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteFollowUp(id) {
+    if (!id || !canWrite) return
+    setError('')
+    try {
+      const res = await fetch(`/conv-api/follow-ups/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: withTwentyAuthHeaders(),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || '删除跟进记录失败')
+      setItems((current) => current.filter((item) => item.id !== id))
+    } catch (e) {
+      setError(e.message || '删除跟进记录失败')
+    }
+  }
+
+  return (
+    <div style={{ padding: 16 }}>
+      {canWrite && (
+        <div style={{ marginBottom: 14 }}>
+          <textarea
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            rows={4}
+            maxLength={4000}
+            placeholder="记录本次跟进要点、客户反馈、下一步动作…"
+            style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', minHeight: 92 }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>销售只能看到自己创建的跟进记录</span>
+            <button
+              onClick={addFollowUp}
+              disabled={saving || !content.trim()}
+              style={{
+                padding: '6px 12px', borderRadius: 6, border: 'none',
+                background: content.trim() && !saving ? 'var(--accent)' : 'var(--bg-active)',
+                color: content.trim() && !saving ? '#fff' : 'var(--text-muted)',
+                cursor: content.trim() && !saving ? 'pointer' : 'not-allowed',
+                fontSize: 12, fontWeight: 600,
+              }}
+            >
+              {saving ? '保存中' : '新增'}
+            </button>
+          </div>
+        </div>
+      )}
+      {!canWrite && (
+        <div style={{ marginBottom: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+          Boss 当前为查看权限，可查看该会话下所有跟进记录。
+        </div>
+      )}
+      {error && <div style={{ color: '#e1262b', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 12 }}>
+          <Loader2 size={13} className="spin" /> 加载中…
+        </div>
+      ) : items.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.6 }}>暂无跟进记录</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {items.map((item) => (
+            <div key={item.id} style={{ border: '1px solid var(--border)', borderRadius: 7, background: 'var(--bg-primary)', padding: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {item.createdByName || 'CRM 用户'} · {formatFollowUpTime(item.createdAt)}
+                </div>
+                {canWrite && (
+                  <button
+                    onClick={() => deleteFollowUp(item.id)}
+                    title="删除跟进记录"
+                    style={{ border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 2 }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-primary)' }}>{item.content}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ContactPanel({ conv, open = true, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting }) {
   const [activeTab, setActiveTab] = useState('资料')
   if (!open) return null
@@ -175,7 +319,11 @@ export function ContactPanel({ conv, open = true, inline = false, draft = {}, on
           ))}
         </div>
 
-        {activeTab !== '资料' ? (
+        {activeTab === '跟进' && c ? (
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            <FollowUpTab conv={conv} />
+          </div>
+        ) : activeTab !== '资料' ? (
           <PlaceholderTab label={activeTab} />
         ) : !c ? (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>请先选择一个会话</div>

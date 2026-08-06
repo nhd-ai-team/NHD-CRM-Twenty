@@ -407,6 +407,42 @@ async function requireConversationAccess(req, res, options = {}) {
   return { viewer, conversation };
 }
 
+async function requireWriteConversationAccess(req, res) {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return null;
+  const access = await requireConversationAccess(req, res, { write: true });
+  if (!access) return null;
+  if (!access.viewer) {
+    res.status(403).json({ error: '当前账号没有工作区成员权限' });
+    return null;
+  }
+  return { ...access, authenticated };
+}
+
+async function recordAuditEvent(eventType, options = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO conv.audit_events(
+         event_type, channel, conversation_id, message_id, actor_user_id,
+         actor_workspace_member_id, actor_name, request_summary, payload
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        eventType,
+        options.channel || null,
+        options.conversationId || null,
+        options.messageId || null,
+        options.actor?.userId || null,
+        options.actor?.workspaceMemberId || options.actor?.id || null,
+        options.actor?.name || null,
+        options.requestSummary ? JSON.stringify(options.requestSummary) : null,
+        options.payload ? JSON.stringify(options.payload) : null,
+      ],
+    );
+  } catch (error) {
+    console.warn('[audit-events] write failed:', error.message);
+  }
+}
+
 function auditRequestSummary(req) {
   const authorization = String(req.headers.authorization || '');
   const forwardedToken = String(req.headers['x-twenty-access-token'] || '');
@@ -566,6 +602,41 @@ async function ensureSchema() {
     -- 邮件专用字段（仅 channel='email' 使用）：主题与附件清单
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS subject TEXT;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS attachments JSONB;
+    CREATE TABLE IF NOT EXISTS conv.follow_ups (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      subject_type TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      conversation_id UUID REFERENCES conv.conversations(id) ON DELETE SET NULL,
+      content TEXT NOT NULL,
+      created_by_user_id TEXT,
+      created_by_workspace_member_id TEXT,
+      created_by_name TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      deleted_at TIMESTAMPTZ);
+    CREATE INDEX IF NOT EXISTS follow_ups_subject_idx
+      ON conv.follow_ups(subject_type, subject_id, created_at DESC)
+      WHERE deleted_at IS NULL;
+    CREATE INDEX IF NOT EXISTS follow_ups_creator_idx
+      ON conv.follow_ups(created_by_workspace_member_id, created_at DESC)
+      WHERE deleted_at IS NULL;
+    CREATE TABLE IF NOT EXISTS conv.audit_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_type TEXT NOT NULL,
+      channel TEXT,
+      conversation_id UUID REFERENCES conv.conversations(id) ON DELETE SET NULL,
+      message_id UUID,
+      actor_user_id TEXT,
+      actor_workspace_member_id TEXT,
+      actor_name TEXT,
+      request_summary JSONB,
+      payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE INDEX IF NOT EXISTS audit_events_type_time_idx
+      ON conv.audit_events(event_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS audit_events_conversation_idx
+      ON conv.audit_events(conversation_id, created_at DESC)
+      WHERE conversation_id IS NOT NULL;
     -- IMAP 增量同步游标
     CREATE TABLE IF NOT EXISTS conv.email_sync (
       mailbox TEXT PRIMARY KEY,
@@ -846,6 +917,19 @@ async function persistWhatsAppMessage(payload) {
       requestAiReplyIfAllowed(conversation, externalMessageId, parsed.content)
         .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
+    if (inserted.rowCount) {
+      recordAuditEvent('message.ingested', {
+        channel: 'whatsapp',
+        conversationId: conversation.id,
+        messageId: inserted.rows[0].id,
+        payload: {
+          direction: fromMe ? 'outbound_echo' : 'inbound',
+          externalMessageId,
+          externalChatId: chatKey,
+          contentType: parsed.type,
+        },
+      });
+    }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
@@ -900,6 +984,19 @@ async function persistWebsiteMessage(body) {
       const aiMessageId = dedupeId || `web:${conversation.id}:${inserted.rows[0].id}`;
       requestAiReplyIfAllowed(conversation, aiMessageId, content)
         .catch(error => console.error('[ai] website auto reply failed:', error.message));
+    }
+    if (inserted.rowCount) {
+      recordAuditEvent('message.ingested', {
+        channel: 'website',
+        conversationId: conversation.id,
+        messageId: inserted.rows[0].id,
+        payload: {
+          senderType,
+          externalMessageId: dedupeId,
+          externalChatId: sessionId,
+          contentType: 'text',
+        },
+      });
     }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
@@ -978,6 +1075,14 @@ async function persistInstagramMessage(senderId, messageEvent) {
       requestAiReplyIfAllowed(conversation, message.mid, parsed.content)
         .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
+    if (inserted.rowCount) {
+      recordAuditEvent('message.ingested', {
+        channel: 'instagram',
+        conversationId: conversation.id,
+        messageId: inserted.rows[0].id,
+        payload: { direction: fromMe ? 'outbound_echo' : 'inbound', externalMessageId, contentType: parsed.type },
+      });
+    }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
@@ -1054,6 +1159,14 @@ async function persistFacebookMessage(messagingEvent) {
       requestAiReplyIfAllowed(conversation, message.mid, parsed.content)
         .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
+    if (inserted.rowCount) {
+      recordAuditEvent('message.ingested', {
+        channel: 'facebook',
+        conversationId: conversation.id,
+        messageId: inserted.rows[0].id,
+        payload: { direction: fromMe ? 'outbound_echo' : 'inbound', externalMessageId, contentType: parsed.type },
+      });
+    }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
@@ -1124,6 +1237,165 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const access = await requireConversationAccess(req, res);
   if (!access) return;
   const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
+  res.json(result.rows);
+});
+
+app.get('/api/follow-ups', async (req, res) => {
+  const subjectType = String(req.query.subjectType || '').trim();
+  const subjectId = String(req.query.subjectId || '').trim();
+  if (!['conversation', 'opportunity', 'person', 'project'].includes(subjectType) || !subjectId) {
+    return res.status(400).json({ error: 'follow-up query params invalid' });
+  }
+  let viewer = await resolveConversationViewer(req);
+  if (subjectType === 'conversation') {
+    const access = await requireConversationAccess({ headers: req.headers, params: { id: subjectId } }, res);
+    if (!access) return;
+    viewer = access.viewer;
+  }
+  if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
+  const params = [subjectType, subjectId];
+  let creatorFilter = '';
+  if (!viewer.isBoss) {
+    params.push(viewer.workspaceMemberId);
+    creatorFilter = `AND created_by_workspace_member_id = $${params.length}`;
+  }
+  const result = await pool.query(
+    `SELECT id,
+            subject_type AS "subjectType",
+            subject_id AS "subjectId",
+            conversation_id AS "conversationId",
+            content,
+            created_by_workspace_member_id AS "createdByWorkspaceMemberId",
+            created_by_name AS "createdByName",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+       FROM conv.follow_ups
+      WHERE subject_type = $1
+        AND subject_id = $2
+        AND deleted_at IS NULL
+        ${creatorFilter}
+      ORDER BY created_at DESC
+      LIMIT 100`,
+    params,
+  );
+  res.json(result.rows);
+});
+
+app.post('/api/follow-ups', requireSameSite, async (req, res) => {
+  const subjectType = String(req.body?.subjectType || '').trim();
+  const subjectId = String(req.body?.subjectId || '').trim();
+  const content = String(req.body?.content || '').trim();
+  if (!['conversation', 'opportunity', 'person', 'project'].includes(subjectType) || !subjectId) {
+    return res.status(400).json({ error: '跟进记录参数无效' });
+  }
+  if (!content) return res.status(400).json({ error: '请输入跟进内容' });
+  if (content.length > 4000) return res.status(400).json({ error: '跟进内容不能超过 4000 字' });
+
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
+  if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能新增跟进记录' });
+  if (subjectType === 'conversation') {
+    const access = await requireConversationAccess({ headers: req.headers, params: { id: subjectId } }, res, { write: true });
+    if (!access) return;
+  }
+
+  const result = await pool.query(
+    `INSERT INTO conv.follow_ups(
+       subject_type, subject_id, conversation_id, content,
+       created_by_user_id, created_by_workspace_member_id, created_by_name
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id,
+               subject_type AS "subjectType",
+               subject_id AS "subjectId",
+               conversation_id AS "conversationId",
+               content,
+               created_by_workspace_member_id AS "createdByWorkspaceMemberId",
+               created_by_name AS "createdByName",
+               created_at AS "createdAt",
+               updated_at AS "updatedAt"`,
+    [
+      subjectType,
+      subjectId,
+      subjectType === 'conversation' ? subjectId : null,
+      content,
+      authenticated.userId,
+      authenticated.actor.id,
+      authenticated.actor.name,
+    ],
+  );
+  await recordAuditEvent('follow_up.created', {
+    channel: subjectType,
+    conversationId: subjectType === 'conversation' ? subjectId : null,
+    actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+    requestSummary: auditRequestSummary(req),
+    payload: { subjectType, subjectId, followUpId: result.rows[0]?.id },
+  });
+  res.status(201).json(result.rows[0]);
+});
+
+app.delete('/api/follow-ups/:id', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
+  if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能删除跟进记录' });
+  const result = await pool.query(
+    `UPDATE conv.follow_ups
+        SET deleted_at = now(), updated_at = now()
+      WHERE id = $1
+        AND deleted_at IS NULL
+        AND created_by_workspace_member_id = $2
+      RETURNING id, subject_type AS "subjectType", subject_id AS "subjectId", conversation_id AS "conversationId"`,
+    [req.params.id, viewer.workspaceMemberId],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: '跟进记录不存在或无权删除' });
+  await recordAuditEvent('follow_up.deleted', {
+    channel: result.rows[0].subjectType,
+    conversationId: result.rows[0].conversationId,
+    actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+    requestSummary: auditRequestSummary(req),
+    payload: { followUpId: req.params.id },
+  });
+  res.json({ deleted: true });
+});
+
+app.get('/api/audit/events', async (req, res) => {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer?.isBoss) return res.status(403).json({ error: '仅管理者可查看审计事件' });
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+  const eventType = String(req.query.eventType || '').trim();
+  const conversationId = String(req.query.conversationId || '').trim();
+  const params = [];
+  const where = [];
+  if (eventType) {
+    params.push(eventType);
+    where.push(`event_type = $${params.length}`);
+  }
+  if (conversationId) {
+    params.push(conversationId);
+    where.push(`conversation_id = $${params.length}`);
+  }
+  params.push(limit);
+  const result = await pool.query(
+    `SELECT id,
+            event_type AS "eventType",
+            channel,
+            conversation_id AS "conversationId",
+            message_id AS "messageId",
+            actor_user_id AS "actorUserId",
+            actor_workspace_member_id AS "actorWorkspaceMemberId",
+            actor_name AS "actorName",
+            request_summary AS "requestSummary",
+            payload,
+            created_at AS "createdAt"
+       FROM conv.audit_events
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY created_at DESC
+      LIMIT $${params.length}`,
+    params,
+  );
   res.json(result.rows);
 });
 
@@ -1366,6 +1638,13 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       [`system:${req.params.id}:${Date.now()}:${action}`, req.params.id, systemText],
     );
     await client.query('COMMIT');
+    await recordAuditEvent('conversation.status_changed', {
+      channel: conversation.channel,
+      conversationId: req.params.id,
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      requestSummary: auditRequestSummary(req),
+      payload: { action, fromStatus: conversation.status, toStatus: nextStatus },
+    });
     res.json({ id: req.params.id, status: nextStatus });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -2115,16 +2394,27 @@ async function opportunitySelectExpression(fieldName, fallbackExpression = 'NULL
 }
 
 app.put('/api/conversations/:id/draft', requireSameSite, async (req, res) => {
+  const access = await requireWriteConversationAccess(req, res);
+  if (!access) return;
   const b = req.body || {};
   const draft = {};
   for (const k of DRAFT_FIELDS) if (b[k] !== undefined) draft[k] = typeof b[k] === 'string' ? b[k] : String(b[k] ?? '');
   const r = await pool.query('UPDATE conv.conversations SET lead_draft = $2, updated_at = now() WHERE id = $1 RETURNING id', [req.params.id, draft]);
   if (!r.rowCount) return res.status(404).json({ error: 'conversation not found' });
+  await recordAuditEvent('conversation.draft_saved', {
+    channel: access.conversation.channel,
+    conversationId: req.params.id,
+    actor: { userId: access.authenticated.userId, workspaceMemberId: access.authenticated.actor.id, name: access.authenticated.actor.name },
+    requestSummary: auditRequestSummary(req),
+    payload: { fields: Object.keys(draft) },
+  });
   res.json({ saved: true });
 });
 
 // 「转为线索」：把右侧表单字段映射到 Opportunity 并创建；成功后在联系人上记 opportunity id。
 app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, res) => {
+  const writeAccess = await requireWriteConversationAccess(req, res);
+  if (!writeAccess) return;
   const b = req.body || {};
   const twentyToken = getTwentyTokenFromRequest(req);
   const auditActor = await resolveAuditActor(req).catch((error) => {
@@ -2235,6 +2525,13 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     if (!isUpdate && row.contact_id) {
       await pool.query('UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1', [row.contact_id, opp.id]);
     }
+    await recordAuditEvent(isUpdate ? 'conversation.lead_updated' : 'conversation.converted_to_lead', {
+      channel: row.channel,
+      conversationId: req.params.id,
+      actor: { userId: writeAccess.authenticated.userId, workspaceMemberId: writeAccess.authenticated.actor.id, name: writeAccess.authenticated.actor.name },
+      requestSummary: auditRequestSummary(req),
+      payload: { opportunityId: opp.id, skipped: [...new Set(skipped)], updated: isUpdate },
+    });
     res.status(isUpdate ? 200 : 201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)], updated: isUpdate });
   } catch (error) {
     // 写商机失败：仅回滚本次「新建」的孤儿 Person（更新既有 Person 不回滚）。
@@ -2495,6 +2792,10 @@ async function applyRecordAuditBestEffort(tableName, recordId, actor, operation)
 
 // 线索表行按钮：把当前线索同步/关联到客户(People)。要求客户需求产品已填写。
 app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const viewer = await resolveConversationViewer(req);
+  if (viewer?.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能执行转客户' });
   const auditActor = await resolveAuditActor(req).catch((error) => {
     console.error('[audit] resolve actor failed:', error.message);
     return null;
@@ -2577,6 +2878,17 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
     await client.query('COMMIT');
     await applyRecordAuditBestEffort('person', person.id, auditActor, person.created ? 'create' : 'update');
     await applyRecordAuditBestEffort('opportunity', opportunity.id, auditActor, 'update');
+    await recordAuditEvent('opportunity.converted_to_person', {
+      channel: 'opportunity',
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      requestSummary: auditRequestSummary(req),
+      payload: {
+        opportunityId: opportunity.id,
+        personId: person.id,
+        syncGroupCode: opportunity.syncGroupCode,
+        personCreated: person.created,
+      },
+    });
     res.status(person.created ? 201 : 200).json({
       opportunityId: opportunity.id,
       personId: person.id,
@@ -2744,6 +3056,10 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
 
 // 线索表行按钮：把当前线索同步/关联到项目。会先补齐客户(People)关联，保持完整漏斗链路。
 app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const viewer = await resolveConversationViewer(req);
+  if (viewer?.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能执行转项目' });
   const auditActor = await resolveAuditActor(req).catch((error) => {
     console.error('[audit] resolve actor failed:', error.message);
     return null;
@@ -2844,6 +3160,19 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
     await applyRecordAuditBestEffort('person', person.id, auditActor, person.created ? 'create' : 'update');
     await applyRecordAuditBestEffort('_xiangMu', project.id, auditActor, project.created ? 'create' : 'update');
     await applyRecordAuditBestEffort('opportunity', opportunity.id, auditActor, 'update');
+    await recordAuditEvent('opportunity.converted_to_project', {
+      channel: 'opportunity',
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      requestSummary: auditRequestSummary(req),
+      payload: {
+        opportunityId: opportunity.id,
+        personId: person.id,
+        projectId: project.id,
+        syncGroupCode: opportunity.syncGroupCode,
+        personCreated: person.created,
+        projectCreated: project.created,
+      },
+    });
     res.status(project.created ? 201 : 200).json({
       opportunityId: opportunity.id,
       personId: person.id,
@@ -2865,8 +3194,8 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
 // 记录销售在 CRM 内发出的消息。用渠道返回的消息 id 落库，与 message.any webhook 回传的
 // 同一条出站消息（fromMe=true，external_msg_id 同为该 id）去重，避免重复。
 async function recordAgentMessage(conversationId, content, externalId, options = {}) {
-  await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
-    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now()) ON CONFLICT(external_msg_id) DO NOTHING`,
+  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
+    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
     [
       externalId || null,
       conversationId,
@@ -2876,6 +3205,7 @@ async function recordAgentMessage(conversationId, content, externalId, options =
       options.attachments ? JSON.stringify(options.attachments) : null,
     ]);
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
+  return inserted.rows[0]?.id || null;
 }
 
 async function sendWebsiteAgentMessage(conversation, content, idempotencyKey, attachment) {
@@ -2992,10 +3322,18 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     if (conversation.channel === 'whatsapp') {
       try {
         const sent = await sendWhatsAppFile(conversation, uploadedFile, content);
-        await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
+        const messageId = await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
+        });
+        await recordAuditEvent('message.sent', {
+          channel: conversation.channel,
+          conversationId: req.params.id,
+          messageId,
+          actor: access.viewer,
+          requestSummary: auditRequestSummary(req),
+          payload: { contentType: messageType, hasAttachment: true, attachmentTitle: title },
         });
         return res.status(202).json(sent);
       } catch (error) {
@@ -3007,10 +3345,18 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       try {
         const idempotencyKey = `crm-file:${req.params.id}:${Date.now()}`;
         const sent = await sendWebsiteAgentMessage(conversation, displayContent, idempotencyKey, attachment);
-        await recordAgentMessage(req.params.id, displayContent, `web:agent:${sent?.messageId || idempotencyKey}`, {
+        const messageId = await recordAgentMessage(req.params.id, displayContent, `web:agent:${sent?.messageId || idempotencyKey}`, {
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
+        });
+        await recordAuditEvent('message.sent', {
+          channel: conversation.channel,
+          conversationId: req.params.id,
+          messageId,
+          actor: access.viewer,
+          requestSummary: auditRequestSummary(req),
+          payload: { contentType: messageType, hasAttachment: true, attachmentTitle: title },
         });
         return res.status(202).json(sent);
       } catch (error) {
@@ -3025,7 +3371,15 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
     if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
     const sent = await response.json();
-    await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized);
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized);
+    await recordAuditEvent('message.sent', {
+      channel: conversation.channel,
+      conversationId: req.params.id,
+      messageId,
+      actor: access.viewer,
+      requestSummary: auditRequestSummary(req),
+      payload: { contentType: 'text', hasAttachment: false },
+    });
     return res.status(202).json(sent);
   }
 
@@ -3038,7 +3392,15 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     });
     if (!response.ok) return res.status(502).json({ error: 'Instagram send failed', detail: await response.text() });
     const sent = await response.json();
-    await recordAgentMessage(req.params.id, content, sent?.message_id);
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id);
+    await recordAuditEvent('message.sent', {
+      channel: conversation.channel,
+      conversationId: req.params.id,
+      messageId,
+      actor: access.viewer,
+      requestSummary: auditRequestSummary(req),
+      payload: { contentType: 'text', hasAttachment: false },
+    });
     return res.status(202).json(sent);
   }
 
@@ -3051,7 +3413,15 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     });
     if (!response.ok) return res.status(502).json({ error: 'Facebook send failed', detail: await response.text() });
     const sent = await response.json();
-    await recordAgentMessage(req.params.id, content, sent?.message_id);
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id);
+    await recordAuditEvent('message.sent', {
+      channel: conversation.channel,
+      conversationId: req.params.id,
+      messageId,
+      actor: access.viewer,
+      requestSummary: auditRequestSummary(req),
+      payload: { contentType: 'text', hasAttachment: false },
+    });
     return res.status(202).json(sent);
   }
 
@@ -3064,7 +3434,15 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     } catch (error) {
       return res.status(502).json({ error: 'Website send failed', detail: error.message });
     }
-    await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`);
+    const messageId = await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`);
+    await recordAuditEvent('message.sent', {
+      channel: conversation.channel,
+      conversationId: req.params.id,
+      messageId,
+      actor: access.viewer,
+      requestSummary: auditRequestSummary(req),
+      payload: { contentType: 'text', hasAttachment: false },
+    });
     return res.status(202).json(sent);
   }
 
