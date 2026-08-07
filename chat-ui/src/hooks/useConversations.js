@@ -1,6 +1,15 @@
 import { useState, useMemo, useEffect } from 'react'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
+// 两批消息是否等价：条数、末条 id 与送达时间一致即视为没有新内容。
+function sameMessageList(a = [], b = []) {
+  if (a.length !== b.length) return false
+  if (a.length === 0) return true
+  const prev = a[a.length - 1]
+  const next = b[b.length - 1]
+  return prev.id === next.id && Number(prev.sentAt) === Number(next.sentAt)
+}
+
 export function useConversations({ includeEmail = false } = {}) {
   const [conversations, setConversations] = useState([])
   const [activeChannel, setActiveChannel] = useState('all')
@@ -36,7 +45,13 @@ export function useConversations({ includeEmail = false } = {}) {
       ...message,
       sentAt: new Date(message.sentAt),
     }))
-    setConversations(current => current.map(conv => conv.id === convId ? { ...conv, messages } : conv))
+    setConversations(current => current.map(conv => {
+      if (conv.id !== convId) return conv
+      // 轮询会反复拉到同一批消息；内容没变就复用旧数组，避免每次都换引用
+      // 触发 ChatPanel 的滚动到底部，把销售正在看的历史位置顶掉。
+      if (sameMessageList(conv.messages, messages)) return conv
+      return { ...conv, messages }
+    }))
   }
 
   useEffect(() => {
@@ -47,6 +62,11 @@ export function useConversations({ includeEmail = false } = {}) {
 
   useEffect(() => {
     loadMessages(selectedId).catch(error => console.error(error))
+    if (!selectedId) return undefined
+    // 列表轮询只刷新会话摘要，且刻意保留旧 messages；当前打开的会话必须单独轮询，
+    // 否则官网访客新消息和 AI 回复要等销售切走再切回来才显示。
+    const timer = setInterval(() => loadMessages(selectedId).catch(() => {}), 5000)
+    return () => clearInterval(timer)
   }, [selectedId])
 
   const filtered = useMemo(() => {
