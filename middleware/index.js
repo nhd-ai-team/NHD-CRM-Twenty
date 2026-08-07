@@ -1297,6 +1297,12 @@ async function persistWebsiteMessage(body) {
   // 销售回复的回声不重复入库（CRM 出站时已 recordAgentMessage）。
   if (senderType === 'agent') return;
   const displayName = String(body.displayName || '').trim() || `网站访客 ${visitorId.slice(-6) || sessionId.slice(-6)}`;
+  // 官网访客发的附件：ai-service 那边已经把 widget 上传的文件转成同一套
+  // {url,title,fileType,contentType,sizeBytes} 结构透传过来了，跟坐席发附件复用同一套归一化。
+  const attachments = normalizeOutboundAttachments(body.attachments);
+  const primaryAttachment = attachments[0] || null;
+  const contentType = primaryAttachment ? fileMessageType({ mimetype: primaryAttachment.contentType || '' }) : 'text';
+  const mediaUrl = primaryAttachment ? primaryAttachment.url : null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1311,9 +1317,9 @@ async function persistWebsiteMessage(body) {
     const conversation = conversationResult.rows[0];
     // 按发送方给 external_msg_id 加前缀，避免访客/AI 消息 id 撞车导致漏存。
     const dedupeId = externalMessageId ? `web:${sessionId}:${senderType}:${externalMessageId}` : null;
-    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
-      VALUES ($1, $2, $3, $4, 'text', now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
-      [dedupeId, conversation.id, senderType, content]);
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [dedupeId, conversation.id, senderType, content, contentType, mediaUrl, attachments.length ? JSON.stringify(attachments) : null]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, content]);
     await client.query('COMMIT');
     if (inserted.rowCount && senderType === 'customer') {
