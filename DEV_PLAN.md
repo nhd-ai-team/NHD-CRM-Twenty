@@ -1,7 +1,9 @@
 # CRM 开发计划
 
-> 最后更新：2026-07-14（会话工作台 UI 完成，已嵌入 Twenty 侧边栏）
+> 最后更新：2026-08-07（校正 WhatsApp 渠道层：实际运行用 WAHA，非 Evolution API）
 > 当前分支：main
+
+> ⚠️ **文档校正（2026-08-07）**：本计划原始版本以 **Evolution API** 撰写 WhatsApp 渠道层，但**实际运行中的 middleware 已切换为 WAHA**（`WAHA_API_URL` / `WAHA_SESSION`，监听 :3003，全局 `default` session）。多账号绑定方案以 **WAHA 多 Session** 为准。下文涉及 "Evolution API" 的章节（尤其 §3-A）为历史方案描述，落地时请以 WAHA 为准；详细多账号设计见 `docs/12-WhatsApp多账号绑定与RBAC设计方案.md`。
 
 ---
 
@@ -9,7 +11,7 @@
 
 | 渠道 | 方案 | 费用 | 当前排期 |
 |------|------|------|----------|
-| WhatsApp 个人号 | **Evolution API**（开源自托管，Baileys 协议） | 免费 | Phase 3 MVP |
+| WhatsApp 个人号 | **WAHA**（开源自托管，WhatsApp Web 协议；多账号用多 Session） | 免费 | Phase 3 MVP（实际运行） |
 | 官网 Chatbot Widget | **自研**（WebSocket + 轻量 JS 组件） | 免费 | Phase 3 MVP |
 | Instagram | Meta Graph API（官方，免费，需专业账号） | 免费 | Phase 6 |
 | Facebook Messenger | Meta Graph API（官方，免费，需 FB 主页） | 免费 | Phase 6 |
@@ -34,7 +36,7 @@
 | Chatwoot 解耦 | ✅ 完成 | docker-compose / nginx / middleware 均已清理 |
 | 公网访问 | ⚠️ 临时 | cloudflared 临时 URL，重启会变，域名待购买 |
 | CRM 自定义字段 | 🔲 待做 | 外贸字段、商机阶段、成员权限 |
-| Evolution API 接入 | 🟡 联调中 | 容器、会话库、Webhook、CRM 内工作台接口已部署；待个人号扫码及收发验证 |
+| WAHA 接入 | 🟡 联调中 | 容器、会话库、Webhook、CRM 内工作台接口已部署；待个人号扫码及收发验证（实际运行栈为 WAHA，非 Evolution API） |
 | 官网 Chatbot Widget | 🔲 待做 | 由其他同事负责 |
 | CRM 会话工作台 UI | 🟡 已接真实接口 | React+Vite，嵌入 Twenty 侧边栏，`/chat/` 路径；WhatsApp 联调后展示真实会话 |
 
@@ -44,7 +46,7 @@
 
 | 决策点 | 选择 | 理由 |
 |--------|------|------|
-| WhatsApp 渠道层 | Evolution API（开源自托管） | 免费，支持个人号，Docker 部署，REST API + Webhook，活跃维护 |
+| WhatsApp 渠道层 | WAHA（开源自托管，WhatsApp Web 协议） | 免费，支持个人号，Docker 部署，REST API + Webhook；多账号用独立 session（wa_&lt;workspaceMemberId&gt;） |
 | 官网 Widget | 自研轻量 JS 组件 + WebSocket | 无第三方依赖，完全自控，嵌入供应商官网一行 script 标签 |
 | 对话服务位置 | 扩展现有 middleware | 现阶段体量无需独立服务，减少运维复杂度 |
 | 对话数据库 | PostgreSQL `conv` schema（复用现有 pg 容器） | 避免引入新容器，后续可独立迁移 |
@@ -78,9 +80,9 @@ localhost:3000  ←─ nginx（twenty-portal 容器）
          ├─ PostgreSQL（db 容器）
          │    ├─ schema: default（Twenty 数据）
          │    ├─ schema: conv（对话服务数据）[Phase 3 新建]
-         │    └─ database: evolution（Evolution API）[Phase 3-A 新建]
+         │    └─ WAHA（waha 容器，:3003）[Phase 3-A 实际运行；文档原写 Evolution API，已校正]
          ├─ Redis（redis 容器）
-         └─ Evolution API（evolution-api 容器，:8080）[Phase 3-A]
+         └─ WAHA（waha 容器，:3003）[Phase 3-A]
 ```
 
 ### 会话工作台嵌入方案（已完成）
@@ -241,7 +243,7 @@ SERVER_URL=https://crm.[域名]
 
 ---
 
-### 3-A · Evolution API（WhatsApp）
+### 3-A · WhatsApp 渠道层（实际运行：WAHA；本节原以 Evolution API 撰写，落地以 WAHA 多 Session 为准）
 
 #### 架构
 
@@ -841,4 +843,32 @@ ai crm/
 ├── widget/                         ← Phase 3-B，官网嵌入 JS（其他同事负责）
 └── admin-ui/                       ← Phase 4，账号配置页面
     └── index.html
+
+---
+
+## WhatsApp 多账号绑定与 RBAC 可见性（v2.1）
+
+> 设计文档：`docs/12-WhatsApp多账号绑定与RBAC设计方案.md`（v2.1 研发评审版）
+> 决策：场景 B（同 workspace 内，每销售绑定自己的 WhatsApp 号）；邮箱暂缓。
+
+### 关键决策（与已有单号方案的区别）
+- **从单号共享 → 每用户独立 WAHA Session**：当前 1.0 用全局 `default` session（单号共享）；v2.1 改为每个销售一个 WAHA session（命名 `wa_<workspaceMemberId>`），自助绑定。
+- **鉴权中间件**：新增 `requireAuth`，所有 `/api/channels/*`、`/api/conversations*` 强制携带 middleware JWT（HS256）。Token 策略：Access Token 8h + Refresh Token 7d（HttpOnly Cookie）。JWT 只存 `sub`，**不存角色/范围**，权限每次请求实时查 `user_roles → role_scopes`。
+- **RBAC 可见性**：`admin=全部`、`manager=团队`、`sales=本人`；会话列表服务端按 `req.user.scope` 强制过滤，前端不可覆盖。
+- **归属双字段**：`conversations` 区分 `channel_owner_id`（WA 号主）与 `owner_id`（客户负责人），支持销售离职转交、历史保留。
+- **审计**：新增 `audit_events`（即代码 `conv.audit_events`，记录登录/绑定解绑/查看客户/发送/权限变更）。
+
+### 数据库变更（conv schema）
+- 复用 `conv.channel_accounts`（既有单号绑定表；多账号按 `provider_session` 区分，列：user_id, workspace_member_id, channel, provider, provider_session, external_account_id, status, ...），**不再新建** `channel_bindings`
+- 新增 `user_roles`、`role_scopes`
+- `conversations` 增加 `channel_owner_id`、`owner_id`、`waha_session`
+- `messages`/`contacts` 增加 `owner_id`
+- 新增 `conv.audit_events`（审计表，对应代码 `audit_events`）
+
+### 实施里程碑
+- M1 数据库模型升级 · M2 认证和 RBAC · M3 WhatsApp 绑定 · M4 消息归属改造 · M5 权限过滤 · M6 前端渠道管理 · M7 安全测试
+
+### 注意
+- 现有 DEV_PLAN 的 Phase 3-A 写的是 Evolution API，但实际运行代码用 WAHA（`WAHA_API_URL`/`WAHA_SESSION`）。多账号方案以 **WAHA 多 Session** 为准，Phase 3-A 的 Evolution 描述待校正。
+- nginx 门户需把 Twenty session `Cookie` 转发给 `/conv-api`（供 `/api/auth/me` 换 token）。
 ```

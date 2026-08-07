@@ -14,6 +14,13 @@
   var CHANNELS_SETTINGS_PAGE_ID = '__settings_channels_page__';
   var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
   var WEBSITE_RELATED_MODAL_ID = '__website_related_modal__';
+  // 权限管理（仅管理员可见）
+  var RBAC_SETTINGS_LABEL = '权限';
+  var RBAC_SETTINGS_PATH = '/settings/accounts/permissions';
+  var RBAC_SETTINGS_NAV_ID = '__settings_rbac_nav_item__';
+  var RBAC_SETTINGS_PAGE_ID = '__settings_rbac_page__';
+  var RBAC_SETTINGS_CARD_ID = '__settings_rbac_card__';
+  var RBAC_ADMIN = null; // 缓存：当前用户是否管理员
   var IFRAME_ID  = '__chat_iframe__';
   var ACTIVE_KEY = '__chat_active__'; // 存当前激活视图：'chat' | 'mail'
   var AUTH_TOKEN = '';
@@ -974,6 +981,206 @@
     }
   }
 
+  // ===== 权限管理（仅管理员） =====
+  function loadRbacAdminStatus(cb) {
+    if (RBAC_ADMIN !== null) { cb(RBAC_ADMIN); return; }
+    window.fetch('/conv-api/rbac/members', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() })
+      .then(function (response) {
+        RBAC_ADMIN = response.ok; // 200=管理员；403=非管理员
+        cb(RBAC_ADMIN);
+      })
+      .catch(function () { RBAC_ADMIN = false; cb(false); });
+  }
+
+  function ensureSettingsAccountsRbacCard() {
+    if (window.location.pathname !== '/settings/accounts') {
+      var stale = document.getElementById(RBAC_SETTINGS_CARD_ID);
+      if (stale) stale.remove();
+      return;
+    }
+    if (document.getElementById(RBAC_SETTINGS_CARD_ID)) return;
+    loadRbacAdminStatus(function (isAdmin) {
+      if (!isAdmin) return; // 非管理员不显示权限卡片
+      var sections = Array.from(document.querySelectorAll('h2, [role="heading"]'));
+      var settingsHeading = sections.find(function (el) { return (el.textContent || '').trim() === 'Settings'; });
+      if (!settingsHeading) return;
+      var section = settingsHeading.closest('section') || settingsHeading.parentElement;
+      if (!section) return;
+      var cardsHost = Array.from(section.querySelectorAll('div')).find(function (el) {
+        var rect = el.getBoundingClientRect();
+        return rect.width > 300 && rect.height > 40 && window.getComputedStyle(el).display === 'flex';
+      });
+      if (!cardsHost) return;
+      var card = document.createElement('div');
+      card.id = RBAC_SETTINGS_CARD_ID;
+      card.style.cssText = 'border:1px solid #e4e4e7;border-radius:8px;padding:16px;min-width:220px;flex:1;cursor:pointer;background:#fff;color:#71717a';
+      card.innerHTML =
+        '<div style="display:flex;align-items:center;gap:12px;color:#3f3f46;font-weight:600">' +
+          '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>' +
+          '<span style="flex:1">权限</span><span style="color:#a1a1aa">›</span>' +
+        '</div>' +
+        '<div style="padding-left:32px;margin-top:8px;font-size:13px">为成员分配角色：管理员 / 销售主管 / 销售 / 总经理。</div>';
+      card.addEventListener('click', function () { window.location.href = RBAC_SETTINGS_PATH; });
+      cardsHost.appendChild(card);
+    });
+  }
+
+  function isRbacSettingsPage() {
+    return window.location.pathname === RBAC_SETTINGS_PATH;
+  }
+
+  function removeRbacSettingsPage() {
+    var page = document.getElementById(RBAC_SETTINGS_PAGE_ID);
+    if (page) page.remove();
+  }
+
+  function renderRbacSettingsPage() {
+    if (!isRbacSettingsPage()) {
+      removeRbacSettingsPage();
+      return;
+    }
+    var existing = document.getElementById(RBAC_SETTINGS_PAGE_ID);
+    if (existing) {
+      existing.style.left = settingsDrawerRight() + 'px';
+      return;
+    }
+    var root = document.createElement('div');
+    root.id = RBAC_SETTINGS_PAGE_ID;
+    root.style.cssText = [
+      'position:fixed', 'top:0', 'right:0', 'bottom:0',
+      'left:' + settingsDrawerRight() + 'px', 'z-index:90',
+      'background:var(--twenty-background-primary,#fff)', 'overflow:auto',
+      'padding:32px 40px', 'box-sizing:border-box',
+      'font-family:inherit', 'color:var(--twenty-font-color-primary,#18181b)',
+    ].join(';');
+    root.innerHTML =
+      '<div style="max-width:820px">' +
+        '<div style="font-size:13px;color:#71717a;margin-bottom:12px">账户 / 权限</div>' +
+        '<h1 style="font-size:22px;line-height:1.3;margin:0 0 8px;font-weight:700">权限</h1>' +
+        '<p style="font-size:13px;color:#71717a;margin:0 0 24px">为工作区成员分配角色。管理员可查看并操作全部会话；销售主管查看团队；销售仅看自己；总经理仅查看全部、不可操作。</p>' +
+        '<div data-rbac-loading style="font-size:13px;color:#71717a">正在加载成员与角色…</div>' +
+        '<div data-rbac-error style="font-size:13px;color:#dc2626;display:none"></div>' +
+        '<div data-rbac-list style="display:none;margin-top:8px"></div>' +
+      '</div>';
+    document.body.appendChild(root);
+    loadRbacData(root);
+  }
+
+  function loadRbacData(root) {
+    var listEl = root.querySelector('[data-rbac-list]');
+    var loadingEl = root.querySelector('[data-rbac-loading]');
+    var errorEl = root.querySelector('[data-rbac-error]');
+    Promise.all([
+      window.fetch('/conv-api/rbac/members', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() }).then(function (r) { return readChannelApiResponse(r, '加载失败'); }),
+      window.fetch('/conv-api/rbac/role-scopes', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() }).then(function (r) { return readChannelApiResponse(r, '加载失败'); }),
+    ]).then(function (results) {
+      var members = results[0].members || [];
+      var scopes = results[1].roles || [];
+      loadingEl.style.display = 'none';
+      listEl.style.display = 'block';
+      renderRbacRows(root, members, scopes);
+    }).catch(function (error) {
+      loadingEl.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.textContent = error.message || '加载失败';
+    });
+  }
+
+  function renderRbacRows(root, members, scopes) {
+    var listEl = root.querySelector('[data-rbac-list]');
+    var scopesByRole = {};
+    scopes.forEach(function (s) { scopesByRole[s.role] = s; });
+    var rows = members.map(function (m) {
+      var options = scopes.map(function (s) {
+        var selected = s.role === m.role ? ' selected' : '';
+        return '<option value="' + escapeHtml(s.role) + '"' + selected + '>' + escapeHtml(roleLabel(s.role)) + '</option>';
+      }).join('');
+      return '<div style="display:flex;align-items:center;gap:14px;padding:12px 14px;border:1px solid #f0f0f1;border-radius:8px;margin-bottom:8px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:14px;font-weight:600">' + escapeHtml(m.name) + '</div>' +
+          '<div style="font-size:12.5px;color:#71717a">' + escapeHtml(m.email || '-') + '</div>' +
+          '<div data-rbac-scope style="font-size:12px;color:#52525b;margin-top:2px"></div>' +
+        '</div>' +
+        '<select data-rbac-role="' + escapeHtml(m.memberId) + '" style="height:32px;border:1px solid #d4d4d8;border-radius:6px;padding:0 8px;font-size:13px;background:#fff">' + options + '</select>' +
+        '<button data-rbac-save="' + escapeHtml(m.memberId) + '" style="height:32px;padding:0 14px;border-radius:6px;border:1px solid #16a34a;background:#16a34a;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">保存</button>' +
+        '<button data-rbac-reset="' + escapeHtml(m.memberId) + '" style="height:32px;padding:0 10px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#71717a;font-size:12.5px;cursor:pointer">重置</button>' +
+      '</div>';
+    }).join('');
+    listEl.innerHTML = rows;
+    Array.prototype.forEach.call(listEl.querySelectorAll('[data-rbac-role]'), function (sel) {
+      var memberId = sel.getAttribute('data-rbac-role');
+      var member = members.find(function (m) { return m.memberId === memberId; });
+      var scopeEl = sel.parentElement.querySelector('[data-rbac-scope]');
+      if (scopeEl && member) scopeEl.textContent = (scopesByRole[member.role] && scopesByRole[member.role].description) || '';
+      sel.addEventListener('change', function () {
+        if (scopeEl) scopeEl.textContent = (scopesByRole[sel.value] && scopesByRole[sel.value].description) || '';
+      });
+    });
+    Array.prototype.forEach.call(listEl.querySelectorAll('[data-rbac-save]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var memberId = btn.getAttribute('data-rbac-save');
+        var sel = listEl.querySelector('[data-rbac-role="' + memberId + '"]');
+        var role = sel && sel.value;
+        setRbacButtonBusy(btn, true);
+        window.fetch('/conv-api/rbac/roles/' + encodeURIComponent(memberId), {
+          method: 'PUT', credentials: 'same-origin',
+          headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ role: role }),
+        })
+          .then(function (response) { return readChannelApiResponse(response, '保存失败'); })
+          .then(function () { root.querySelector('[data-rbac-error]').style.display = 'none'; })
+          .catch(function (error) {
+            var errorEl = root.querySelector('[data-rbac-error]');
+            errorEl.style.display = 'block';
+            errorEl.textContent = error.message || '保存失败';
+          })
+          .finally(function () { setRbacButtonBusy(btn, false); });
+      });
+    });
+    Array.prototype.forEach.call(listEl.querySelectorAll('[data-rbac-reset]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var memberId = btn.getAttribute('data-rbac-reset');
+        if (!window.confirm('确认将该成员的角色重置为默认的「销售」？')) return;
+        setRbacButtonBusy(btn, true);
+        window.fetch('/conv-api/rbac/roles/' + encodeURIComponent(memberId), {
+          method: 'DELETE', credentials: 'same-origin', headers: getTwentyAuthHeaders(),
+        })
+          .then(function (response) { return readChannelApiResponse(response, '重置失败'); })
+          .then(function () {
+            var sel = listEl.querySelector('[data-rbac-role="' + memberId + '"]');
+            if (sel) sel.value = 'sales';
+            var scopeEl = sel && sel.parentElement.querySelector('[data-rbac-scope]');
+            if (scopeEl) scopeEl.textContent = (scopesByRole['sales'] && scopesByRole['sales'].description) || '';
+          })
+          .catch(function (error) {
+            var errorEl = root.querySelector('[data-rbac-error]');
+            errorEl.style.display = 'block';
+            errorEl.textContent = error.message || '重置失败';
+          })
+          .finally(function () { setRbacButtonBusy(btn, false); });
+      });
+    });
+  }
+
+  function roleLabel(role) {
+    return ({ admin: '管理员', manager: '销售主管', sales: '销售', boss: '总经理' })[role] || role;
+  }
+
+  function setRbacButtonBusy(button, isBusy) {
+    if (isBusy) {
+      button.setAttribute('data-rbac-original', button.textContent || '');
+      button.textContent = '保存中…';
+      button.disabled = true;
+      button.style.opacity = '0.65';
+      button.style.cursor = 'wait';
+      return;
+    }
+    button.textContent = button.getAttribute('data-rbac-original') || button.textContent;
+    button.disabled = false;
+    button.style.opacity = '';
+    button.style.cursor = 'pointer';
+  }
+
   function ensureSettingsAccountsChannelsCard() {
     if (window.location.pathname !== '/settings/accounts') {
       var stale = document.getElementById(CHANNELS_SETTINGS_CARD_ID);
@@ -1010,10 +1217,13 @@
       removeInjectedNavItems();
       ensureSettingsChannelsNav();
       ensureSettingsAccountsChannelsCard();
+      ensureSettingsAccountsRbacCard();
       renderChannelsSettingsPage();
+      renderRbacSettingsPage();
       return;
     }
     removeChannelsSettingsPage();
+    removeRbacSettingsPage();
 
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
       var href = a.getAttribute('href') || '';

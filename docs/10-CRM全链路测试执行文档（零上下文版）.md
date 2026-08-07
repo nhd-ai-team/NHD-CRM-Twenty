@@ -1117,10 +1117,46 @@
 
 ---
 
+## 16. WhatsApp 多账号绑定与 RBAC（v2.1 新增）
+
+> 设计文档：`docs/12-WhatsApp多账号绑定与RBAC设计方案.md`
+> 本节补充单账号绑定之外的「多账号隔离 + 角色可见」专项测试。
+
+### 16.1 测试前额外准备
+
+- 至少准备 2 个销售账号（A、B），各自有可绑定的真实 WhatsApp 号。
+- 准备 1 个管理员/Boss 账号，并确认其角色为 `admin`。
+- 准备 1 个主管账号（可选），角色 `manager`。
+
+### 16.2 专项测试
+
+| 测试 | 目标 | 要点 |
+| --- | --- | --- |
+| 多账号可见性 | 销售只能看到自己绑定的 WA 会话 | 用 A 登录，确认看不到 B 的会话 |
+| 越权拦截 | 不能直接访问他人会话 ID | 用 A 的令牌请求 B 的会话消息，应 403 |
+| 仅限本人绑定 | 不能绑定他人已绑定的号 | B 绑定 A 已绑的号应被拒 |
+| 管理员看全部 | admin 可看全部销售会话 | 管理员登录可见所有 |
+| 主管看团队 | manager 仅看本团队 | 其他团队不可见 |
+| Token 续期 | Access Token 过期自动续期 | 操作不中断，Refresh Token 为 HttpOnly Cookie |
+| 权限即时生效 | 角色变更立即生效 | 提为 admin 后立即可见全部，不需重登 |
+| 离职转交 | 解绑后客户负责人可转交，历史保留 | A 解绑，客户转 B，记录不丢 |
+| 未知 Session | 未绑定用户的 session 事件拒绝入库 | 防脏数据/越权 |
+
+### 16.3 失败判定补充
+
+- 销售能看到他人会话 → 权限过滤失效（P0）
+- 用他人令牌能读消息 → 越权（P0）
+- 能绑定他人已绑定的号 → 绑定校验失效（P0）
+- Token 过期后被迫重登且 Refresh 无效 → 续期失败（P1）
+- 角色提升后仍只能看自己 → 权限未实时计算（P1）
+
+---
+
 ## 15. 相关文档
 
 如需补背景，可继续看以下文件：
 
+- [docs/12-WhatsApp多账号绑定与RBAC设计方案.md](/Users/nhdailabcenter/Desktop/some%20agents/tools-claude/ai%20crm/docs/12-WhatsApp多账号绑定与RBAC设计方案.md)
 - [docs/08-完整链路用户故事与核心测试用例.md](/Users/nhdailabcenter/Desktop/some%20agents/tools-claude/ai%20crm/docs/08-完整链路用户故事与核心测试用例.md)
 - [docs/PRD.html](/Users/nhdailabcenter/Desktop/some%20agents/tools-claude/ai%20crm/docs/PRD.html)
 - [新宏大CRM项目需求文档v1.0.html](/Users/nhdailabcenter/Desktop/some%20agents/tools-claude/ai%20crm/新宏大CRM项目需求文档v1.0.html)

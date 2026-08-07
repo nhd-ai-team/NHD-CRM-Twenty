@@ -155,7 +155,9 @@ function ActionBar({ conv, onRequestAction }) {
   const isClosed = conv.status === 'closed'
   const aiControl = conv.aiControl || {}
   const permissions = conv.permissions || {}
-  const aiReady = !!aiControl.enabled && !!aiControl.inTakeoverWindow
+  // AI 客服开启时才存在"接管/交还AI"概念；AI 关闭时会话即普通销售会话，无需（也无法）接管。
+  const aiMode = !!aiControl.enabled
+  const aiReady = aiMode && !!aiControl.inTakeoverWindow
   const canTakeover = !isClosed && !isTakeover && aiReady && permissions.canTakeover !== false
   const canAiHost = !isClosed && isTakeover && aiReady && permissions.canReply !== false
   const disabledReason = permissions.viewerRole === 'boss'
@@ -166,7 +168,8 @@ function ActionBar({ conv, onRequestAction }) {
       ? '当前不在AI客服托管时间内'
       : ''
 
-  // 无可用操作（如已关闭会话）时不渲染，避免底部残留空白栏
+  // AI 关闭：直接隐藏接管/托管按钮（无需接管即可收发）；已关闭：不渲染，避免底部残留空白栏。
+  if (!aiMode) return null
   if (!canTakeover && !canAiHost && isClosed) return null
 
   return (
@@ -223,10 +226,13 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
   const [sendError, setSendError] = useState('')
   const bottomRef = useRef(null)
   const fileInputRef = useRef(null)
+  const composingRef = useRef(false)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conv?.messages])
+
+  const aiMode = !!(conv?.aiControl || {}).enabled
 
   if (!conv) return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: 12 }}>
@@ -241,7 +247,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     if (sending) return
     const text = input.trim()
     if (!text && !selectedFile) return
-    if (conv.status !== 'takeover') {
+    if (aiMode && conv.status !== 'takeover') {
       setSendError('请先人工接管会话后再发送消息')
       return
     }
@@ -264,6 +270,10 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
   }
 
   function handleKeyDown(e) {
+    // 中文等输入法组合输入期间，Enter 是"上屏确认候选词"而非发送。
+    // React 合成事件不透传 isComposing，须读 nativeEvent；229 是旧浏览器的兼容标记；
+    // composing ref 兜底 compositionend 与 keydown 的时序差。
+    if (composingRef.current || e.nativeEvent?.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
@@ -287,7 +297,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
       setSendError('当前渠道暂不支持发送附件')
       return
     }
-    if (conv.status !== 'takeover') {
+    if (aiMode && conv.status !== 'takeover') {
       setSendError('请先点击「接管会话」后再发送附件')
       return
     }
@@ -311,7 +321,9 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
     setSelectedFile(file)
   }
 
-  const canSend = (!!input.trim() || !!selectedFile) && conv.status === 'takeover' && conv.permissions?.canReply !== false && !sending
+  const canSend = aiMode
+    ? ((!!input.trim() || !!selectedFile) && conv.status === 'takeover' && conv.permissions?.canReply !== false && !sending)
+    : ((!!input.trim() || !!selectedFile) && conv.status !== 'closed' && conv.permissions?.canReply !== false && !sending)
   const confirmTitle = pendingAction === 'takeover' ? '确认人工接管？' : '确认 AI 托管？'
   const confirmBody = pendingAction === 'takeover'
     ? '确认后销售可以在工作台回复客户，AI客服将暂停托管此会话。'
@@ -387,7 +399,9 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={conv.status === 'takeover' ? '请输入即将发送的内容……' : '请先点击「接管会话」后再回复客户'}
+          onCompositionStart={() => { composingRef.current = true }}
+          onCompositionEnd={() => { composingRef.current = false }}
+          placeholder={(aiMode && conv.status !== 'takeover') ? '请先点击「接管会话」后再回复客户' : '请输入即将发送的内容……'}
           style={{
             width: '100%', minHeight: 80, maxHeight: 160, padding: '12px 16px',
             border: 'none', outline: 'none', resize: 'none',
@@ -410,14 +424,14 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
               onChange={handleFileChange}
             />
             <button
-              title={!supportsAttachments ? '当前渠道暂不支持发送附件' : conv.status === 'takeover' ? '附件上传' : '请先接管会话'}
+              title={!supportsAttachments ? '当前渠道暂不支持发送附件' : (aiMode && conv.status !== 'takeover') ? '请先接管会话后再上传附件' : '附件上传'}
               onClick={handleAttachmentClick}
               disabled={sending}
               style={{
                 padding: 6, border: 'none', background: 'transparent',
                 cursor: sending ? 'not-allowed' : 'pointer',
                 color: 'var(--text-muted)', borderRadius: 4,
-                display: 'flex', alignItems: 'center', opacity: supportsAttachments && conv.status === 'takeover' ? 1 : .65,
+                display: 'flex', alignItems: 'center', opacity: supportsAttachments && (conv.status === 'takeover' || !aiMode) ? 1 : .65,
               }}
             >
               <Paperclip size={15} />

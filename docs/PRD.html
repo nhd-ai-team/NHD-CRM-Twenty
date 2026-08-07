@@ -290,6 +290,7 @@ td.muted{color:var(--text-tertiary);}
     <a class="toc-item" href="#s9">11 · 分阶段交付计划</a>
     <a class="toc-item" href="#s11">12 · 关键风险</a>
     <a class="toc-item" href="#s10">13 · 当前不做</a>
+    <a class="toc-item" href="#s12">14 · WhatsApp 多账号绑定与权限隔离</a>
   </nav>
 
   <main class="main">
@@ -320,7 +321,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td style="width:180px;"><strong>产品阶段</strong></td><td>多渠道 AI 智能 CRM v1.0（MVP）</td></tr>
             <tr><td><strong>版本定位</strong></td><td>多渠道对话中间层 + AI 智能客服能力层 + Twenty CRM 销售闭环</td></tr>
             <tr><td><strong>创建日期</strong></td><td>2026-07-15</td></tr>
-            <tr><td><strong>最后更新</strong></td><td>2026-08-06：按当前代码更新官网表单重复提交方案 C、线索转客户 / 转项目、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
+            <tr><td><strong>最后更新</strong></td><td>2026-08-07：新增第 14 节「WhatsApp 多账号绑定与权限隔离（v2.1）」——多账号绑定 + RBAC 可见性需求（鉴权中间件、自助绑定、角色可见范围、conv.channel_accounts 表、conv.audit_events 审计表）。此前 2026-08-06：按当前代码更新官网表单重复提交方案 C、线索转客户 / 转项目、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
             <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
             <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
             <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
@@ -1045,7 +1046,7 @@ td.muted{color:var(--text-tertiary);}
           <thead><tr><th>功能</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td><strong>渠道账号状态</strong></td><td>显示 WhatsApp 当前连接状态；Instagram / Facebook 暂存为待办</td></tr>
-            <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码连接、手机号配对码、绑定到当前 CRM 账号、解绑；同一个 WhatsApp ID 同一时间只能绑定一个 CRM 账号。当前 v1.0 仍使用 WAHA default session，后续多销售并行多号码需升级为用户级独立 session</td></tr>
+            <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码连接、手机号配对码、绑定到当前 CRM 账号、解绑；同一个 WhatsApp ID 同一时间只能绑定一个 CRM 账号。当前 v1.0 仍使用 WAHA default session；多销售并行多号码的独立 session 升级方案见第 14 节（v2.1 多账号绑定与权限隔离）。</td></tr>
             <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置是否允许 AI 自动回复，实时生效</td></tr>
             <tr><td><strong>AI 生效时间段</strong></td><td>每个渠道可配置全天或每日开始/结束时间，支持跨天时间段；不在生效时间内不会调用 AI 回复</td></tr>
             <tr><td><strong>复杂 AI 配置</strong></td><td>兜底话术、知识库范围、允许回答的问题类型后续在设置页补齐</td></tr>
@@ -1187,6 +1188,56 @@ td.muted{color:var(--text-tertiary);}
             <tr><td><strong>AI suggestion / 建议模式</strong></td><td>当前代码不保留 AI 起草建议模式，只有自动回复开启 / 关闭两种状态</td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <!-- S12: WhatsApp 多账号绑定与权限隔离 (v2.1) -->
+    <section class="section" id="s12">
+      <div class="section-header">
+        <span class="section-num">14</span>
+        <h2 class="section-title">WhatsApp 多账号绑定与权限隔离<span class="section-title-en">Multi-Account Binding &amp; RBAC · v2.1</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">背景与目标</div>
+        <p>v1.0 采用「单号共享」模式：所有销售共用同一个 WAHA <code>default</code> session 的 WhatsApp 业务号，全部客户消息进入同一共享工作台，<code>conv</code> 表无归属维度。为支持「一个人一个 CRM 账号、一个 WhatsApp 号，只处理自己账号的数据」，需升级为「按人绑定 + 按人隔离」的多账号模式（场景 B，非多租户）。邮箱因企业邮箱仅一个、且走 Twenty 原生共享收件箱已够用，本期暂缓。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">三项关键决策</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>决策</th><th>方案</th></tr></thead>
+            <tbody>
+              <tr><td><strong>1. 正式鉴权中间件</strong></td><td>middleware 侧强制 JWT 校验。浏览器用 Twenty session cookie 调 <code>/api/auth/me</code> 换取 mwToken，不直接透传 <code>workspaceMemberId</code>，客户端无法伪造身份。</td></tr>
+              <tr><td><strong>2. 自助绑定本人账号</strong></td><td>每个销售只能绑自己的号，<code>owner_id = 当前用户</code>，接口拒绝客户端指定其他绑定目标（防跨绑）。WAHA session 命名 <code>wa_&lt;workspaceMemberId&gt;</code> 与绑定一一对应。</td></tr>
+              <tr><td><strong>3. RBAC 可见性</strong></td><td>角色 → 范围（own / team / all）。<code>admin=all</code>、<code>sales=own</code>、<code>manager=team</code>（二期）。会话列表服务端按 <code>req.user.scope</code> 强制过滤，前端不可覆盖。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">数据模型与隔离</div>
+        <p>复用 <code>conv.channel_accounts</code>（既有绑定表，多账号按 <code>provider_session</code> 区分）、新增 <code>conv.user_roles</code>、<code>conv.role_scopes</code>；<code>conversations / messages / contacts</code> 增加 <code>owner_id</code> 与 <code>waha_session</code>。区分两类归属：<strong>channel_owner_id</strong>（WA 号主，绑定关系）与 <strong>owner_id</strong>（客户负责人，会话归属，支持离职转交）。新增 <code>conv.audit_events</code> 记录绑定 / 解绑 / 越权拦截等审计事件。</p>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">鉴权与 Token 策略</div>
+        <p>采用 Access Token（8h）+ Refresh Token（7d，HttpOnly Cookie）。JWT 仅存 <code>sub</code>，<strong>不存角色 / 范围</strong>；权限每次请求实时查 <code>user_roles → role_scopes</code> 计算，权限变更即时生效，无需等 Token 过期。</p>
+      </div>
+
+      <div class="callout note"><strong>实施对齐要点：</strong>绑定表<strong>复用既有</strong> <code>conv.channel_accounts</code>（与既有单号方案完全一致，<strong>未新建</strong> <code>channel_bindings</code>）；多账号以 <strong>WAHA 多 Session</strong> 为准（实际运行 middleware 即 WAHA，非 DEV_PLAN 文档曾写的 Evolution API）；审计表为 <code>conv.audit_events</code>（非 <code>audit_logs</code>）。详细设计见 <code>docs/12-WhatsApp多账号绑定与RBAC设计方案.md</code>。</div>
+
+      <div class="sub">
+        <div class="sub-title">验收标准（摘要）</div>
+        <ul>
+          <li>每个销售仅能在「设置 → 账户 → 渠道」绑定 / 解绑<strong>自己的</strong> WhatsApp 号，扫码状态可见。</li>
+          <li>客户消息按所属 WA session 自动归属到对应销售，工作台仅显示本人会话（sales 角色）。</li>
+          <li>管理员（admin）可查看全部销售会话；越权访问他人会话被服务端拒绝并返回 403。</li>
+          <li>修改角色范围后立即生效，无需重新登录。</li>
+          <li>销售离职后，其客户会话可转交给新负责人，WA 号主绑定关系可保留或转移。</li>
+        </ul>
       </div>
     </section>
 

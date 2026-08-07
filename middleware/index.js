@@ -40,10 +40,8 @@ const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || INSTAGRAM_VERIFY_TOKE
 const META_APP_SECRET = process.env.META_APP_SECRET || INSTAGRAM_APP_SECRET;
 const META_PAGE_ACCESS_TOKEN = process.env.META_PAGE_ACCESS_TOKEN || INSTAGRAM_PAGE_ACCESS_TOKEN;
 const FACEBOOK_PAGE_ACCESS_TOKEN = process.env.FACEBOOK_PAGE_ACCESS_TOKEN || META_PAGE_ACCESS_TOKEN;
-const CONVERSATION_BOSS_EMAILS = new Set((process.env.CONVERSATION_BOSS_EMAILS || '826815587@qq.com')
-  .split(',')
-  .map(email => email.trim().toLowerCase())
-  .filter(Boolean));
+// 总经理（仅查看）权限：自 v2.1 起通过 conv.user_roles 的 boss 角色统一管理（scope=all，仅查看），
+// 由前端「权限管理」界面配置，不再依赖环境变量 CONVERSATION_BOSS_EMAILS。
 // 邮箱（IMAP 只读收取，沉淀到对话工作台的 email 渠道；不回复、不接 AI）
 const IMAP_HOST = process.env.IMAP_HOST || 'imap.qiye.163.com';
 const IMAP_PORT = Number(process.env.IMAP_PORT || 993);
@@ -329,17 +327,40 @@ async function resolveConversationViewer(req) {
   const member = result.rows[0];
   if (!member?.id) return null;
   const email = String(member.userEmail || '').trim().toLowerCase();
+  // v2.1 RBAC：角色统一来自 conv.user_roles（admin/manager/sales/boss）；缺失安全降级 sales/own。
+  // boss 角色 = 仅查看全部（总经理），由前端权限管理界面配置。
+  let role = 'sales';
+  let scope = 'own';
+  try {
+    const roleResult = await pool.query(
+      `SELECT ur.role, rs.scope
+         FROM conv.user_roles ur
+         LEFT JOIN conv.role_scopes rs ON rs.role = ur.role
+        WHERE ur.workspace_member_id = $1
+        LIMIT 1`,
+      [String(member.id)],
+    );
+    if (roleResult.rows[0]) {
+      role = roleResult.rows[0].role || 'sales';
+      scope = roleResult.rows[0].scope || 'own';
+    }
+  } catch (_err) {
+    // 角色表尚未就绪时安全降级为 sales/own，不阻断现有功能
+  }
   return {
     userId,
     workspaceMemberId: String(member.id),
     email,
     name: [member.nameFirstName, member.nameLastName].filter(Boolean).join(' ').trim() || email || 'CRM 用户',
-    isBoss: CONVERSATION_BOSS_EMAILS.has(email),
+    isBoss: role === 'boss',
+    role,
+    scope,
   };
 }
 
 function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1) {
-  if (!viewer || viewer.isBoss) return { sql: 'TRUE', params: [] };
+  // v2.1：未登录、拥有 boss 角色（仅查看总经理）、或拥有 admin 角色（scope=all）均可见全部会话
+  if (!viewer || viewer.role === 'admin' || viewer.role === 'boss') return { sql: 'TRUE', params: [] };
   const memberParam = `$${startIndex}`;
   const userParam = `$${startIndex + 1}`;
   return {
@@ -357,24 +378,25 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1) {
       )
     ) OR (
       ${alias}.channel = 'whatsapp'
-      AND EXISTS (
-        SELECT 1
-        FROM conv.channel_accounts ca
-        WHERE ca.channel = 'whatsapp'
-          AND ca.provider = 'waha'
-          AND ca.status <> 'unbound'
-          AND ca.user_id = ${userParam}
-      )
+      AND ${alias}.owner_id = ${userParam}
     ) OR ${alias}.channel IN ('email', 'instagram', 'facebook'))`,
     params: [viewer.workspaceMemberId, viewer.userId],
   };
 }
 
 async function requireConversationAccess(req, res, options = {}) {
+  const id = req.params?.id;
+  // 防御：非法 UUID 直接 400，避免 pg 抛未捕获异常导致整进程崩溃
+  if (!id || !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(id)) {
+    res.status(400).json({ error: '会话 ID 格式无效' });
+    return null;
+  }
   const viewer = await resolveConversationViewer(req);
   const conversationResult = await pool.query(
-    `SELECT c.id, c.channel, c.status, c.agent_id, c.external_chat_id
+    `SELECT c.id, c.channel, c.status, c.agent_id, c.external_chat_id, c.waha_session,
+            COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled"
        FROM conv.conversations c
+       LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
       WHERE c.id = $1`,
     [req.params.id],
   );
@@ -384,9 +406,10 @@ async function requireConversationAccess(req, res, options = {}) {
     return null;
   }
   if (!viewer) return { viewer, conversation };
-  if (viewer.isBoss) {
-    if (options.write) {
-      res.status(403).json({ error: 'Boss 当前仅有查看权限，不能接管或发送消息' });
+  if (viewer.role === 'admin' || viewer.role === 'boss') {
+    // admin 看全部且可写；boss（总经理）看全部但仅查看
+    if (options.write && viewer.role !== 'admin') {
+      res.status(403).json({ error: '当前角色仅有查看权限，不能接管或发送消息' });
       return null;
     }
     return { viewer, conversation };
@@ -400,7 +423,7 @@ async function requireConversationAccess(req, res, options = {}) {
     res.status(403).json({ error: '当前账号无权查看该会话' });
     return null;
   }
-  if (options.reply && !(conversation.status === 'takeover' && conversation.agent_id === viewer.workspaceMemberId)) {
+  if (options.reply && conversation.aiEnabled && !(conversation.status === 'takeover' && conversation.agent_id === viewer.workspaceMemberId)) {
     res.status(403).json({ error: '该会话未由当前账号接管，不能发送消息' });
     return null;
   }
@@ -417,6 +440,20 @@ async function requireWriteConversationAccess(req, res) {
     return null;
   }
   return { ...access, authenticated };
+}
+
+// 仅管理员可配置权限：解析当前用户角色，非 admin 返回 403
+async function requireAdmin(req, res) {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) {
+    res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+    return null;
+  }
+  if (viewer.role !== 'admin') {
+    res.status(403).json({ error: '仅管理员可配置权限' });
+    return null;
+  }
+  return viewer;
 }
 
 async function recordAuditEvent(eventType, options = {}) {
@@ -552,6 +589,49 @@ async function syncOpportunityFollowUpsToProject(client, schema, opportunityId, 
   for (const row of result.rows) {
     await attachNoteTarget(client, schema, row.twenty_note_id, 'targetXiangMuId', projectId, actor);
   }
+}
+
+// 回填「最新跟进」字段：取该线索最新一条未删除跟进（内容 + 时间 + 作者），写入 opportunity.latestFollowUp。
+// 无跟进则置空。供线索看板直接展示，且跟随 RBAC（字段对所有可见，但内容由各自新增的跟进决定）。
+// 口径与 syncOpportunityFollowUpsToProject 保持一致：不仅算直接挂在该 opportunity 上的跟进，
+// 还要算经由 conversation→contact 关联到该 opportunity 的跟进（即在对话页写的跟进也算数）。
+async function backfillOpportunityLatestFollowUp(client, schema, opportunityId) {
+  if (!opportunityId) return;
+  const result = await client.query(
+    `SELECT fu.content, fu.created_by_name AS "createdByName", fu.created_at AS "createdAt"
+       FROM conv.follow_ups fu
+       LEFT JOIN conv.conversations c ON c.id = fu.conversation_id
+       LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+      WHERE fu.deleted_at IS NULL
+        AND (
+          (fu.subject_type = 'opportunity' AND fu.subject_id = $1::text)
+          OR ct.twenty_opportunity_id = $1::text
+        )
+      ORDER BY fu.created_at DESC
+      LIMIT 1`,
+    [opportunityId],
+  );
+  const latest = result.rows[0];
+  const value = latest
+    ? `${latest.content}\n——${latest.createdByName || '未知'} ${formatFollowUpTime(latest.createdAt)}`
+    : '';
+  try {
+    await twentyGraphQL(
+      `mutation($id: UUID!, $data: OpportunityUpdateInput!) {
+        updateOpportunity(id: $id, data: $data) { id latestFollowUp }
+      }`,
+      { id: opportunityId, data: { latestFollowUp: value } },
+    );
+  } catch (error) {
+    console.error('[follow-ups] backfill latestFollowUp failed:', error.message);
+  }
+}
+
+function formatFollowUpTime(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function auditRequestSummary(req) {
@@ -771,6 +851,37 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(user_id, channel, provider_session));`);
   await pool.query(`
+    -- ===== v2.1 多账号绑定与 RBAC 可见性 =====
+    -- 角色 -> 数据范围映射
+    CREATE TABLE IF NOT EXISTS conv.role_scopes (
+      role TEXT PRIMARY KEY,
+      scope TEXT NOT NULL,
+      description TEXT);
+    INSERT INTO conv.role_scopes(role, scope, description) VALUES
+      ('admin', 'all', '可查看并操作全部会话'),
+      ('manager', 'team', '可查看团队成员会话'),
+      ('sales', 'own', '仅可查看自己绑定/参与的会话'),
+      ('boss', 'all', '仅查看全部会话，不可操作（总经理）')
+      ON CONFLICT (role) DO NOTHING;
+    -- 每用户的角色（管理员在后台配置；缺失时降级为 sales/own）
+    CREATE TABLE IF NOT EXISTS conv.user_roles (
+      workspace_member_id TEXT PRIMARY KEY,
+      role TEXT NOT NULL DEFAULT 'sales',
+      granted_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    -- 会话归属（多账号）：channel_owner=WA号主，owner=当前客户负责人
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS owner_id TEXT;
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS waha_session TEXT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS owner_id TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS owner_id TEXT;
+    CREATE INDEX IF NOT EXISTS conversations_owner_idx
+      ON conv.conversations(owner_id) WHERE owner_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS conversations_waha_session_idx
+      ON conv.conversations(waha_session) WHERE waha_session IS NOT NULL;
+  `);
+  await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS channel_accounts_active_external_account_unique
     ON conv.channel_accounts(channel, provider, external_account_id)
     WHERE external_account_id IS NOT NULL AND status <> 'unbound';
@@ -781,10 +892,10 @@ function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, '
 
 // WhatsApp 新版对未存联系人使用 @lid 匿名地址，其中的数字不是手机号。
 // WAHA 的 contacts 接口可把 lid 解析回真实号码（返回 id 形如 8619057220975@c.us）。
-async function resolvePhone(jid = '') {
+async function resolvePhone(jid = '', session = WAHA_SESSION) {
   if (!jid.endsWith('@lid')) return phoneFromJid(jid);
   try {
-    const response = await fetch(`${WAHA_API_URL}/api/contacts?contactId=${encodeURIComponent(jid)}&session=${WAHA_SESSION}`,
+    const response = await fetch(`${WAHA_API_URL}/api/contacts?contactId=${encodeURIComponent(jid)}&session=${encodeURIComponent(session)}`,
       { headers: { 'X-Api-Key': WAHA_API_KEY } });
     if (!response.ok) return null;
     const contact = await response.json();
@@ -856,7 +967,7 @@ function formatTimeValue(value) {
 async function loadAiPolicy(conversationId) {
   const scheduleActive = aiScheduleActiveExpression('cs');
   const result = await pool.query(
-    `SELECT c.id, c.external_chat_id, c.channel, c.status,
+    `SELECT c.id, c.external_chat_id, c.channel, c.status, c.waha_session AS "wahaSession",
             COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AS "aiEnabled",
             ((c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}) AS "inAiWindow"
        FROM conv.conversations c
@@ -925,19 +1036,20 @@ async function sendAiReplyToChannel(policy, content, idempotencyKey, ai) {
 
   if (policy.channel === 'whatsapp') {
     if (!WAHA_API_KEY) throw new Error('WAHA api key not configured');
+    const wahaSession = policy.wahaSession || WAHA_SESSION;
     let textExternalId = null;
     if (content) {
       const response = await fetch(`${WAHA_API_URL}/api/sendText`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
-        body: JSON.stringify({ session: WAHA_SESSION, chatId: policy.external_chat_id, text: content }),
+        body: JSON.stringify({ session: wahaSession, chatId: policy.external_chat_id, text: content }),
       });
       if (!response.ok) throw new Error(`WhatsApp AI text send failed: ${response.status} ${await response.text()}`);
       const sent = await response.json();
       textExternalId = sent?.id?._serialized || sent?._data?.id?._serialized || idempotencyKey;
     }
     for (const attachment of attachments) {
-      await sendWhatsAppAttachmentFromUrl(policy.external_chat_id, attachment);
+      await sendWhatsAppAttachmentFromUrl(policy.external_chat_id, attachment, wahaSession);
     }
     await recordAiMessage(policy.id, outboundContent, textExternalId || idempotencyKey, {
       contentType: attachments[0] ? (String(attachments[0].contentType || '').startsWith('image/') ? 'image' : 'file') : 'text',
@@ -993,7 +1105,15 @@ async function requestAiReplyIfAllowed(conversation, customerMessageId, message)
   } catch (error) { console.error('[ai] auto reply error:', error.message); }
 }
 
-async function persistWhatsAppMessage(payload) {
+async function persistWhatsAppMessage(payload, session) {
+  const inboundSession = session || WAHA_SESSION;
+  // v2.1 多账号（M3/M4）：入站按 WAHA session 反查绑定的 owner；未知/未绑定 session 直接拒收。
+  const binding = await getActiveWhatsAppBindingBySession(inboundSession);
+  if (!binding) {
+    console.warn('[whatsapp] reject inbound for unknown/unbound session:', inboundSession);
+    return;
+  }
+  const ownerUserId = binding.user_id;
   const data = payload.payload || payload;
   const fromMe = Boolean(data.fromMe);
   // `_data.id.remote` 始终是对方（客户），与收发方向无关；据此把双向消息归入同一会话。
@@ -1001,26 +1121,32 @@ async function persistWhatsAppMessage(payload) {
   if (!counterpartyJid || counterpartyJid.endsWith('@g.us') || counterpartyJid === 'status@broadcast') return;
   const externalMessageId = data.id;
   const parsed = messageContent(data);
-  const phone = await resolvePhone(counterpartyJid);
+  const phone = await resolvePhone(counterpartyJid, inboundSession);
   // 归一化会话键：同一客户的 @lid 与 @c.us 统一为真实号 <phone>@c.us，避免拆成多个会话。
   const chatKey = phone ? `${phone}@c.us` : counterpartyJid;
   const displayName = (!fromMe && (data.notifyName || data._data?.notifyName)) || phone || counterpartyJid;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, phone)
-      VALUES ('whatsapp', $1, $2, $3) ON CONFLICT(channel, external_id)
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, phone, owner_id)
+      VALUES ('whatsapp', $1, $2, $3, $4) ON CONFLICT(channel, external_id)
       DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name),
-        phone = COALESCE(EXCLUDED.phone, conv.contacts.phone), updated_at = now() RETURNING *`,
-      [chatKey, displayName, phone ? `+${phone}` : null]);
+        phone = COALESCE(EXCLUDED.phone, conv.contacts.phone),
+        owner_id = COALESCE(conv.contacts.owner_id, EXCLUDED.owner_id),
+        updated_at = now() RETURNING *`,
+      [chatKey, displayName, phone ? `+${phone}` : null, ownerUserId]);
     const contact = contactResult.rows[0];
-    const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
-      VALUES ('whatsapp', $1, $2) ON CONFLICT(channel, external_chat_id)
-      DO UPDATE SET updated_at = now() RETURNING *`, [chatKey, contact.id]);
+    const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id, owner_id, channel_owner_id, waha_session)
+      VALUES ('whatsapp', $1, $2, $3, $3, $4) ON CONFLICT(channel, external_chat_id)
+      DO UPDATE SET updated_at = now(),
+        owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
+        channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
+        waha_session = COALESCE(conv.conversations.waha_session, EXCLUDED.waha_session)
+      RETURNING *`, [chatKey, contact.id, ownerUserId, inboundSession]);
     const conversation = conversationResult.rows[0];
-    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
-      VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0)) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
-      [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.timestamp ? Number(data.timestamp) * 1000 : Date.now()]);
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at, owner_id)
+      VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), $8) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.timestamp ? Number(data.timestamp) * 1000 : Date.now(), ownerUserId]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
     // 规则（2026-07-24）：消息只落对话工作台，不自动同步 People/Companies。
@@ -1049,6 +1175,8 @@ async function persistWhatsAppMessage(payload) {
           externalMessageId,
           externalChatId: chatKey,
           contentType: parsed.type,
+          wahaSession: inboundSession,
+          ownerUserId,
         },
       });
     }
@@ -1060,7 +1188,9 @@ async function receiveWhatsAppWebhook(req, res) {
   // WAHA 投递 `message`（入站+出站）/ `message.any`；只处理文本类消息事件。
   const event = req.body.event || req.params.event?.replace(/-/g, '.');
   if (event !== 'message' && event !== 'message.any') return;
-  persistWhatsAppMessage(req.body).catch(error => console.error('[whatsapp] webhook failed:', error.message));
+  // WAHA 在 webhook body 中携带 session（WAHA session 名），用于归属到对应销售。
+  const session = String(req.body?.session || WAHA_SESSION);
+  persistWhatsAppMessage(req.body, session).catch(error => console.error('[whatsapp] webhook failed:', error.message));
 }
 app.post('/api/whatsapp/webhook', receiveWhatsAppWebhook);
 app.post('/api/whatsapp/webhook/:event', receiveWhatsAppWebhook);
@@ -1325,8 +1455,26 @@ app.get('/api/conversations', async (req, res) => {
     const scheduleActive = aiScheduleActiveExpression('cs');
     const viewer = await resolveConversationViewer(req);
     const visibility = conversationVisibilityWhere(viewer);
+    // admin 的 visibility.sql 是常量 TRUE（不含 $1/$2），但下面 canReply/
+    // isAssignedToMe/hasTakenOverBefore 仍引用 $1，必须单独传 1 个参数；
+    // sales/manager 的 visibility.sql 本身含 $1(memberId)/$2(userId)，要传 2 个；
+    // boss 与匿名的这些表达式全是写死常量，不需要参数。
+    // 之前统一按 visibility.params 传，对 admin 传成了 []，导致 "no parameter $1"；
+    // 若直接照抄 sales 传两个参数，admin 的 SQL 只声明了 $1，又会变成
+    // "bind message supplies 2 parameters, but prepared statement requires 1"。
+    const listParams = !viewer || viewer.isBoss
+      ? []
+      : viewer.role === 'admin'
+        ? [viewer.workspaceMemberId]
+        : [viewer.workspaceMemberId, viewer.userId];
     const viewerRole = viewer?.isBoss ? "'boss'" : viewer ? "'sales'" : "'anonymous'";
-    const canReplyExpression = viewer?.isBoss ? 'false' : viewer ? `(c.status = 'takeover' AND c.agent_id = $1)` : `(c.status = 'takeover')`;
+    // AI 模式（ai_enabled 为真）下：仅接管自己的会话可回复；AI 关闭时：非关闭会话销售均可直接回复，无需先接管。
+    const aiEnabledExpr = `(COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'))`;
+    const canReplyExpression = viewer?.isBoss
+      ? 'false'
+      : viewer
+        ? `((${aiEnabledExpr} AND c.status = 'takeover' AND c.agent_id = $1) OR (NOT ${aiEnabledExpr} AND c.status <> 'closed'))`
+        : `((${aiEnabledExpr} AND c.status = 'takeover') OR (NOT ${aiEnabledExpr} AND c.status <> 'closed'))`;
     const canTakeoverExpression = viewer?.isBoss ? 'false' : viewer ? `(c.status = 'open')` : `(c.status = 'open')`;
     const assignedToMeExpression = viewer && !viewer.isBoss ? `(c.agent_id = $1)` : 'false';
     const takenBeforeExpression = viewer && !viewer.isBoss ? `EXISTS (
@@ -1353,7 +1501,7 @@ app.get('/api/conversations', async (req, res) => {
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
     WHERE ${visibility.sql}
-    ORDER BY c.last_message_at DESC NULLS LAST`, visibility.params);
+    ORDER BY c.last_message_at DESC NULLS LAST`, listParams);
     res.json(result.rows);
   } catch (error) {
     console.error('[conversations] list failed:', error.message);
@@ -1383,7 +1531,8 @@ app.get('/api/follow-ups', async (req, res) => {
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
   const params = [subjectType, subjectId];
   let creatorFilter = '';
-  if (!viewer.isBoss) {
+  // v2.1 RBAC：scope=all（admin / boss 总经理）可见全部；其余（sales/manager）仅见自己新增的
+  if (viewer.scope !== 'all') {
     params.push(viewer.workspaceMemberId);
     creatorFilter = `AND created_by_workspace_member_id = $${params.length}`;
   }
@@ -1423,7 +1572,7 @@ app.post('/api/follow-ups', requireSameSite, async (req, res) => {
   if (!authenticated) return;
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
-  if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能新增跟进记录' });
+  if (viewer.role === 'boss') return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能新增跟进记录' });
   if (subjectType === 'conversation') {
     const access = await requireConversationAccess({ headers: req.headers, params: { id: subjectId } }, res, { write: true });
     if (!access) return;
@@ -1464,6 +1613,15 @@ app.post('/api/follow-ups', requireSameSite, async (req, res) => {
     );
     row = result.rows[0];
     await client.query('COMMIT');
+    // 回填「最新跟进」字段到线索看板
+    try {
+      const targets = await resolveFollowUpTargets(client, schema, subjectType, subjectId);
+      if (targets.opportunityId) {
+        await backfillOpportunityLatestFollowUp(client, schema, targets.opportunityId);
+      }
+    } catch (bfErr) {
+      console.error('[follow-ups] backfill on create failed:', bfErr.message);
+    }
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[follow-ups] create failed:', error.message);
@@ -1486,20 +1644,22 @@ app.delete('/api/follow-ups/:id', requireSameSite, async (req, res) => {
   if (!authenticated) return;
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
-  if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能删除跟进记录' });
+  if (viewer.role === 'boss') return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能删除跟进记录' });
   const client = await pool.connect();
   let row;
   try {
     const schema = await getWorkspaceSchema();
     await client.query('BEGIN');
+    // v2.1 RBAC：admin 可删除任意跟进记录；manager/sales 仅可删除自己新增的
+    const canDeleteAny = viewer.role === 'admin';
     const result = await client.query(
       `UPDATE conv.follow_ups
           SET deleted_at = now(), updated_at = now()
         WHERE id = $1
           AND deleted_at IS NULL
-          AND created_by_workspace_member_id = $2
+          ${canDeleteAny ? '' : 'AND created_by_workspace_member_id = $2'}
         RETURNING id, subject_type AS "subjectType", subject_id AS "subjectId", conversation_id AS "conversationId", twenty_note_id AS "twentyNoteId"`,
-      [req.params.id, viewer.workspaceMemberId],
+      canDeleteAny ? [req.params.id] : [req.params.id, viewer.workspaceMemberId],
     );
     if (!result.rowCount) {
       await client.query('ROLLBACK');
@@ -1511,6 +1671,15 @@ app.delete('/api/follow-ups/:id', requireSameSite, async (req, res) => {
       await client.query(`UPDATE ${schema}.note SET "deletedAt" = now(), "updatedAt" = now() WHERE id = $1 AND "deletedAt" IS NULL`, [row.twentyNoteId]);
     }
     await client.query('COMMIT');
+    // 回填「最新跟进」字段到线索看板（删除后重算最新一条，可能清空）
+    try {
+      const targets = await resolveFollowUpTargets(client, schema, row.subjectType, row.subjectId);
+      if (targets.opportunityId) {
+        await backfillOpportunityLatestFollowUp(client, schema, targets.opportunityId);
+      }
+    } catch (bfErr) {
+      console.error('[follow-ups] backfill on delete failed:', bfErr.message);
+    }
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[follow-ups] delete failed:', error.message);
@@ -1605,14 +1774,15 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   }
 
   try {
-    const session = normalizeWahaSession(await getWahaSession());
+    const sessionName = await resolveUserWahaSessionName(authenticated);
+    const session = normalizeWahaSession(await getWahaSession(sessionName));
     if (!session.connected) return res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
-    const ownership = await requireCurrentUserWhatsAppBinding(req, res, session);
+    const ownership = await requireBindingForSession(req, res, sessionName);
     if (!ownership) return;
     if (phoneFromJid(session.accountId) === phone) return res.status(400).json({ error: '不能向当前绑定的 WhatsApp 号码发起会话' });
 
     const checkResponse = await fetchWaha(
-      `/api/contacts/check-exists?session=${encodeURIComponent(WAHA_SESSION)}&phone=${encodeURIComponent(phone)}`,
+      `/api/contacts/check-exists?session=${encodeURIComponent(sessionName)}&phone=${encodeURIComponent(phone)}`,
     );
     const checked = await checkResponse.json().catch(() => ({}));
     if (!checkResponse.ok) throw new Error(checked.message || 'WhatsApp 号码校验失败');
@@ -1624,7 +1794,7 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     const sentResponse = await fetchWaha('/api/sendText', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: WAHA_SESSION, chatId, text: content }),
+      body: JSON.stringify({ session: sessionName, chatId, text: content }),
     });
     const sent = await sentResponse.json().catch(() => ({}));
     if (!sentResponse.ok) throw new Error(sent.message || 'WhatsApp 消息发送失败');
@@ -1654,12 +1824,16 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
         [chatId, `+${phone}`, `+${phone}`],
       );
       const conversationResult = await client.query(
-        `INSERT INTO conv.conversations(channel, external_chat_id, contact_id, status, agent_id)
-         VALUES ('whatsapp', $1, $2, 'takeover', $3)
+        `INSERT INTO conv.conversations(channel, external_chat_id, contact_id, status, agent_id, owner_id, channel_owner_id, waha_session)
+         VALUES ('whatsapp', $1, $2, 'takeover', $3, $4, $4, $5)
          ON CONFLICT(channel, external_chat_id) DO UPDATE SET
-           status = 'takeover', agent_id = COALESCE(EXCLUDED.agent_id, conv.conversations.agent_id), updated_at = now()
+           status = 'takeover', agent_id = COALESCE(EXCLUDED.agent_id, conv.conversations.agent_id),
+           owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
+           channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
+           waha_session = COALESCE(conv.conversations.waha_session, EXCLUDED.waha_session),
+           updated_at = now()
          RETURNING id, channel, status, external_chat_id AS "externalChatId"`,
-        [chatId, contactResult.rows[0].id, actorId],
+        [chatId, contactResult.rows[0].id, actorId, authenticated.userId, sessionName],
       );
       conversation = conversationResult.rows[0];
       await client.query(
@@ -1951,12 +2125,12 @@ function isWahaSessionNotFound(error) {
   return error?.status === 404 || String(error?.detail?.message || error?.message || '').toLowerCase().includes('session not found');
 }
 
-async function createWahaSession() {
+async function createWahaSession(sessionName = WAHA_SESSION) {
   const response = await fetchWaha('/api/sessions/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      name: WAHA_SESSION,
+      name: sessionName,
       config: {
         webhooks: [
           {
@@ -1977,18 +2151,18 @@ async function createWahaSession() {
   return data;
 }
 
-async function ensureWahaSession() {
+async function ensureWahaSession(sessionName = WAHA_SESSION) {
   try {
-    return await getWahaSession();
+    return await getWahaSession(sessionName);
   } catch (error) {
     if (!isWahaSessionNotFound(error)) throw error;
-    await createWahaSession();
-    return waitForWahaStatus(['STARTING', 'SCAN_QR_CODE', 'WORKING', 'FAILED', 'STOPPED'], 10, 1000);
+    await createWahaSession(sessionName);
+    return waitForWahaStatus(['STARTING', 'SCAN_QR_CODE', 'WORKING', 'FAILED', 'STOPPED'], 10, 1000, sessionName);
   }
 }
 
-async function getWahaSession() {
-  const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}`);
+async function getWahaSession(sessionName = WAHA_SESSION) {
+  const response = await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}`);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.message || 'WAHA status failed');
@@ -1999,13 +2173,65 @@ async function getWahaSession() {
   return data;
 }
 
-async function waitForWahaStatus(expectedStatuses, attempts = 8, delayMs = 1200) {
+async function waitForWahaStatus(expectedStatuses, attempts = 8, delayMs = 1200, sessionName = WAHA_SESSION) {
   for (let i = 0; i < attempts; i++) {
-    const session = await getWahaSession();
+    const session = await getWahaSession(sessionName);
     if (expectedStatuses.includes(session.status)) return session;
     await sleep(delayMs);
   }
-  return getWahaSession();
+  return getWahaSession(sessionName);
+}
+
+// ── v2.1 多账号：per-member WAHA session 工具 ─────────────────────────────
+// 每销售一个独立 WAHA session，命名 wa_<workspaceMemberId>；历史默认号沿用 'default'。
+function sessionNameForMember(memberId) {
+  return memberId ? `wa_${memberId}` : WAHA_SESSION;
+}
+
+// 按 WAHA session 名反查当前有效绑定（用于入站归属 + 出站鉴权）。
+async function getActiveWhatsAppBindingBySession(session) {
+  if (!session) return null;
+  const result = await pool.query(
+    `SELECT ca.*, wm."nameFirstName", wm."nameLastName"
+     FROM conv.channel_accounts ca
+     LEFT JOIN ${await getWorkspaceSchema()}."workspaceMember" wm ON wm.id::text = ca.workspace_member_id
+     WHERE ca.channel = 'whatsapp'
+       AND ca.provider = 'waha'
+       AND ca.provider_session = $1
+       AND ca.status <> 'unbound'
+     ORDER BY ca.updated_at DESC
+     LIMIT 1`,
+    [session],
+  );
+  return result.rows[0] || null;
+}
+
+// 当前用户的 WAHA session 名：已有绑定则用其 provider_session，否则按成员生成专属名。
+async function resolveUserWahaSessionName(authenticated) {
+  const existing = await getCurrentUserWhatsAppBinding(authenticated.userId);
+  if (existing?.provider_session) return existing.provider_session;
+  return sessionNameForMember(authenticated.actor?.id);
+}
+
+// 校验某 session 当前是否由本账号绑定并处于已连接状态（用于出站发送鉴权）。
+async function requireBindingForSession(req, res, sessionName) {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return null;
+  const normalized = normalizeWahaSession(await getWahaSession(sessionName).catch(() => ({})));
+  if (!normalized.connected) {
+    res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
+    return null;
+  }
+  const binding = await getActiveWhatsAppBindingBySession(sessionName);
+  if (!binding) {
+    res.status(403).json({ error: '该会话所属 WhatsApp 未绑定到 CRM 账号，请先在设置中点击“绑定到我的账号”' });
+    return null;
+  }
+  if (binding.user_id !== authenticated.userId) {
+    res.status(403).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，当前账号不能使用该号码发送消息` });
+    return null;
+  }
+  return { authenticated, binding, session: normalized };
 }
 
 async function getActiveWhatsAppBindingByAccount(accountId) {
@@ -2033,11 +2259,10 @@ async function getCurrentUserWhatsAppBinding(userId) {
      WHERE user_id = $1
        AND channel = 'whatsapp'
        AND provider = 'waha'
-       AND provider_session = $2
        AND status <> 'unbound'
      ORDER BY updated_at DESC
      LIMIT 1`,
-    [userId, WAHA_SESSION],
+    [userId],
   );
   return result.rows[0] || null;
 }
@@ -2113,7 +2338,8 @@ app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, re
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const data = await ensureWahaSession();
+    const sessionName = await resolveUserWahaSessionName(authenticated);
+    const data = await ensureWahaSession(sessionName);
     const normalized = normalizeWahaSession(data);
     const binding = normalized.accountId
       ? await getActiveWhatsAppBindingByAccount(normalized.accountId)
@@ -2138,27 +2364,116 @@ app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, re
   }
 });
 
+// ===== RBAC 权限管理（仅管理员） =====
+// 列出工作区全部成员及其当前角色（非 admin 返回 403，前端借此判断是否显示入口）
+app.get('/api/rbac/members', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const schema = await getWorkspaceSchema();
+    const result = await pool.query(
+      `SELECT wm.id AS "memberId", wm."userId", wm."userEmail" AS email,
+              wm."nameFirstName" AS "firstName", wm."nameLastName" AS "lastName",
+              COALESCE(ur.role, 'sales') AS role,
+              COALESCE(rs.scope, 'own') AS scope,
+              rs.description AS "roleDescription"
+         FROM ${schema}."workspaceMember" wm
+         LEFT JOIN conv.user_roles ur ON ur.workspace_member_id = wm.id::text
+         LEFT JOIN conv.role_scopes rs ON rs.role = COALESCE(ur.role, 'sales')
+        WHERE wm."deletedAt" IS NULL
+        ORDER BY wm."nameFirstName", wm."nameLastName"`,
+    );
+    const members = result.rows.map(r => ({
+      memberId: String(r.memberId),
+      userId: r.userId,
+      email: r.email || '',
+      name: [r.firstName, r.lastName].filter(Boolean).join(' ').trim() || (r.email || 'CRM 用户'),
+      role: r.role,
+      scope: r.scope,
+      roleDescription: r.roleDescription || '',
+    }));
+    res.json({ members });
+  } catch (error) {
+    res.status(500).json({ error: '读取成员列表失败', detail: error.message });
+  }
+});
+
+// 角色定义
+app.get('/api/rbac/role-scopes', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  try {
+    const result = await pool.query(`SELECT role, scope, description FROM conv.role_scopes ORDER BY role`);
+    res.json({ roles: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: '读取角色定义失败', detail: error.message });
+  }
+});
+
+// 设置某成员角色
+app.put('/api/rbac/roles/:workspaceMemberId', requireSameSite, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { workspaceMemberId } = req.params;
+  const { role } = req.body || {};
+  const validRoles = ['admin', 'manager', 'sales', 'boss'];
+  if (!validRoles.includes(role)) return res.status(400).json({ error: '无效的角色，可选：' + validRoles.join(', ') });
+  try {
+    await pool.query(
+      `INSERT INTO conv.user_roles(workspace_member_id, role, granted_by, updated_at)
+       VALUES ($1, $2, $3, now())
+       ON CONFLICT (workspace_member_id) DO UPDATE SET role = EXCLUDED.role, granted_by = EXCLUDED.granted_by, updated_at = now()`,
+      [workspaceMemberId, role, admin.workspaceMemberId],
+    );
+    recordAuditEvent('rbac.role.updated', {
+      actor: { userId: admin.userId, workspaceMemberId: admin.workspaceMemberId, name: admin.name },
+      payload: { workspaceMemberId, role, grantedBy: admin.workspaceMemberId },
+    });
+    res.json({ ok: true, workspaceMemberId, role });
+  } catch (error) {
+    res.status(500).json({ error: '设置角色失败', detail: error.message });
+  }
+});
+
+// 重置某成员角色为默认 sales（删除显式配置）
+app.delete('/api/rbac/roles/:workspaceMemberId', requireSameSite, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { workspaceMemberId } = req.params;
+  try {
+    await pool.query(`DELETE FROM conv.user_roles WHERE workspace_member_id = $1`, [workspaceMemberId]);
+    recordAuditEvent('rbac.role.reset', {
+      actor: { userId: admin.userId, workspaceMemberId: admin.workspaceMemberId, name: admin.name },
+      payload: { workspaceMemberId },
+    });
+    res.json({ ok: true, workspaceMemberId, role: 'sales' });
+  } catch (error) {
+    res.status(500).json({ error: '重置角色失败', detail: error.message });
+  }
+});
+
 app.get('/api/channel-accounts/whatsapp/qr', requireSameSite, async (req, res) => {
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const current = normalizeWahaSession(await ensureWahaSession().catch(() => ({})));
+    const sessionName = await resolveUserWahaSessionName(authenticated);
+    const current = normalizeWahaSession(await ensureWahaSession(sessionName).catch(() => ({})));
     if (current.connected) {
       const binding = await getActiveWhatsAppBindingByAccount(current.accountId);
       if (binding && binding.user_id !== authenticated.userId) {
         return res.status(409).json({ error: `该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，不能获取二维码` });
       }
     }
-    let response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+    let response = await fetchWaha(`/api/${encodeURIComponent(sessionName)}/auth/qr`);
     if (response.status === 422) {
       const detail = await response.json().catch(() => ({}));
       if (['FAILED', 'STOPPED'].includes(detail.status)) {
-        await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
-        await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
-        response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+        await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}/restart`, { method: 'POST' });
+        await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 10, 1000, sessionName);
+        response = await fetchWaha(`/api/${encodeURIComponent(sessionName)}/auth/qr`);
       } else if (detail.status === 'STARTING') {
-        await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
-        response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/qr`);
+        await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 10, 1000, sessionName);
+        response = await fetchWaha(`/api/${encodeURIComponent(sessionName)}/auth/qr`);
       } else {
         return res.status(422).json(detail);
       }
@@ -2179,19 +2494,20 @@ app.post('/api/channel-accounts/whatsapp/start', requireSameSite, async (req, re
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    let current = await ensureWahaSession().catch(() => null);
+    const sessionName = await resolveUserWahaSessionName(authenticated);
+    let current = await ensureWahaSession(sessionName).catch(() => null);
     if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
-      await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
-      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
+      await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}/restart`, { method: 'POST' });
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 10, 1000, sessionName);
     } else if (current.status === 'STARTING') {
-      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING']);
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 10, 1000, sessionName);
     } else if (current.status !== 'SCAN_QR_CODE' && current.status !== 'WORKING') {
-      const response = await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/start`, { method: 'POST' });
+      const response = await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok && response.status !== 422) {
         return res.status(response.status).json({ error: data.message || 'WAHA start failed', detail: data });
       }
-      current = response.ok ? data : await getWahaSession();
+      current = response.ok ? data : await getWahaSession(sessionName);
     }
     const normalized = normalizeWahaSession(current);
     res.status(202).json({
@@ -2209,7 +2525,8 @@ app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, 
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const current = await ensureWahaSession().catch(() => null);
+    const sessionName = await resolveUserWahaSessionName(authenticated);
+    const current = await ensureWahaSession(sessionName).catch(() => null);
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
       const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
@@ -2225,8 +2542,8 @@ app.post('/api/channel-accounts/whatsapp/restart', requireSameSite, async (req, 
       });
     }
 
-    await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
-    const session = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
+    await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}/restart`, { method: 'POST' });
+    const session = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200, sessionName);
     const normalized = normalizeWahaSession(session);
     res.status(202).json({
       channel: 'whatsapp',
@@ -2243,12 +2560,13 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
+    const sessionName = await resolveUserWahaSessionName(authenticated);
     const phoneNumber = normalizeWhatsAppPairingPhone(req.body?.phoneNumber);
     if (phoneNumber.length < 8 || phoneNumber.length > 15) {
       return res.status(400).json({ error: '请输入带国家区号的 WhatsApp 号码，例如 8613800000000（仅示例）' });
     }
 
-    let current = await ensureWahaSession().catch(() => null);
+    let current = await ensureWahaSession(sessionName).catch(() => null);
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
       const binding = await getActiveWhatsAppBindingByAccount(normalized.accountId);
@@ -2258,10 +2576,10 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
       return res.status(409).json({ error: '当前 WhatsApp 已连接，不需要生成配对码', status: normalized.status });
     }
     if (!current || ['FAILED', 'STOPPED'].includes(current.status)) {
-      await fetchWaha(`/api/sessions/${encodeURIComponent(WAHA_SESSION)}/restart`, { method: 'POST' });
-      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
+      await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}/restart`, { method: 'POST' });
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200, sessionName);
     } else if (current.status === 'STARTING') {
-      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200);
+      current = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING'], 12, 1200, sessionName);
     }
     if (current?.status === 'WORKING') {
       const normalized = normalizeWahaSession(current);
@@ -2272,7 +2590,7 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
       return res.status(409).json({ error: '当前 WhatsApp 已连接，不需要生成配对码', status: normalized.status });
     }
 
-    const response = await fetchWaha(`/api/${encodeURIComponent(WAHA_SESSION)}/auth/request-code`, {
+    const response = await fetchWaha(`/api/${encodeURIComponent(sessionName)}/auth/request-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phoneNumber }),
@@ -2284,7 +2602,7 @@ app.post('/api/channel-accounts/whatsapp/request-code', requireSameSite, async (
     res.status(201).json({
       channel: 'whatsapp',
       provider: 'waha',
-      session: WAHA_SESSION,
+      session: sessionName,
       phoneNumber,
       code: data.code,
       expiresHint: '请在生成后 60 秒内在 WhatsApp 手机端输入配对码，超时需重新生成。',
@@ -2298,7 +2616,8 @@ app.post('/api/channel-accounts/whatsapp/bind', requireSameSite, async (req, res
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   try {
-    const normalized = normalizeWahaSession(await ensureWahaSession());
+    const sessionName = await resolveUserWahaSessionName(authenticated);
+    const normalized = normalizeWahaSession(await ensureWahaSession(sessionName));
     await bindWhatsAppChannelAccount(authenticated, normalized);
     res.status(200).json({
       channel: 'whatsapp',
@@ -2312,10 +2631,10 @@ app.post('/api/channel-accounts/whatsapp/bind', requireSameSite, async (req, res
   }
 });
 
-async function logoutWahaSession() {
+async function logoutWahaSession(sessionName = WAHA_SESSION) {
   const candidates = [
-    { pathname: `/api/sessions/${encodeURIComponent(WAHA_SESSION)}/logout`, method: 'POST' },
-    { pathname: `/api/${encodeURIComponent(WAHA_SESSION)}/auth/logout`, method: 'POST' },
+    { pathname: `/api/sessions/${encodeURIComponent(sessionName)}/logout`, method: 'POST' },
+    { pathname: `/api/${encodeURIComponent(sessionName)}/auth/logout`, method: 'POST' },
   ];
   let lastText = '';
   for (const candidate of candidates) {
@@ -2334,11 +2653,11 @@ app.delete('/api/channel-accounts/whatsapp', requireSameSite, async (req, res) =
   try {
     const binding = await getCurrentUserWhatsAppBinding(authenticated.userId);
     if (!binding) return res.status(404).json({ error: '当前 CRM 账号未绑定 WhatsApp' });
-    const normalized = normalizeWahaSession(await getWahaSession().catch(() => ({})));
+    const normalized = normalizeWahaSession(await getWahaSession(binding.provider_session || WAHA_SESSION).catch(() => ({})));
     if (normalized.connected && normalized.accountId && normalized.accountId !== binding.external_account_id) {
       return res.status(409).json({ error: '当前在线 WhatsApp 与该绑定记录不一致，请刷新状态后重试' });
     }
-    if (normalized.connected) await logoutWahaSession();
+    if (normalized.connected) await logoutWahaSession(binding.provider_session || WAHA_SESSION);
     await pool.query(
       `UPDATE conv.channel_accounts
        SET status = 'unbound',
@@ -2751,6 +3070,47 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     if (createdPersonId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: createdPersonId }, twentyToken).catch(() => {});
     console.error('[convert-to-lead] failed:', error.message);
     res.status(502).json({ error: 'convert failed', detail: error.message });
+  }
+});
+
+// Opportunity → Person 联系人字段单向同步（Twenty webhook: opportunity.updated）。
+// 只回写联系人属性(电话/邮箱)，商机级字段(阶段/金额/产品等)不同步；单向不回哈，天然防死循环。
+const OPPORTUNITY_WEBHOOK_SECRET = process.env.OPPORTUNITY_WEBHOOK_SECRET || '';
+app.post('/api/webhooks/twenty/opportunity-updated', async (req, res) => {
+  // 先应答 200，避免 Twenty 因慢响应/异常重试风暴；处理失败只记日志。
+  res.status(200).json({ ok: true });
+  try {
+    if (OPPORTUNITY_WEBHOOK_SECRET) {
+      const provided = req.headers['x-webhook-secret'] || req.query.secret || '';
+      if (provided !== OPPORTUNITY_WEBHOOK_SECRET) {
+        console.warn('[opp-sync] rejected: bad secret');
+        return;
+      }
+    }
+    const body = req.body || {};
+    const record = body.record || body.data?.record || body.data || {};
+    const oppId = record.id || body.recordId || body.id;
+    if (!oppId) { console.warn('[opp-sync] no opportunity id in payload'); return; }
+
+    // 不完全信任 webhook payload 字段完整性，回查一次商机最新状态。
+    const fresh = await twentyGraphQL(
+      `query($id: UUID!){ opportunity(filter:{id:{eq:$id}}){ id phone { primaryPhoneNumber primaryPhoneCallingCode primaryPhoneCountryCode } ${OPPORTUNITY_EMAIL_FIELD} pointOfContact { id } } }`,
+      { id: oppId },
+    ).catch((error) => { console.error('[opp-sync] fetch opportunity failed:', error.message); return null; });
+    const opp = fresh?.opportunity;
+    const personId = opp?.pointOfContact?.id;
+    if (!personId) { console.log('[opp-sync] skip: no pointOfContact for opportunity', oppId); return; }
+
+    const d = {};
+    if (opp.phone?.primaryPhoneNumber) d.phones = { primaryPhoneNumber: opp.phone.primaryPhoneNumber, primaryPhoneCallingCode: opp.phone.primaryPhoneCallingCode || undefined, primaryPhoneCountryCode: opp.phone.primaryPhoneCountryCode || undefined };
+    const oppEmail = firstValidEmail(opp[OPPORTUNITY_EMAIL_FIELD]);
+    if (oppEmail) d.emails = { primaryEmail: oppEmail };
+
+    if (Object.keys(d).length === 0) { console.log('[opp-sync] skip: nothing to sync for opportunity', oppId); return; }
+    await twentyGraphQL('mutation($id: UUID!, $d: PersonUpdateInput!){ updatePerson(id: $id, data: $d){ id } }', { id: personId, d });
+    console.log('[opp-sync] synced opportunity', oppId, '-> person', personId, Object.keys(d));
+  } catch (error) {
+    console.error('[opp-sync] failed:', error.message);
   }
 });
 
@@ -3451,7 +3811,7 @@ async function releaseWebsiteAiTakeover(externalChatId) {
   if (!response.ok) throw new Error(await response.text());
 }
 
-async function sendWhatsAppAttachmentFromUrl(chatId, attachment) {
+async function sendWhatsAppAttachmentFromUrl(chatId, attachment, session = WAHA_SESSION) {
   const contentType = String(attachment.contentType || '').toLowerCase();
   const fileType = String(attachment.fileType || '').toLowerCase();
   const endpoint = contentType.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(fileType)
@@ -3463,7 +3823,7 @@ async function sendWhatsAppAttachmentFromUrl(chatId, attachment) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
     body: JSON.stringify({
-      session: WAHA_SESSION,
+      session,
       chatId,
       file: {
         mimetype: attachment.contentType || 'application/octet-stream',
@@ -3476,7 +3836,7 @@ async function sendWhatsAppAttachmentFromUrl(chatId, attachment) {
   return response.json();
 }
 
-async function sendWhatsAppFile(conversation, file, content) {
+async function sendWhatsAppFile(conversation, file, content, session = WAHA_SESSION) {
   const endpoint = file.mimetype?.startsWith('image/')
     ? '/api/sendImage'
     : file.mimetype?.startsWith('video/')
@@ -3487,7 +3847,7 @@ async function sendWhatsAppFile(conversation, file, content) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
     body: JSON.stringify({
-      session: WAHA_SESSION,
+      session,
       chatId: conversation.external_chat_id,
       caption: content || undefined,
       file: {
@@ -3511,9 +3871,10 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     return;
   }
   const { conversation } = access;
-  if (conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
+  // AI 模式才要求先接管；AI 关闭时销售可直接回复/发附件（普通销售会话）。
+  if (conversation.aiEnabled && conversation.status !== 'takeover') return res.status(409).json({ error: '请先人工接管会话后再发送消息' });
   if (conversation.channel === 'whatsapp') {
-    const ownership = await requireCurrentUserWhatsAppBinding(req, res);
+    const ownership = await requireBindingForSession(req, res, conversation.waha_session || WAHA_SESSION);
     if (!ownership) {
       if (uploadedFile) deleteUploadedFileBestEffort(uploadedFile);
       return;
@@ -3536,7 +3897,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
 
     if (conversation.channel === 'whatsapp') {
       try {
-        const sent = await sendWhatsAppFile(conversation, uploadedFile, content);
+        const sent = await sendWhatsAppFile(conversation, uploadedFile, content, conversation.waha_session || WAHA_SESSION);
         const messageId = await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
           contentType: messageType,
           mediaUrl,
@@ -3583,7 +3944,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
   }
 
   if (conversation.channel === 'whatsapp') {
-    const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
+    const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: conversation.waha_session || WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
     if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
     const sent = await response.json();
     const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized);
