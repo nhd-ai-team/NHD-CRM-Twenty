@@ -1121,6 +1121,15 @@ async function persistWhatsAppMessage(payload, session) {
   if (!counterpartyJid || counterpartyJid.endsWith('@g.us') || counterpartyJid === 'status@broadcast') return;
   const externalMessageId = data.id;
   const parsed = messageContent(data);
+  if (parsed.mediaUrl) {
+    try {
+      const localUrl = await downloadWahaMediaToLocalFile(parsed.mediaUrl, data.media?.mimetype, data.media?.filename);
+      parsed.mediaUrl = localUrl || null;
+    } catch (error) {
+      console.error('[whatsapp] inbound media download failed:', error.message);
+      parsed.mediaUrl = null;
+    }
+  }
   const phone = await resolvePhone(counterpartyJid, inboundSession);
   // 归一化会话键：同一客户的 @lid 与 @c.us 统一为真实号 <phone>@c.us，避免拆成多个会话。
   const chatKey = phone ? `${phone}@c.us` : counterpartyJid;
@@ -2096,6 +2105,35 @@ async function fetchWaha(pathname, options = {}) {
       'X-Api-Key': WAHA_API_KEY,
     },
   });
+}
+
+const WAHA_MEDIA_MIME_EXT = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
+  'video/mp4': '.mp4', 'video/3gpp': '.3gp', 'video/quicktime': '.mov',
+  'audio/ogg': '.ogg', 'audio/ogg; codecs=opus': '.ogg', 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/amr': '.amr',
+  'application/pdf': '.pdf',
+};
+
+// WAHA 入站 webhook 里的 media.url 不可信：观测到它把容器内部监听端口写成了
+// `http://localhost:3000/...`（WAHA 自己的内部端口，跟宿主/浏览器能访问的地址、
+// 跟 WAHA_API_URL 都不是一回事），既连不上也没带 X-Api-Key。
+// 只取其 path+query，改走 WAHA_API_URL（内网可达）+ X-Api-Key 下载，落盘到本站
+// UPLOAD_DIR，返回同源相对 URL 供前端直接 <img>/<video>/<audio> 渲染。
+async function downloadWahaMediaToLocalFile(rawUrl, mimetype, filenameHint) {
+  let pathAndQuery = '';
+  try {
+    const parsed = new URL(rawUrl);
+    pathAndQuery = parsed.pathname + parsed.search;
+  } catch {
+    return null;
+  }
+  const response = await fetchWaha(pathAndQuery);
+  if (!response.ok) throw new Error(`waha media fetch ${response.status}`);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const ext = extensionFromName(filenameHint || pathAndQuery) || WAHA_MEDIA_MIME_EXT[String(mimetype || '').toLowerCase()] || '';
+  const storedName = `${Date.now()}-${crypto.randomUUID()}${ext}`;
+  await fs.promises.writeFile(path.join(UPLOAD_DIR, storedName), buffer);
+  return `/conv-api/uploads/conversation-files/${encodeURIComponent(storedName)}`;
 }
 
 function normalizeWahaSession(session = {}) {
