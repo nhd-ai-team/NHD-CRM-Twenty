@@ -84,7 +84,16 @@ const upload = multer({
 });
 app.use('/api/uploads/conversation-files', express.static(UPLOAD_DIR, {
   fallthrough: false,
-  setHeaders: (res) => res.setHeader('Cache-Control', 'private, max-age=31536000, immutable'),
+  setHeaders: (res, filePath) => {
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    // 官网 widget 跑在客户官网域名下，对 crm.chinanhd.com 是跨域访问；HTML `download`
+    // 属性跨域会被浏览器直接忽略（Chrome/Firefox 规范行为），届时点击附件链接会变成
+    // 普通跨域导航，.docx/.pdf 这类浏览器无法内联渲染的格式就会打开失败/空白/报错。
+    // 显式带上 Content-Disposition: attachment 后，不管 `download` 属性生不生效，
+    // 浏览器都会按下载处理，从根上避免这个失败。
+    const name = encodeURIComponent(path.basename(filePath));
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"; filename*=UTF-8''${name}`);
+  },
 }));
 
 // 浏览器写端点的同主域白名单：只放行来自 chinanhd.com（及子域）与本地开发的请求。
