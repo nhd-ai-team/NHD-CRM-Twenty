@@ -57,9 +57,7 @@ export function useLeadForm({ selected, selectedId }) {
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) { setToast({ type: 'err', msg: d.error || `转化失败 (${res.status})` }); return }
-      const skip = Array.isArray(d.skipped) && d.skipped.length
-        ? `（${d.skipped.map((s) => (s === 'phone' ? 'WhatsApp' : s === 'email' ? '邮箱' : s)).join('、')}格式无效已跳过）` : ''
-      setToast({ type: 'ok', msg: (d.updated ? '已更新到线索' : '已转为线索并写入线索') + skip })
+      setToast({ type: 'ok', msg: (d.updated ? '已更新到线索' : '已转为线索并写入线索') })
     } catch (e) {
       setToast({ type: 'err', msg: e.message })
     } finally {
