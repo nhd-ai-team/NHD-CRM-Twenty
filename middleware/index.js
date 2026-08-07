@@ -239,23 +239,89 @@ function getExplicitTwentyTokenFromRequest(req) {
   return getTwentyTokenFromCookie(req);
 }
 
+// —— A 方案：本地 JWT 验签（替换原先「每次鉴权都打 Twenty GraphQL 实时校验」）——
+// 用 core.signingKey 的明文公钥在本地完成 ES256 验签，移除对 Twenty 服务可达性的依赖，
+// 服务抖动/重启不再误报「无法验证当前 CRM 用户」。公钥内存缓存 10 分钟，密钥轮换时自动刷新。
+let signingPublicKeyPem = null;
+let signingPublicKeyLoadedAt = 0;
+
+async function loadSigningPublicKey(force = false) {
+  const now = Date.now();
+  if (!force && signingPublicKeyPem && now - signingPublicKeyLoadedAt < 10 * 60 * 1000) {
+    return signingPublicKeyPem;
+  }
+  const result = await pool.query(
+    `SELECT "publicKey" FROM core."signingKey" WHERE "isCurrent" = true AND "revokedAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
+  );
+  const pem = result.rows[0]?.publicKey;
+  if (!pem) throw new Error('signing public key not found');
+  signingPublicKeyPem = pem;
+  signingPublicKeyLoadedAt = now;
+  return pem;
+}
+
+function decodeJwtSegment(segment) {
+  return JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'));
+}
+
+async function verifyTwentyAccessToken(token) {
+  if (typeof token !== 'string' || token.split('.').length !== 3) {
+    throw new Error('malformed token');
+  }
+  const [headerB64, payloadB64, signatureB64] = token.split('.');
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const rawSignature = Buffer.from(signatureB64, 'base64url');
+  const payload = decodeJwtSegment(payloadB64);
+
+  const verifyWithPem = (pem) => {
+    const publicKey = crypto.createPublicKey(pem);
+    // JWS ES256 使用 IEEE P1363（原始 R||S）编码，而非 DER
+    return crypto.verify('sha256', Buffer.from(signingInput), { key: publicKey, dsaEncoding: 'ieee-p1363' }, rawSignature);
+  };
+
+  let pem = await loadSigningPublicKey();
+  let valid = false;
+  try { valid = verifyWithPem(pem); } catch { valid = false; }
+  // 密钥轮换兜底：刷新公钥后再验一次
+  if (!valid) {
+    pem = await loadSigningPublicKey(true);
+    try { valid = verifyWithPem(pem); } catch { valid = false; }
+  }
+  if (!valid) throw new Error('signature verification failed');
+
+  // 时间窗与令牌类型校验
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (typeof payload.exp === 'number' && payload.exp <= nowSec) {
+    throw new Error('token expired');
+  }
+  if (payload.type && payload.type !== 'ACCESS') {
+    throw new Error('invalid token type');
+  }
+  return payload;
+}
+
 async function requireAuthenticatedTwentyUser(req, res) {
   const token = getExplicitTwentyTokenFromRequest(req);
-  const tokenPayload = decodeJwtPayload(token);
-  const userId = tokenPayload?.sub || '';
-  if (!token || !userId || !tokenPayload?.workspaceId) {
+  if (!token) {
+    res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+    return null;
+  }
+  let verified;
+  try {
+    verified = await verifyTwentyAccessToken(token);
+  } catch (error) {
+    console.warn('[auth] token verification failed:', error.message);
+    res.status(401).json({ error: '无法验证当前 CRM 用户，请重新登录后重试' });
+    return null;
+  }
+  const userId = verified.sub || '';
+  if (!userId || !verified.workspaceId) {
     res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
     return null;
   }
   const forwardedUserId = String(req.headers['x-twenty-user-id'] || '').trim();
   if (forwardedUserId && forwardedUserId !== userId) {
     res.status(401).json({ error: '用户身份信息不一致，请刷新 CRM 后重试' });
-    return null;
-  }
-  try {
-    await twentyGraphQL('query { opportunities(first: 1) { edges { node { id } } } }', {}, token);
-  } catch {
-    res.status(401).json({ error: '无法验证当前 CRM 用户，请重新登录后重试' });
     return null;
   }
   const actor = await resolveAuditActor(req);
@@ -1538,32 +1604,70 @@ app.get('/api/follow-ups', async (req, res) => {
     viewer = access.viewer;
   }
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
-  const params = [subjectType, subjectId];
-  let creatorFilter = '';
   // v2.1 RBAC：scope=all（admin / boss 总经理）可见全部；其余（sales/manager）仅见自己新增的
-  if (viewer.scope !== 'all') {
-    params.push(viewer.workspaceMemberId);
-    creatorFilter = `AND created_by_workspace_member_id = $${params.length}`;
+  const scoped = viewer.scope !== 'all';
+  // 线索（opportunity）的跟进记录要跨渠道汇总：实际业务里销售都是在「对话」页写跟进，
+  // 极少直接对着线索写，narrow 匹配 subject_type='opportunity' 基本查不到东西（参见
+  // backfillOpportunityLatestFollowUp 修复过的同一个坑）。这里跟那处口径保持一致：
+  // 既算直接挂在线索上的，也算经 conversation→contact 关联到该线索的跟进。
+  let result;
+  if (subjectType === 'opportunity') {
+    const params = [subjectId];
+    let creatorFilter = '';
+    if (scoped) {
+      params.push(viewer.workspaceMemberId);
+      creatorFilter = `AND fu.created_by_workspace_member_id = $${params.length}`;
+    }
+    result = await pool.query(
+      `SELECT fu.id,
+              fu.subject_type AS "subjectType",
+              fu.subject_id AS "subjectId",
+              fu.conversation_id AS "conversationId",
+              fu.content,
+              fu.created_by_workspace_member_id AS "createdByWorkspaceMemberId",
+              fu.created_by_name AS "createdByName",
+              fu.created_at AS "createdAt",
+              fu.updated_at AS "updatedAt"
+         FROM conv.follow_ups fu
+         LEFT JOIN conv.conversations c ON c.id = fu.conversation_id
+         LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+        WHERE fu.deleted_at IS NULL
+          AND (
+            (fu.subject_type = 'opportunity' AND fu.subject_id = $1::text)
+            OR ct.twenty_opportunity_id = $1::text
+          )
+          ${creatorFilter}
+        ORDER BY fu.created_at DESC
+        LIMIT 200`,
+      params,
+    );
+  } else {
+    const params = [subjectType, subjectId];
+    let creatorFilter = '';
+    if (scoped) {
+      params.push(viewer.workspaceMemberId);
+      creatorFilter = `AND created_by_workspace_member_id = $${params.length}`;
+    }
+    result = await pool.query(
+      `SELECT id,
+              subject_type AS "subjectType",
+              subject_id AS "subjectId",
+              conversation_id AS "conversationId",
+              content,
+              created_by_workspace_member_id AS "createdByWorkspaceMemberId",
+              created_by_name AS "createdByName",
+              created_at AS "createdAt",
+              updated_at AS "updatedAt"
+         FROM conv.follow_ups
+        WHERE subject_type = $1
+          AND subject_id = $2
+          AND deleted_at IS NULL
+          ${creatorFilter}
+        ORDER BY created_at DESC
+        LIMIT 100`,
+      params,
+    );
   }
-  const result = await pool.query(
-    `SELECT id,
-            subject_type AS "subjectType",
-            subject_id AS "subjectId",
-            conversation_id AS "conversationId",
-            content,
-            created_by_workspace_member_id AS "createdByWorkspaceMemberId",
-            created_by_name AS "createdByName",
-            created_at AS "createdAt",
-            updated_at AS "updatedAt"
-       FROM conv.follow_ups
-      WHERE subject_type = $1
-        AND subject_id = $2
-        AND deleted_at IS NULL
-        ${creatorFilter}
-      ORDER BY created_at DESC
-      LIMIT 100`,
-    params,
-  );
   res.json(result.rows);
 });
 

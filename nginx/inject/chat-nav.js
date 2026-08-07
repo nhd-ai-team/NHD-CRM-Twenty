@@ -1562,11 +1562,121 @@
     }
   }
 
+  // ── 线索详情页：跟进记录悬浮入口 + 弹窗列表 ──────────────────────────────────
+  // 汇总该线索下所有关联会话的跟进（不止直接挂在线索上的），按当前登录人权限过滤——
+  // 由后端 GET /conv-api/follow-ups?subjectType=opportunity 保证：admin/boss 看全部，
+  // 销售仅见自己所写。不侵入 Twenty 原生字段的 DOM（结构会随 Twenty 升级变化），
+  // 用独立悬浮按钮+弹窗展示，跟本文件里「转客户」按钮、官网归类弹窗是同一套模式。
+  var FOLLOWUP_BTN_ID = '__followup_entry_btn__';
+  var FOLLOWUP_MODAL_ID = '__followup_modal__';
+
+  function opportunityRecordId() {
+    var match = window.location.pathname.match(/^\/objects\/opportunities\/([0-9a-fA-F-]{36})(?:\/|$)/);
+    return match ? match[1] : '';
+  }
+
+  function closeFollowUpModal() {
+    var m = document.getElementById(FOLLOWUP_MODAL_ID);
+    if (m) m.remove();
+  }
+
+  function formatFollowUpTimeLocal(iso) {
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      var pad = function (n) { return String(n).length < 2 ? '0' + n : String(n); };
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    } catch (e) { return ''; }
+  }
+
+  function renderFollowUpList(container, items) {
+    if (!items.length) {
+      container.innerHTML = '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">暂无跟进记录</div>';
+      return;
+    }
+    container.innerHTML = items.map(function (item) {
+      return '<div style="padding:11px 0;border-top:1px solid #f0f0f1">' +
+        '<div style="font-size:12px;color:#71717a;display:flex;justify-content:space-between;gap:8px">' +
+          '<span style="font-weight:600;color:#3f3f46">' + escapeHtml(item.createdByName || '未知') + '</span>' +
+          '<span>' + escapeHtml(formatFollowUpTimeLocal(item.createdAt)) + '</span>' +
+        '</div>' +
+        '<div style="margin-top:4px;font-size:13px;line-height:1.6;color:#18181b;white-space:pre-wrap">' + escapeHtml(item.content || '') + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function openFollowUpModal(opportunityId) {
+    closeFollowUpModal();
+    var overlay = document.createElement('div');
+    overlay.id = FOLLOWUP_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(560px,100%);max-height:min(640px,90vh);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;display:flex;flex-direction:column;';
+    card.innerHTML =
+      '<div style="padding:16px 18px 10px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">跟进记录</div>' +
+        '<button data-followup-close style="border:none;background:transparent;cursor:pointer;color:#a1a1aa;font-size:18px;line-height:1">×</button>' +
+      '</div>' +
+      '<div data-followup-body style="padding:0 18px 8px;overflow:auto;flex:1">' +
+        '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">加载中…</div>' +
+      '</div>' +
+      '<div style="padding:8px 18px 14px;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">已汇总该线索下所有关联会话的跟进；仅展示你有权限查看的记录（管理员/总经理可见全部，销售仅见本人所写）。</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeFollowUpModal(); });
+    card.querySelector('[data-followup-close]').addEventListener('click', closeFollowUpModal);
+    document.body.appendChild(overlay);
+
+    window.fetch('/conv-api/follow-ups?subjectType=opportunity&subjectId=' + encodeURIComponent(opportunityId) + '&_=' + Date.now(), {
+      credentials: 'same-origin',
+      headers: getTwentyAuthHeaders(),
+    }).then(function (response) {
+      return response.json().catch(function () { return []; }).then(function (data) {
+        if (!response.ok) throw new Error((data && (data.error || data.detail)) || '加载跟进记录失败');
+        return data;
+      });
+    }).then(function (items) {
+      var body = card.querySelector('[data-followup-body]');
+      if (body) renderFollowUpList(body, Array.isArray(items) ? items : []);
+    }).catch(function (error) {
+      var body = card.querySelector('[data-followup-body]');
+      if (body) body.innerHTML = '<div style="padding:24px 0;text-align:center;color:#e1262b;font-size:12.5px">' + escapeHtml(error.message || '加载失败') + '</div>';
+    });
+  }
+
+  function ensureFollowUpEntry() {
+    var oppId = opportunityRecordId();
+    var existing = document.getElementById(FOLLOWUP_BTN_ID);
+    if (!oppId) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      existing.setAttribute('data-opp-id', oppId);
+      return;
+    }
+    var btn = document.createElement('button');
+    btn.id = FOLLOWUP_BTN_ID;
+    btn.type = 'button';
+    btn.setAttribute('data-opp-id', oppId);
+    btn.textContent = '跟进记录';
+    btn.style.cssText = [
+      'position:fixed', 'right:24px', 'bottom:24px', 'z-index:9998',
+      'height:36px', 'padding:0 16px', 'border-radius:18px',
+      'border:1px solid #7c3aed', 'background:#7c3aed', 'color:#fff',
+      'font-size:12.5px', 'font-weight:700', 'font-family:inherit',
+      'cursor:pointer', 'box-shadow:0 6px 18px rgba(124,58,237,.35)',
+    ].join(';');
+    btn.addEventListener('click', function () {
+      openFollowUpModal(btn.getAttribute('data-opp-id'));
+    });
+    document.body.appendChild(btn);
+  }
+
   // ── boot ──────────────────────────────────────────────────────────────────
 
   installAuthCapture();
 
-  function tick() { tryInsert(); ensureConvertTopButton(); }
+  function tick() { tryInsert(); ensureConvertTopButton(); ensureFollowUpEntry(); }
 
   var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });
