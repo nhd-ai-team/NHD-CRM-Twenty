@@ -1672,11 +1672,140 @@
     document.body.appendChild(btn);
   }
 
+  // ── 线索详情页：附件汇总悬浮入口 + 弹窗列表 ──────────────────────────────────
+  // 把一个线索横跨 WhatsApp/官网/邮件等多个渠道会话里收发过的所有附件按线索汇总，
+  // 方便回溯「这个客户前后发过哪些文件」。同「跟进记录」一样是独立悬浮按钮+弹窗，
+  // 不侵入 Twenty 原生 DOM；后端 GET /conv-api/attachments 按会话可见性过滤。
+  var ATTACH_BTN_ID = '__attach_entry_btn__';
+  var ATTACH_MODAL_ID = '__attach_modal__';
+  var ATTACH_CHANNEL_LABELS = { whatsapp: 'WhatsApp', website: '官网', email: '邮件', instagram: 'Instagram', facebook: 'Facebook' };
+
+  function closeAttachModal() {
+    var m = document.getElementById(ATTACH_MODAL_ID);
+    if (m) m.remove();
+  }
+
+  function formatAttachSize(bytes) {
+    var n = Number(bytes);
+    if (!n || n < 0) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function attachIcon(fileType) {
+    var t = String(fileType || '').toLowerCase();
+    if (/(png|jpe?g|gif|webp|bmp|svg|heic)/.test(t)) return '🖼️';
+    if (/(mp4|mov|avi|mkv|webm)/.test(t)) return '🎬';
+    if (/(mp3|wav|ogg|m4a|amr|aac)/.test(t)) return '🎧';
+    if (/(pdf)/.test(t)) return '📄';
+    if (/(xlsx?|csv)/.test(t)) return '📊';
+    if (/(docx?|txt|rtf)/.test(t)) return '📝';
+    if (/(zip|rar|7z|gz)/.test(t)) return '🗜️';
+    return '📎';
+  }
+
+  function renderAttachList(container, items) {
+    if (!items.length) {
+      container.innerHTML = '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">暂无附件</div>';
+      return;
+    }
+    container.innerHTML = items.map(function (item) {
+      var channel = ATTACH_CHANNEL_LABELS[item.channel] || item.channel || '';
+      var dirText = item.direction === 'inbound' ? '客户发来' : '我方发出';
+      var dirColor = item.direction === 'inbound' ? '#0369a1' : '#7c3aed';
+      var size = formatAttachSize(item.sizeBytes);
+      return '<a href="' + escapeHtml(item.url) + '" target="_blank" rel="noopener" ' +
+        'style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid #f0f0f1;text-decoration:none;color:inherit">' +
+        '<span style="font-size:20px;flex:none">' + attachIcon(item.fileType) + '</span>' +
+        '<span style="flex:1;min-width:0">' +
+          '<span style="display:block;font-size:13px;color:#18181b;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(item.title || '附件') + '</span>' +
+          '<span style="display:block;margin-top:2px;font-size:11.5px;color:#71717a">' +
+            '<span style="color:' + dirColor + '">' + dirText + '</span>' +
+            (channel ? ' · ' + escapeHtml(channel) : '') +
+            (size ? ' · ' + size : '') +
+            ' · ' + escapeHtml(formatFollowUpTimeLocal(item.sentAt)) +
+          '</span>' +
+          (item.caption ? '<span style="display:block;margin-top:2px;font-size:12px;color:#52525b;white-space:pre-wrap">' + escapeHtml(item.caption) + '</span>' : '') +
+        '</span>' +
+        '<span style="flex:none;font-size:11px;color:#a1a1aa">打开 ↗</span>' +
+      '</a>';
+    }).join('');
+  }
+
+  function openAttachModal(opportunityId) {
+    closeAttachModal();
+    var overlay = document.createElement('div');
+    overlay.id = ATTACH_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(560px,100%);max-height:min(640px,90vh);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;display:flex;flex-direction:column;';
+    card.innerHTML =
+      '<div style="padding:16px 18px 10px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">附件汇总</div>' +
+        '<button data-attach-close style="border:none;background:transparent;cursor:pointer;color:#a1a1aa;font-size:18px;line-height:1">×</button>' +
+      '</div>' +
+      '<div data-attach-body style="padding:0 18px 8px;overflow:auto;flex:1">' +
+        '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">加载中…</div>' +
+      '</div>' +
+      '<div style="padding:8px 18px 14px;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">已汇总该线索下所有关联会话收发过的附件；仅展示你有权限查看的会话（管理员/总经理可见全部，销售仅见本人参与/负责的会话）。</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeAttachModal(); });
+    card.querySelector('[data-attach-close]').addEventListener('click', closeAttachModal);
+    document.body.appendChild(overlay);
+
+    window.fetch('/conv-api/attachments?subjectType=opportunity&subjectId=' + encodeURIComponent(opportunityId) + '&_=' + Date.now(), {
+      credentials: 'same-origin',
+      headers: getTwentyAuthHeaders(),
+    }).then(function (response) {
+      return response.json().catch(function () { return []; }).then(function (data) {
+        if (!response.ok) throw new Error((data && (data.error || data.detail)) || '加载附件失败');
+        return data;
+      });
+    }).then(function (items) {
+      var body = card.querySelector('[data-attach-body]');
+      if (body) renderAttachList(body, Array.isArray(items) ? items : []);
+    }).catch(function (error) {
+      var body = card.querySelector('[data-attach-body]');
+      if (body) body.innerHTML = '<div style="padding:24px 0;text-align:center;color:#e1262b;font-size:12.5px">' + escapeHtml(error.message || '加载失败') + '</div>';
+    });
+  }
+
+  function ensureAttachEntry() {
+    var oppId = opportunityRecordId();
+    var existing = document.getElementById(ATTACH_BTN_ID);
+    if (!oppId) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      existing.setAttribute('data-opp-id', oppId);
+      return;
+    }
+    var btn = document.createElement('button');
+    btn.id = ATTACH_BTN_ID;
+    btn.type = 'button';
+    btn.setAttribute('data-opp-id', oppId);
+    btn.textContent = '📎 附件';
+    // 叠在「跟进记录」按钮正上方（后者 bottom:24px 高 36px），错开避免重叠。
+    btn.style.cssText = [
+      'position:fixed', 'right:24px', 'bottom:68px', 'z-index:9998',
+      'height:36px', 'padding:0 16px', 'border-radius:18px',
+      'border:1px solid #7c3aed', 'background:#fff', 'color:#7c3aed',
+      'font-size:12.5px', 'font-weight:700', 'font-family:inherit',
+      'cursor:pointer', 'box-shadow:0 6px 18px rgba(124,58,237,.22)',
+    ].join(';');
+    btn.addEventListener('click', function () {
+      openAttachModal(btn.getAttribute('data-opp-id'));
+    });
+    document.body.appendChild(btn);
+  }
+
   // ── boot ──────────────────────────────────────────────────────────────────
 
   installAuthCapture();
 
-  function tick() { tryInsert(); ensureConvertTopButton(); ensureFollowUpEntry(); }
+  function tick() { tryInsert(); ensureConvertTopButton(); ensureFollowUpEntry(); ensureAttachEntry(); }
 
   var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });

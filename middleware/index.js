@@ -1686,6 +1686,97 @@ app.get('/api/follow-ups', async (req, res) => {
   res.json(result.rows);
 });
 
+// 线索维度附件汇总：把一个线索横跨 WhatsApp/官网/邮件等多个渠道会话里收发过的所有
+// 附件，按线索汇总成一张扁平清单，方便回溯「这个客户前后发过哪些文件」。
+// 数据源两处都要覆盖：出站/官网/邮件走 messages.attachments(JSONB 数组)，
+// WhatsApp/IG 入站走 media_url(单列，已由 df586a8 代理到本地)。官网入站两者都写，
+// 优先取 attachments，避免重复计数。权限按「会话可见性」过滤(conversationVisibilityWhere)——
+// admin/boss 看全部，销售仅见自己参与/负责的会话，跟「跟进记录」按创建人过滤口径不同，
+// 但更贴合附件语义(附件属于会话消息，不属于某个「作者」)。
+app.get('/api/attachments', async (req, res) => {
+  const subjectType = String(req.query.subjectType || '').trim();
+  const subjectId = String(req.query.subjectId || '').trim();
+  if (subjectType !== 'opportunity' || !subjectId) {
+    return res.status(400).json({ error: '附件汇总仅支持 subjectType=opportunity' });
+  }
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
+  const params = [subjectId];
+  const visibility = conversationVisibilityWhere(viewer, 'c', params.length + 1);
+  params.push(...visibility.params);
+  let result;
+  try {
+    result = await pool.query(
+      `SELECT m.id AS "messageId",
+              m.sender_type AS "senderType",
+              m.content,
+              m.content_type AS "contentType",
+              m.media_url AS "mediaUrl",
+              m.attachments,
+              m.sent_at AS "sentAt",
+              c.id AS "conversationId",
+              c.channel
+         FROM conv.messages m
+         JOIN conv.conversations c ON c.id = m.conversation_id
+         JOIN conv.contacts ct ON ct.id = c.contact_id
+        WHERE ct.twenty_opportunity_id = $1::text
+          AND (
+            m.media_url IS NOT NULL
+            OR (m.attachments IS NOT NULL AND jsonb_typeof(m.attachments) = 'array' AND jsonb_array_length(m.attachments) > 0)
+          )
+          AND ${visibility.sql}
+        ORDER BY m.sent_at DESC
+        LIMIT 500`,
+      params,
+    );
+  } catch (error) {
+    console.error('[attachments] aggregate failed:', error.message);
+    return res.status(502).json({ error: '无法加载附件', detail: error.message });
+  }
+  // 一条消息可能带多个附件(邮件)，展开成扁平清单；官网消息 attachments 与 media_url
+  // 同时存在时以 attachments 为准，避免同一文件出现两次。
+  const items = [];
+  for (const row of result.rows) {
+    const direction = row.senderType === 'customer' ? 'inbound' : 'outbound';
+    const base = {
+      messageId: row.messageId,
+      conversationId: row.conversationId,
+      channel: row.channel,
+      direction,
+      sentAt: row.sentAt,
+    };
+    const list = Array.isArray(row.attachments) ? row.attachments : [];
+    if (list.length) {
+      for (const att of list) {
+        const url = String(att?.url || att?.href || '').trim();
+        if (!url) continue;
+        items.push({
+          ...base,
+          url,
+          title: att.title || att.fileName || att.filename || '附件',
+          fileType: String(att.fileType || fileTypeFromName(att.title || '', 'file')).replace(/^\./, '').toLowerCase() || 'file',
+          contentType: att.contentType || att.mimeType || att.mimetype || row.contentType || null,
+          sizeBytes: Number(att.sizeBytes || att.size || 0) || null,
+          caption: att.caption || (row.content && row.content !== att.title ? row.content : '') || '',
+        });
+      }
+    } else if (row.mediaUrl) {
+      // WhatsApp/IG 入站：只有 media_url，标题从正文(caption)或 content_type 兜底。
+      const guessedTitle = (row.content && String(row.content).trim()) || `${row.contentType || 'file'} 附件`;
+      items.push({
+        ...base,
+        url: row.mediaUrl,
+        title: guessedTitle.slice(0, 180),
+        fileType: fileTypeFromName(guessedTitle, row.contentType || 'file'),
+        contentType: row.contentType || null,
+        sizeBytes: null,
+        caption: '',
+      });
+    }
+  }
+  res.json(items);
+});
+
 app.post('/api/follow-ups', requireSameSite, async (req, res) => {
   const subjectType = String(req.body?.subjectType || '').trim();
   const subjectId = String(req.body?.subjectId || '').trim();
