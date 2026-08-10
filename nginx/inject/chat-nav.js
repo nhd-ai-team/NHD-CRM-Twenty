@@ -1019,7 +1019,7 @@
           '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>' +
           '<span style="flex:1">权限</span><span style="color:#a1a1aa">›</span>' +
         '</div>' +
-        '<div style="padding-left:32px;margin-top:8px;font-size:13px">为成员分配角色：管理员 / 销售主管 / 销售 / 总经理。</div>';
+        '<div style="padding-left:32px;margin-top:8px;font-size:13px">为成员分配角色：后台管理员 / 销售主管 / 销售。</div>';
       card.addEventListener('click', function () { window.location.href = RBAC_SETTINGS_PATH; });
       cardsHost.appendChild(card);
     });
@@ -1057,7 +1057,7 @@
       '<div style="max-width:820px">' +
         '<div style="font-size:13px;color:#71717a;margin-bottom:12px">账户 / 权限</div>' +
         '<h1 style="font-size:22px;line-height:1.3;margin:0 0 8px;font-weight:700">权限</h1>' +
-        '<p style="font-size:13px;color:#71717a;margin:0 0 24px">为工作区成员分配角色。管理员可查看并操作全部会话；销售主管查看团队；销售仅看自己；总经理仅查看全部、不可操作。</p>' +
+        '<p style="font-size:13px;color:#71717a;margin:0 0 24px">为工作区成员分配角色。后台管理员可查看并操作全部会话；销售主管查看团队；销售仅看自己。</p>' +
         '<div data-rbac-loading style="font-size:13px;color:#71717a">正在加载成员与角色…</div>' +
         '<div data-rbac-error style="font-size:13px;color:#dc2626;display:none"></div>' +
         '<div data-rbac-list style="display:none;margin-top:8px"></div>' +
@@ -1229,7 +1229,7 @@
   }
 
   function roleLabel(role) {
-    return ({ admin: '管理员', manager: '销售主管', sales: '销售', boss: '总经理' })[role] || role;
+    return ({ admin: '后台管理员', manager: '销售主管', sales: '销售', boss: '总经理' })[role] || role;
   }
 
   function setRbacButtonBusy(button, isBusy) {
@@ -1686,7 +1686,7 @@
       '<div data-followup-body style="padding:0 18px 8px;overflow:auto;flex:1">' +
         '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">加载中…</div>' +
       '</div>' +
-      '<div style="padding:8px 18px 14px;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">已汇总该线索下所有关联会话的跟进；仅展示你有权限查看的记录（管理员/总经理可见全部，销售仅见本人所写）。</div>';
+      '<div style="padding:8px 18px 14px;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">已汇总该线索下所有关联会话的跟进；仅展示你有权限查看的记录（后台管理员可见全部，销售仅见本人所写）。</div>';
     overlay.appendChild(card);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) closeFollowUpModal(); });
     card.querySelector('[data-followup-close]').addEventListener('click', closeFollowUpModal);
@@ -1814,7 +1814,7 @@
       '<div data-attach-body style="padding:0 18px 8px;overflow:auto;flex:1">' +
         '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">加载中…</div>' +
       '</div>' +
-      '<div style="padding:8px 18px 14px;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">已汇总该线索下所有关联会话收发过的附件；仅展示你有权限查看的会话（管理员/总经理可见全部，销售仅见本人参与/负责的会话）。</div>';
+      '<div style="padding:8px 18px 14px;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">已汇总该线索下所有关联会话收发过的附件；仅展示你有权限查看的会话（后台管理员可见全部，销售仅见本人参与/负责的会话）。</div>';
     overlay.appendChild(card);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) closeAttachModal(); });
     card.querySelector('[data-attach-close]').addEventListener('click', closeAttachModal);
