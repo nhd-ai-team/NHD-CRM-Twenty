@@ -706,8 +706,16 @@ async function backfillOpportunityLatestFollowUp(client, schema, opportunityId) 
 function formatFollowUpTime(ts) {
   const d = ts ? new Date(ts) : new Date();
   if (Number.isNaN(d.getTime())) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  // 容器默认跑在 UTC，直接用 getHours() 会得到 UTC+0 时间；这里显式按东八区（Asia/Shanghai）
+  // 格式化，保证写进 Twenty「最新跟进」字段的时间戳是 UTC+8。en-CA 的 formatToParts
+  // 天然给出 YYYY-MM-DD 顺序，拼出 “YYYY-MM-DD HH:mm”。
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+  const hour = parts.hour === '24' ? '00' : parts.hour; // en-CA 偶发把 00:xx 输出成 24:xx
+  return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}`;
 }
 
 function auditRequestSummary(req) {
