@@ -23,6 +23,17 @@ services:
       FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY}
       APP_SECRET: ${APP_SECRET:-}
 
+      # 出站邮件（工作区邀请、忘记密码等）。默认 QQ 邮箱 SMTP；
+      # 账号/授权码等敏感值只从 .env 读取，仓库不留明文。
+      EMAIL_DRIVER: ${EMAIL_DRIVER:-smtp}
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-smtp.qq.com}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-465}
+      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER}
+      EMAIL_SMTP_PASSWORD: ${EMAIL_SMTP_PASSWORD}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-新宏大 CRM}
+      EMAIL_SYSTEM_ADDRESS: ${EMAIL_SYSTEM_ADDRESS}
+
       HTTP_PROXY: http://host.docker.internal:7890
       HTTPS_PROXY: http://host.docker.internal:7890
       NO_PROXY: localhost,127.0.0.1,db,redis,server,worker,middleware
@@ -60,6 +71,16 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY}
       APP_SECRET: ${APP_SECRET:-}
+
+      # 出站邮件（邀请/忘记密码等）。worker 负责发信任务，与 server 保持一致配置。
+      EMAIL_DRIVER: ${EMAIL_DRIVER:-smtp}
+      EMAIL_SMTP_HOST: ${EMAIL_SMTP_HOST:-smtp.qq.com}
+      EMAIL_SMTP_PORT: ${EMAIL_SMTP_PORT:-465}
+      EMAIL_SMTP_USER: ${EMAIL_SMTP_USER}
+      EMAIL_SMTP_PASSWORD: ${EMAIL_SMTP_PASSWORD}
+      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-新宏大 CRM}
+      EMAIL_SYSTEM_ADDRESS: ${EMAIL_SYSTEM_ADDRESS}
 
       HTTP_PROXY: http://host.docker.internal:7890
       HTTPS_PROXY: http://host.docker.internal:7890
