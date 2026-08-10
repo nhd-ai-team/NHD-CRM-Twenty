@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 
@@ -2697,6 +2698,53 @@ app.delete('/api/rbac/roles/:workspaceMemberId', requireSameSite, async (req, re
     res.json({ ok: true, workspaceMemberId, role: 'sales' });
   } catch (error) {
     res.status(500).json({ error: '重置角色失败', detail: error.message });
+  }
+});
+
+// 管理员为成员重置登录密码（Twenty 原生无 forgot/reset 能力，内部团队用管理员后台
+// 直接改密即可）。哈希算法与 Twenty 一致：bcrypt saltRounds=10、密码 ≥8 位
+// （对齐 twenty/server/src/core/auth/auth.util.ts 的 PASSWORD_REGEX /^.{8,}$/）；
+// 用 bcryptjs 生成 $2a$ 哈希，Twenty 登录时的原生 bcrypt.compare 可正常校验。
+// 目标 userId 一律从 workspaceMember 服务端解析，不信任前端传入，避免越权改到别人。
+app.post('/api/rbac/members/:workspaceMemberId/reset-password', requireSameSite, async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { workspaceMemberId } = req.params;
+  const newPassword = String(req.body?.newPassword || '');
+  if (newPassword.length < 8) return res.status(400).json({ error: '新密码至少 8 位' });
+  if (newPassword.length > 128) return res.status(400).json({ error: '新密码不能超过 128 位' });
+  try {
+    const schema = await getWorkspaceSchema();
+    const memberResult = await pool.query(
+      `SELECT wm."userId", wm."userEmail" AS email,
+              wm."nameFirstName" AS "firstName", wm."nameLastName" AS "lastName"
+         FROM ${schema}."workspaceMember" wm
+        WHERE wm.id::text = $1 AND wm."deletedAt" IS NULL
+        LIMIT 1`,
+      [workspaceMemberId],
+    );
+    const member = memberResult.rows[0];
+    if (!member?.userId) return res.status(404).json({ error: '未找到该成员对应的登录账号' });
+    // 目标账号必须存在于 core.user，且原本就是密码登录（有 passwordHash）——
+    // 对 SSO/未激活账号直接改密没有意义，明确拒绝而不是静默写入。
+    const userResult = await pool.query(
+      `SELECT id, email, "passwordHash" FROM core."user" WHERE id = $1 LIMIT 1`,
+      [member.userId],
+    );
+    const user = userResult.rows[0];
+    if (!user) return res.status(404).json({ error: '未找到该成员对应的登录账号' });
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(`UPDATE core."user" SET "passwordHash" = $1, "updatedAt" = now() WHERE id = $2`, [passwordHash, user.id]);
+    const memberName = [member.firstName, member.lastName].filter(Boolean).join(' ').trim() || member.email || '成员';
+    // 审计只记「谁给谁重置了密码」，绝不记录密码明文或哈希。
+    recordAuditEvent('rbac.password.reset', {
+      actor: { userId: admin.userId, workspaceMemberId: admin.workspaceMemberId, name: admin.name },
+      payload: { targetWorkspaceMemberId: workspaceMemberId, targetUserId: user.id, targetEmail: user.email },
+    });
+    res.json({ ok: true, workspaceMemberId, email: user.email, name: memberName });
+  } catch (error) {
+    console.error('[rbac] reset password failed:', error.message);
+    res.status(500).json({ error: '重置密码失败', detail: error.message });
   }
 });
 

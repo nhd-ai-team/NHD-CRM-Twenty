@@ -1104,6 +1104,7 @@
         '<select data-rbac-role="' + escapeHtml(m.memberId) + '" style="height:32px;border:1px solid #d4d4d8;border-radius:6px;padding:0 8px;font-size:13px;background:#fff">' + options + '</select>' +
         '<button data-rbac-save="' + escapeHtml(m.memberId) + '" style="height:32px;padding:0 14px;border-radius:6px;border:1px solid #16a34a;background:#16a34a;color:#fff;font-size:12.5px;font-weight:700;cursor:pointer">保存</button>' +
         '<button data-rbac-reset="' + escapeHtml(m.memberId) + '" style="height:32px;padding:0 10px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#71717a;font-size:12.5px;cursor:pointer">重置</button>' +
+        '<button data-rbac-pwd="' + escapeHtml(m.memberId) + '" style="height:32px;padding:0 10px;border-radius:6px;border:1px solid #d97706;background:#fff;color:#b45309;font-size:12.5px;cursor:pointer">重置密码</button>' +
       '</div>';
     }).join('');
     listEl.innerHTML = rows;
@@ -1132,6 +1133,7 @@
           .catch(function (error) {
             var errorEl = root.querySelector('[data-rbac-error]');
             errorEl.style.display = 'block';
+            errorEl.style.color = '#e1262b';
             errorEl.textContent = error.message || '保存失败';
           })
           .finally(function () { setRbacButtonBusy(btn, false); });
@@ -1155,11 +1157,75 @@
           .catch(function (error) {
             var errorEl = root.querySelector('[data-rbac-error]');
             errorEl.style.display = 'block';
+            errorEl.style.color = '#e1262b';
             errorEl.textContent = error.message || '重置失败';
           })
           .finally(function () { setRbacButtonBusy(btn, false); });
       });
     });
+    Array.prototype.forEach.call(listEl.querySelectorAll('[data-rbac-pwd]'), function (btn) {
+      btn.addEventListener('click', function () {
+        var memberId = btn.getAttribute('data-rbac-pwd');
+        var member = members.find(function (m) { return m.memberId === memberId; });
+        openResetPwdModal(root, member || { memberId: memberId, name: '', email: '' });
+      });
+    });
+  }
+
+  // 管理员为成员重置登录密码：小弹窗输入新密码 + 二次确认，前端先做 ≥8 位校验，
+  // 提交到 POST /conv-api/rbac/members/:id/reset-password（后端 requireAdmin 二次把关）。
+  function openResetPwdModal(root, member) {
+    var existing = document.getElementById('__rbac_pwd_modal__');
+    if (existing) existing.remove();
+    var overlay = document.createElement('div');
+    overlay.id = '__rbac_pwd_modal__';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(420px,100%);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);font-family:inherit;overflow:hidden';
+    card.innerHTML =
+      '<div style="padding:16px 18px 6px;font-size:15px;font-weight:700;color:#111">重置登录密码</div>' +
+      '<div style="padding:0 18px;font-size:12.5px;color:#71717a">为 <b>' + escapeHtml(member.name || member.email || '该成员') + '</b>' + (member.email ? '（' + escapeHtml(member.email) + '）' : '') + ' 设置新的登录密码。重置后请把新密码线下告知本人。</div>' +
+      '<div style="padding:14px 18px 4px">' +
+        '<input type="password" data-pwd-1 placeholder="新密码（至少 8 位）" autocomplete="new-password" style="width:100%;box-sizing:border-box;height:36px;border:1px solid #d4d4d8;border-radius:6px;padding:0 10px;font-size:13px;margin-bottom:10px" />' +
+        '<input type="password" data-pwd-2 placeholder="再次输入新密码" autocomplete="new-password" style="width:100%;box-sizing:border-box;height:36px;border:1px solid #d4d4d8;border-radius:6px;padding:0 10px;font-size:13px" />' +
+        '<div data-pwd-err style="display:none;margin-top:8px;font-size:12px;color:#e1262b"></div>' +
+      '</div>' +
+      '<div style="padding:12px 18px 16px;display:flex;justify-content:flex-end;gap:10px">' +
+        '<button data-pwd-cancel style="height:34px;padding:0 14px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#52525b;font-size:13px;cursor:pointer">取消</button>' +
+        '<button data-pwd-submit style="height:34px;padding:0 16px;border-radius:6px;border:1px solid #d97706;background:#d97706;color:#fff;font-size:13px;font-weight:700;cursor:pointer">确认重置</button>' +
+      '</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.remove(); });
+    card.querySelector('[data-pwd-cancel]').addEventListener('click', function () { overlay.remove(); });
+    var errEl = card.querySelector('[data-pwd-err]');
+    var submitBtn = card.querySelector('[data-pwd-submit]');
+    function showErr(msg) { errEl.textContent = msg; errEl.style.display = 'block'; }
+    submitBtn.addEventListener('click', function () {
+      var p1 = card.querySelector('[data-pwd-1]').value || '';
+      var p2 = card.querySelector('[data-pwd-2]').value || '';
+      if (p1.length < 8) return showErr('新密码至少 8 位');
+      if (p1 !== p2) return showErr('两次输入的密码不一致');
+      errEl.style.display = 'none';
+      setRbacButtonBusy(submitBtn, true);
+      window.fetch('/conv-api/rbac/members/' + encodeURIComponent(member.memberId) + '/reset-password', {
+        method: 'POST', credentials: 'same-origin',
+        headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ newPassword: p1 }),
+      })
+        .then(function (response) { return readChannelApiResponse(response, '重置失败'); })
+        .then(function () {
+          overlay.remove();
+          var okEl = root.querySelector('[data-rbac-error]');
+          if (okEl) { okEl.style.display = 'block'; okEl.style.color = '#16a34a'; okEl.textContent = '已重置 ' + (member.name || member.email || '该成员') + ' 的登录密码，请线下告知新密码。'; }
+        })
+        .catch(function (error) {
+          setRbacButtonBusy(submitBtn, false);
+          showErr(error.message || '重置失败');
+        });
+    });
+    document.body.appendChild(overlay);
+    var first = card.querySelector('[data-pwd-1]');
+    if (first) first.focus();
   }
 
   function roleLabel(role) {
