@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Loader2, UserPlus, Trash2 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
+import { STAGE_OPTIONS } from '../utils/leadDraft'
 
 const TABS = ['资料', '跟进']
 
@@ -13,12 +14,6 @@ const SOURCE_OPTIONS = [
 const COMPANY_TYPE_OPTIONS = [
   ['中间商', 'ZHONG_JIAN_SHANG'], ['业主', 'YE_ZHU'], ['EPC', 'EPC'], ['技术咨询', 'JI_SHU_ZI_XUN'],
 ]
-const STAGE_OPTIONS = [
-  ['线索', 'XIANSUO'], ['有效线索', 'YOUXIAO_XIANSUO'], ['询价', 'XUNJIA'], ['报价', 'BAOJIA'],
-  ['审样', 'SHENYANG'], ['谈判', 'TANPAN'], ['已下单', 'YIXIADAN'], ['已付款', 'YIFUKUAN'],
-  ['已发货', 'YIFAHUO'], ['已成交', 'YICHENGJIAO'],
-]
-
 const inputStyle = {
   width: '100%', padding: '6px 9px', borderRadius: 6, fontSize: 13, boxSizing: 'border-box',
   border: '1px solid var(--border)', background: 'var(--bg-surface)', color: 'var(--text-primary)', outline: 'none',

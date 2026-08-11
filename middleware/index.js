@@ -3210,6 +3210,33 @@ const normalizeEmailList = (value) => String(value || '')
   .split(EMAIL_SEPARATOR_RE)
   .map((item) => item.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, ''))
   .filter(Boolean);
+const VALID_OPPORTUNITY_STAGES = new Set([
+  'WEI_CHU_LI_XIANSUO',
+  'XIANSUO',
+  'YOUXIAO_XIANSUO',
+  'QUE_REN_XUN_PAN',
+  'XUN_PAN_ZHUAN_ZONGBU',
+  'ZONGBU_FANG_AN_BAO_JIA',
+  'JI_SHU_CHENG_QING',
+  'SHANG_WU_CHENG_QING',
+  'YI_QIAN_DAN_FU_KUAN',
+  'YI_FA_HUO',
+]);
+const LEGACY_OPPORTUNITY_STAGE_MAP = {
+  XUNJIA: 'QUE_REN_XUN_PAN',
+  BAOJIA: 'ZONGBU_FANG_AN_BAO_JIA',
+  SHENYANG: 'JI_SHU_CHENG_QING',
+  TANPAN: 'SHANG_WU_CHENG_QING',
+  YIXIADAN: 'YI_QIAN_DAN_FU_KUAN',
+  YIFUKUAN: 'YI_QIAN_DAN_FU_KUAN',
+  YICHENGJIAO: 'YI_QIAN_DAN_FU_KUAN',
+  YIFAHUO: 'YI_FA_HUO',
+};
+function normalizeOpportunityStage(value, fallback = 'XIANSUO') {
+  const raw = String(value || '').trim();
+  const mapped = LEGACY_OPPORTUNITY_STAGE_MAP[raw] || raw;
+  return VALID_OPPORTUNITY_STAGES.has(mapped) ? mapped : fallback;
+}
 // 线索转客户：可双向同步的客户类型枚举 + 字段清洗工具
 const SHARED_CUSTOMER_TYPES = new Set(['ZHONG_JIAN_SHANG', 'YE_ZHU', 'EPC', 'JI_SHU_ZI_XUN']);
 const nonBlankOrNull = (value) => {
@@ -3387,7 +3414,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];
   const isWebsiteFormSource = source === 'GUAN_WANG_BIAO_DAN';
   if (personId) data.pointOfContactId = personId;
-  if (b.stage && !isWebsiteFormSource) data.stage = String(b.stage);
+  if (b.stage && !isWebsiteFormSource) data.stage = normalizeOpportunityStage(b.stage);
   if (source) data.keHuLaiYuan = source;
   if (isWebsiteFormSource) data.stage = 'XIANSUO';
   if (b.companyType) data.keHuLeiXing = String(b.companyType);
@@ -3410,6 +3437,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     if (emails.length > 0 && emails.every((item) => EMAIL_RE.test(item))) data[OPPORTUNITY_EMAIL_FIELD] = emails.join(', ');
     else skipped.push('email');
   }
+  if (data.stage) data.stage = normalizeOpportunityStage(data.stage);
   if (!isWebsiteFormSource && (rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
   const country = String(b.country || '').trim();
   if (country) data.country = { addressCountry: country };
