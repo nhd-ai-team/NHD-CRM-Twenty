@@ -1924,6 +1924,45 @@
     return m ? m[0] : '';
   }
 
+  function findDangerZoneSection() {
+    var labels = ['危险区', 'Danger zone', 'Danger Zone'];
+    var nodes = document.querySelectorAll('h1, h2, h3, div, span, p');
+    for (var i = 0; i < nodes.length; i++) {
+      var text = String(nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
+      if (labels.indexOf(text) === -1) continue;
+      var node = nodes[i];
+      for (var up = 0; up < 8 && node; up++) {
+        var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+        var sectionText = String(node.textContent || '');
+        if (
+          rect &&
+          rect.width > 260 &&
+          rect.height > 80 &&
+          sectionText.indexOf('删除') !== -1
+        ) {
+          return node;
+        }
+        node = node.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function findDeleteAccountActionRow(section, delBtn) {
+    if (!section || !delBtn || !section.contains(delBtn)) return delBtn;
+    var node = delBtn;
+    while (node.parentElement && node.parentElement !== section) {
+      var parent = node.parentElement;
+      var text = String(parent.textContent || '');
+      if (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1) {
+        node = parent;
+        continue;
+      }
+      break;
+    }
+    return node;
+  }
+
   function openResetPwdByEmail(email) {
     if (!email) { window.alert('未能从页面识别该成员邮箱，无法重置'); return; }
     window.fetch('/conv-api/rbac/members', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() })
@@ -1949,11 +1988,16 @@
     var delBtn = findNativeDeleteAccountButton();
     var existing = document.getElementById(MEMBER_RESETPWD_BTN_ID);
     if (!delBtn) { if (existing) existing.remove(); return; }
-    // 已注入且就在删除按钮前面则不重复插
-    if (existing && existing.nextElementSibling === delBtn) return;
+    var profilePage = window.location.pathname.startsWith('/settings/profile');
+    var dangerSection = profilePage ? findDangerZoneSection() : null;
+    var actionRow = dangerSection ? findDeleteAccountActionRow(dangerSection, delBtn) : delBtn;
+    // 已注入且仍在正确容器内则不重复插
+    if (existing && ((dangerSection && dangerSection.contains(existing)) || (!dangerSection && existing.nextElementSibling === delBtn))) return;
     if (existing) existing.remove();
+    var wrap = document.createElement('div');
+    wrap.id = MEMBER_RESETPWD_BTN_ID;
+    wrap.style.cssText = 'display:flex;align-items:center;margin:0 0 10px 0;min-height:32px;';
     var btn = document.createElement('button');
-    btn.id = MEMBER_RESETPWD_BTN_ID;
     btn.type = 'button';
     btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78Zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><span>重置密码</span>';
     // 高度/圆角/字号量取原生「删除账户」按钮以对齐，避免撑高整行导致相邻按钮边框溢出。
@@ -1963,17 +2007,22 @@
     var radius = (cs && cs.borderRadius) || '8px';
     var fsize = (cs && cs.fontSize) || '13px';
     btn.style.cssText = [
-      'margin-right:8px', 'box-sizing:border-box', 'align-self:center',
+      'box-sizing:border-box', 'align-self:center',
       'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:6px',
       'height:' + h + 'px', 'padding:0 12px', 'border-radius:' + radius,
-      'border:1px solid #d97706', 'background:transparent', 'color:#d97706',
+      'border:1px solid #d97706', 'background:#fff', 'color:#d97706',
       'font-size:' + fsize, 'font-weight:600', 'line-height:1', 'font-family:inherit', 'cursor:pointer',
     ].join(';');
     btn.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
       openResetPwdByEmail(findMemberEmailOnPage());
     });
-    delBtn.parentNode.insertBefore(btn, delBtn);
+    wrap.appendChild(btn);
+    if (dangerSection && actionRow && actionRow.parentNode === dangerSection) {
+      dangerSection.insertBefore(wrap, actionRow);
+    } else {
+      delBtn.parentNode.insertBefore(wrap, delBtn);
+    }
   }
 
   // ── boot ──────────────────────────────────────────────────────────────────
