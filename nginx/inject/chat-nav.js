@@ -1002,7 +1002,7 @@
     loadRbacAdminStatus(function (isAdmin) {
       if (!isAdmin) return; // 非管理员不显示权限卡片
       var sections = Array.from(document.querySelectorAll('h2, [role="heading"]'));
-      var settingsHeading = sections.find(function (el) { return (el.textContent || '').trim() === 'Settings'; });
+      var settingsHeading = sections.find(function (el) { var t = (el.textContent || '').trim(); return t === 'Settings' || t === '设置'; });
       if (!settingsHeading) return;
       var section = settingsHeading.closest('section') || settingsHeading.parentElement;
       if (!section) return;
@@ -1066,10 +1066,19 @@
     loadRbacData(root);
   }
 
-  function loadRbacData(root) {
+  function loadRbacData(root, attempt) {
     var listEl = root.querySelector('[data-rbac-list]');
     var loadingEl = root.querySelector('[data-rbac-loading]');
     var errorEl = root.querySelector('[data-rbac-error]');
+    // 硬刷直达本页时，Twenty 可能还没把登录令牌写进 storage/cookie，
+    // 令牌捕获也尚未拿到。此时先等待重试（最多约 5 秒），避免误报「登录已失效」。
+    attempt = attempt || 0;
+    if (!getTwentyAccessToken() && attempt < 10) {
+      if (loadingEl) { loadingEl.style.display = 'block'; loadingEl.textContent = '正在等待登录状态…'; }
+      setTimeout(function () { loadRbacData(root, attempt + 1); }, 500);
+      return;
+    }
+    if (loadingEl) loadingEl.textContent = '正在加载成员与角色…';
     Promise.all([
       window.fetch('/conv-api/rbac/members', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() }).then(function (r) { return readChannelApiResponse(r, '加载失败'); }),
       window.fetch('/conv-api/rbac/role-scopes', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() }).then(function (r) { return readChannelApiResponse(r, '加载失败'); }),
@@ -1867,11 +1876,101 @@
     document.body.appendChild(btn);
   }
 
+  // ── 原生成员信息页：在「删除账户」左边注入「重置密码」按钮 ──────────────────
+  // 管理员在 Twenty 原生的成员详情页（设置→成员→某人→信息）即可重置该成员密码，
+  // 不必再去单独的权限页。目标成员用页面上显示的邮箱匹配（复用 /rbac/members 拿到
+  // memberId 再调现有重置接口），后端无需改动。
+  var MEMBER_RESETPWD_BTN_ID = '__member_resetpwd_btn__';
+  var EMAIL_RE_INJECT = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+
+  function findNativeDeleteAccountButton() {
+    var LABELS = ['删除账户', '删除账号', 'Delete account', 'Delete Account', 'Delete account permanently'];
+    function norm(s) { return String(s || '').replace(/\s+/g, ''); }
+    var wanted = LABELS.map(norm);
+    // 1) 直接可点元素（Twenty 的按钮可能是 button / role=button / a）
+    var clickable = document.querySelectorAll('button, [role="button"], a');
+    for (var i = 0; i < clickable.length; i++) {
+      if (wanted.indexOf(norm(clickable[i].textContent)) !== -1) return clickable[i];
+    }
+    // 2) 兜底：叶子节点自身文本命中「删除账户」，向上爬到第一个可点祖先
+    //    （Twenty 的按钮是 styled div，不一定是 button/role/a，用 cursor:pointer 识别）
+    var all = document.querySelectorAll('span, div, p, a');
+    for (var k = 0; k < all.length; k++) {
+      var el = all[k];
+      if (el.children.length) continue; // 只看叶子，避免命中大容器
+      if (wanted.indexOf(norm(el.textContent)) === -1) continue;
+      var node = el;
+      for (var up = 0; up < 6 && node; up++) {
+        if (node.matches && node.matches('button, [role="button"], a')) return node;
+        try { if (window.getComputedStyle(node).cursor === 'pointer') return node; } catch (e) {}
+        node = node.parentElement;
+      }
+      return el.parentElement || el;
+    }
+    return null;
+  }
+
+  function findMemberEmailOnPage() {
+    // 优先取原生表单里的邮箱输入框值
+    var inputs = document.querySelectorAll('input');
+    for (var i = 0; i < inputs.length; i++) {
+      var v = String(inputs[i].value || '').trim();
+      if (EMAIL_RE_INJECT.test(v)) return (v.match(EMAIL_RE_INJECT) || [''])[0];
+    }
+    // 兜底：正文里第一个邮箱
+    var m = (document.body.textContent || '').match(EMAIL_RE_INJECT);
+    return m ? m[0] : '';
+  }
+
+  function openResetPwdByEmail(email) {
+    if (!email) { window.alert('未能从页面识别该成员邮箱，无法重置'); return; }
+    window.fetch('/conv-api/rbac/members', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() })
+      .then(function (r) { return readChannelApiResponse(r, '加载成员失败'); })
+      .then(function (data) {
+        var list = (data && data.members) || [];
+        var member = list.find(function (m) { return String(m.email || '').toLowerCase() === email.toLowerCase(); });
+        if (!member) throw new Error('未找到邮箱为 ' + email + ' 的成员');
+        // 复用权限页那套重置密码弹窗；root 传 document.body 以承载成功提示
+        openResetPwdModal(document.body, { memberId: member.memberId, name: member.name, email: member.email });
+      })
+      .catch(function (error) { window.alert(error.message || '重置密码失败'); });
+  }
+
+  function ensureMemberResetPwdButton() {
+    var delBtn = findNativeDeleteAccountButton();
+    var existing = document.getElementById(MEMBER_RESETPWD_BTN_ID);
+    if (!delBtn) { if (existing) existing.remove(); return; }
+    // 已注入且就在删除按钮前面则不重复插
+    if (existing && existing.nextElementSibling === delBtn) return;
+    if (existing) existing.remove();
+    var btn = document.createElement('button');
+    btn.id = MEMBER_RESETPWD_BTN_ID;
+    btn.type = 'button';
+    btn.textContent = '重置密码';
+    // 高度/圆角/字号量取原生「删除账户」按钮以对齐，避免撑高整行导致相邻按钮边框溢出。
+    var cs = null;
+    try { cs = window.getComputedStyle(delBtn); } catch (e) {}
+    var h = delBtn.offsetHeight || 32;
+    var radius = (cs && cs.borderRadius) || '8px';
+    var fsize = (cs && cs.fontSize) || '13px';
+    btn.style.cssText = [
+      'margin-right:8px', 'box-sizing:border-box', 'align-self:center',
+      'height:' + h + 'px', 'padding:0 12px', 'border-radius:' + radius,
+      'border:1px solid #d97706', 'background:transparent', 'color:#d97706',
+      'font-size:' + fsize, 'font-weight:600', 'line-height:1', 'font-family:inherit', 'cursor:pointer',
+    ].join(';');
+    btn.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      openResetPwdByEmail(findMemberEmailOnPage());
+    });
+    delBtn.parentNode.insertBefore(btn, delBtn);
+  }
+
   // ── boot ──────────────────────────────────────────────────────────────────
 
   installAuthCapture();
 
-  function tick() { tryInsert(); ensureConvertTopButton(); ensureFollowUpEntry(); ensureAttachEntry(); }
+  function tick() { tryInsert(); ensureConvertTopButton(); ensureFollowUpEntry(); ensureAttachEntry(); ensureMemberResetPwdButton(); }
 
   var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });
