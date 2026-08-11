@@ -2000,18 +2000,16 @@
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78Zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><span>重置密码</span>';
-    // 高度/圆角/字号量取原生「删除账户」按钮以对齐，避免撑高整行导致相邻按钮边框溢出。
+    // 固定为 Twenty 默认小按钮尺寸；避免读取到删除按钮内部文本节点后变成很矮的小标签。
     var cs = null;
     try { cs = window.getComputedStyle(delBtn); } catch (e) {}
-    var h = delBtn.offsetHeight || 32;
     var radius = (cs && cs.borderRadius) || '8px';
-    var fsize = (cs && cs.fontSize) || '13px';
     btn.style.cssText = [
       'box-sizing:border-box', 'align-self:center',
       'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:6px',
-      'height:' + h + 'px', 'padding:0 12px', 'border-radius:' + radius,
+      'height:32px', 'min-height:32px', 'min-width:96px', 'padding:0 12px', 'border-radius:' + radius,
       'border:1px solid #d97706', 'background:#fff', 'color:#d97706',
-      'font-size:' + fsize, 'font-weight:600', 'line-height:1', 'font-family:inherit', 'cursor:pointer',
+      'font-size:13px', 'font-weight:600', 'line-height:30px', 'font-family:inherit', 'cursor:pointer',
     ].join(';');
     btn.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
