@@ -1980,6 +1980,75 @@ function normalizeOutboundWhatsAppPhone(input) {
   return digits;
 }
 
+function createHttpError(message, status = 400, detail = null) {
+  const error = new Error(message);
+  error.status = status;
+  error.detail = detail;
+  return error;
+}
+
+async function checkWhatsAppRecipientForUser(authenticated, phone) {
+  const sessionName = await resolveUserWahaSessionName(authenticated);
+  const session = normalizeWahaSession(await getWahaSession(sessionName));
+  if (!session.connected) throw createHttpError('WhatsApp 当前未连接，请先在设置中完成绑定', 409);
+
+  const binding = await getActiveWhatsAppBindingBySession(sessionName);
+  if (!binding) throw createHttpError('该会话所属 WhatsApp 未绑定到 CRM 账号，请先在设置中点击“绑定到我的账号”', 403);
+  if (binding.user_id !== authenticated.userId) {
+    throw createHttpError(`该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，当前账号不能使用该号码发送消息`, 403);
+  }
+  if (phoneFromJid(session.accountId) === phone) throw createHttpError('不能向当前绑定的 WhatsApp 号码发起会话', 400);
+
+  const checkResponse = await fetchWaha(
+    `/api/contacts/check-exists?session=${encodeURIComponent(sessionName)}&phone=${encodeURIComponent(phone)}`,
+  );
+  const checked = await checkResponse.json().catch(() => ({}));
+  if (!checkResponse.ok) throw createHttpError(checked.message || 'WhatsApp 号码校验失败', 502, checked);
+  if (!checked.numberExists || !checked.chatId) {
+    throw createHttpError('该号码未注册 WhatsApp，请检查国家区号和号码是否正确', 404, checked);
+  }
+
+  const existing = await pool.query(
+    `SELECT id, status, last_message_at, last_message_preview
+       FROM conv.conversations
+      WHERE channel = 'whatsapp' AND external_chat_id = $1
+      LIMIT 1`,
+    [checked.chatId],
+  );
+  return {
+    phone: `+${phone}`,
+    chatId: checked.chatId,
+    numberExists: true,
+    existingConversationId: existing.rows[0]?.id || null,
+    existingConversationStatus: existing.rows[0]?.status || null,
+    existingLastMessageAt: existing.rows[0]?.last_message_at || null,
+    existingLastMessagePreview: existing.rows[0]?.last_message_preview || '',
+    reused: existing.rowCount > 0,
+    fromAccount: {
+      phone: session.phone || '',
+      displayName: session.displayName || binding.display_name || '',
+      accountId: session.accountId || binding.external_account_id || '',
+      session: sessionName,
+    },
+  };
+}
+
+app.get('/api/conversations/whatsapp/check', requireSameSite, async (req, res) => {
+  const phone = normalizeOutboundWhatsAppPhone(req.query?.phone);
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+
+  if (!/^\d{7,15}$/.test(phone)) {
+    return res.status(400).json({ error: '请输入包含国家区号的有效 WhatsApp 号码，例如 +1 202 555 0147' });
+  }
+
+  try {
+    res.json(await checkWhatsAppRecipientForUser(authenticated, phone));
+  } catch (error) {
+    res.status(error.status || 502).json({ error: error.message || 'WhatsApp 号码校验失败', detail: error.detail || null });
+  }
+});
+
 app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   const phone = normalizeOutboundWhatsAppPhone(req.body?.phone);
   const content = String(req.body?.content || '').trim();
@@ -2013,23 +2082,9 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   }
 
   try {
-    const sessionName = await resolveUserWahaSessionName(authenticated);
-    const session = normalizeWahaSession(await getWahaSession(sessionName));
-    if (!session.connected) return res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
-    const ownership = await requireBindingForSession(req, res, sessionName);
-    if (!ownership) return;
-    if (phoneFromJid(session.accountId) === phone) return res.status(400).json({ error: '不能向当前绑定的 WhatsApp 号码发起会话' });
-
-    const checkResponse = await fetchWaha(
-      `/api/contacts/check-exists?session=${encodeURIComponent(sessionName)}&phone=${encodeURIComponent(phone)}`,
-    );
-    const checked = await checkResponse.json().catch(() => ({}));
-    if (!checkResponse.ok) throw new Error(checked.message || 'WhatsApp 号码校验失败');
-    if (!checked.numberExists || !checked.chatId) {
-      return res.status(404).json({ error: '该号码未注册 WhatsApp，请检查国家区号和号码是否正确' });
-    }
-
-    const chatId = checked.chatId;
+    const recipient = await checkWhatsAppRecipientForUser(authenticated, phone);
+    const sessionName = recipient.fromAccount.session;
+    const chatId = recipient.chatId;
     const sentResponse = await fetchWaha('/api/sendText', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2100,7 +2155,7 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     return res.status(reused ? 200 : 201).json(result);
   } catch (error) {
     console.error('[whatsapp] start conversation failed:', error.message);
-    return res.status(502).json({ error: '无法发起 WhatsApp 会话', detail: error.message });
+    return res.status(error.status || 502).json({ error: error.status ? error.message : '无法发起 WhatsApp 会话', detail: error.status ? error.detail : error.message });
   } finally {
     await pool.query(
       `DELETE FROM conv.outbound_requests WHERE idempotency_key = $1 AND status = 'processing'`,
