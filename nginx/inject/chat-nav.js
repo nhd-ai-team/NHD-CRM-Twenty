@@ -587,7 +587,7 @@
     var active = isChannelsSettingsPage();
     item.setAttribute('data-active', active ? '1' : '0');
     item.style.background = active ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))' : 'transparent';
-    item.style.color = active ? 'var(--twenty-color-purple-50,#9333ea)' : '';
+    item.style.color = '';
   }
 
   function buildSettingsChannelsNavItem(refAnchor) {
@@ -1286,10 +1286,30 @@
     cardsHost.appendChild(card);
   }
 
+  function hideNativeSettingsSections() {
+    if (!isSettingsPage()) return;
+    var hiddenLabels = ['Workspace', '工作区', 'Other', '其他', 'Advanced', '高级'];
+    var drawerRight = settingsDrawerRight();
+    Array.from(document.querySelectorAll('div, section, nav')).forEach(function (el) {
+      var rect = el.getBoundingClientRect();
+      if (rect.left > drawerRight + 8 || rect.right > drawerRight + 40 || rect.width > 420) return;
+      var directText = '';
+      Array.from(el.childNodes).forEach(function (node) {
+        if (node.nodeType === Node.TEXT_NODE) directText += node.textContent || '';
+      });
+      var text = directText.trim() || (el.children.length <= 2 ? (el.textContent || '').trim() : '');
+      if (hiddenLabels.indexOf(text) !== -1) {
+        var section = el.closest('section') || el.parentElement;
+        if (section) section.style.display = 'none';
+      }
+    });
+  }
+
   function tryInsert() {
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeInjectedNavItems();
+      hideNativeSettingsSections();
       ensureSettingsChannelsNav();
       ensureSettingsAccountsChannelsCard();
       ensureSettingsAccountsRbacCard();
@@ -1937,6 +1957,11 @@
   }
 
   function ensureMemberResetPwdButton() {
+    if (!window.location.pathname.startsWith('/settings/workspace-members')) {
+      var stale = document.getElementById(MEMBER_RESETPWD_BTN_ID);
+      if (stale) stale.remove();
+      return;
+    }
     var delBtn = findNativeDeleteAccountButton();
     var existing = document.getElementById(MEMBER_RESETPWD_BTN_ID);
     if (!delBtn) { if (existing) existing.remove(); return; }
