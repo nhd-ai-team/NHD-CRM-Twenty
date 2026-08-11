@@ -3500,7 +3500,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
            ) THEN $9::text
            ELSE target."emailsPrimaryEmail"
          END,
-         "country" = COALESCE($10, "country"),
+         "guoJiaDiQuAddressCountry" = COALESCE($10, "guoJiaDiQuAddressCountry"),
          "keHuXuQiuChanPin" = COALESCE($11, "keHuXuQiuChanPin"),
          "keHuLaiYuan" = CASE WHEN $12::text IS NULL THEN "keHuLaiYuan" ELSE $12::text::${schema}."person_keHuLaiYuan_enum" END,
          "keHuLeiXing" = CASE WHEN $13::text IS NULL THEN "keHuLeiXing" ELSE $13::text::${schema}."person_keHuLeiXing_enum" END,
@@ -3539,7 +3539,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
        "phonesPrimaryPhoneCountryCode",
        "phonesPrimaryPhoneCallingCode",
        "emailsPrimaryEmail",
-       "country",
+       "guoJiaDiQuAddressCountry",
        "keHuXuQiuChanPin",
        "keHuLaiYuan",
        "keHuLeiXing",
@@ -3697,7 +3697,9 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
   const client = await pool.connect();
   try {
     const schema = await getWorkspaceSchema();
-    const opportunityKeHuLeiXingSelect = await opportunitySelectExpression('keHuLeiXing');
+    const opportunityKeHuLeiXingSelect = (await workspaceColumnExists('opportunity', 'gongSiLeiXing'))
+      ? '"gongSiLeiXing" AS "keHuLeiXing"'
+      : await opportunitySelectExpression('keHuLeiXing');
     await client.query('BEGIN');
 
     const opportunityResult = await client.query(
@@ -3709,12 +3711,12 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
          "syncGroupCode",
          "linkedPersonId",
          "linkedProjectId",
-         "phonePrimaryPhoneNumber",
-         "phonePrimaryPhoneCountryCode",
-         "phonePrimaryPhoneCallingCode",
-         "emailPrimaryEmail",
-         "youXiang",
-         "countryAddressCountry",
+         "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
+         "whatsappPrimaryPhoneCountryCode" AS "phonePrimaryPhoneCountryCode",
+         "whatsappPrimaryPhoneCallingCode" AS "phonePrimaryPhoneCallingCode",
+         "youXiangPrimaryEmail" AS "emailPrimaryEmail",
+         "youXiangPrimaryEmail" AS "youXiang",
+         "guoJiaDiQuAddressCountry" AS "countryAddressCountry",
          "keHuXuQiuChanPin",
          "keHuLaiYuan",
          ${opportunityKeHuLeiXingSelect},
@@ -3849,12 +3851,12 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
          "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1),
          "linkedPersonId" = COALESCE("linkedPersonId", $3),
          name = COALESCE($4, name),
-         "guoJia" = COALESCE($5, "guoJia"),
+         "guoJiaDiQuAddressCountry" = COALESCE($5, "guoJiaDiQuAddressCountry"),
          "xuQiuChanPin" = COALESCE($6, "xuQiuChanPin"),
          "jinEAmountMicros" = COALESCE($7, "jinEAmountMicros"),
          "jinECurrencyCode" = COALESCE($8, "jinECurrencyCode"),
-         "gaiShu" = COALESCE($9, "gaiShu"),
-         "muQianJinDu" = COALESCE($10, "muQianJinDu"),
+         "zuiXinGenJinMarkdown" = COALESCE($9, "zuiXinGenJinMarkdown"),
+         "zuiXinGenJinBlocknote" = COALESCE($10, "zuiXinGenJinBlocknote"),
          "renWuJinDu" = CASE WHEN $11::text IS NULL THEN "renWuJinDu" ELSE $11::text::${schema}."_xiangMu_renWuJinDu_enum" END,
          "updatedAt" = now()
        WHERE target.id = $12
@@ -3869,7 +3871,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
         opportunity.amountAmountMicros || null,
         nonBlankOrNull(opportunity.amountCurrencyCode),
         nonBlankOrNull(opportunity.message),
-        nonBlankOrNull(opportunity.xiangMuJinDu),
+        null,
         taskValue,
         existing.id,
       ],
@@ -3891,12 +3893,12 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
        "updatedByName",
        "updatedByContext",
        "guoNeiHaiWai",
-       "guoJia",
+       "guoJiaDiQuAddressCountry",
        "xuQiuChanPin",
        "jinEAmountMicros",
        "jinECurrencyCode",
-       "gaiShu",
-       "muQianJinDu",
+       "zuiXinGenJinMarkdown",
+       "zuiXinGenJinBlocknote",
        "renWuJinDu",
        "syncGroupCode",
        "sourceOpportunityId",
@@ -3935,7 +3937,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
       opportunity.amountAmountMicros || null,
       nonBlankOrNull(opportunity.amountCurrencyCode),
       nonBlankOrNull(opportunity.message),
-      nonBlankOrNull(opportunity.xiangMuJinDu),
+      null,
       taskValue,
       opportunity.syncGroupCode,
       opportunity.id,
@@ -3961,7 +3963,9 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
   const client = await pool.connect();
   try {
     const schema = await getWorkspaceSchema();
-    const opportunityKeHuLeiXingSelect = await opportunitySelectExpression('keHuLeiXing');
+    const opportunityKeHuLeiXingSelect = (await workspaceColumnExists('opportunity', 'gongSiLeiXing'))
+      ? '"gongSiLeiXing" AS "keHuLeiXing"'
+      : await opportunitySelectExpression('keHuLeiXing');
     await client.query('BEGIN');
 
     const opportunityResult = await client.query(
@@ -3973,20 +3977,19 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
          "syncGroupCode",
          "linkedPersonId",
          "linkedProjectId",
-         "phonePrimaryPhoneNumber",
-         "phonePrimaryPhoneCountryCode",
-         "phonePrimaryPhoneCallingCode",
-         "emailPrimaryEmail",
-         "youXiang",
-         "countryAddressCountry",
+         "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
+         "whatsappPrimaryPhoneCountryCode" AS "phonePrimaryPhoneCountryCode",
+         "whatsappPrimaryPhoneCallingCode" AS "phonePrimaryPhoneCallingCode",
+         "youXiangPrimaryEmail" AS "emailPrimaryEmail",
+         "youXiangPrimaryEmail" AS "youXiang",
+         "guoJiaDiQuAddressCountry" AS "countryAddressCountry",
          "keHuXuQiuChanPin",
          "keHuLaiYuan",
          ${opportunityKeHuLeiXingSelect},
          "zhiWei",
          "amountAmountMicros",
          "amountCurrencyCode",
-         "message",
-         "xiangMuJinDu",
+         "zuiXinGenJinMarkdown" AS "message",
          stage
        FROM ${schema}.opportunity
        WHERE id = $1 AND "deletedAt" IS NULL
