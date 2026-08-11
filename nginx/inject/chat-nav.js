@@ -1924,45 +1924,6 @@
     return m ? m[0] : '';
   }
 
-  function findDangerZoneSection() {
-    var labels = ['危险区', 'Danger zone', 'Danger Zone'];
-    var nodes = document.querySelectorAll('h1, h2, h3, div, span, p');
-    for (var i = 0; i < nodes.length; i++) {
-      var text = String(nodes[i].textContent || '').replace(/\s+/g, ' ').trim();
-      if (labels.indexOf(text) === -1) continue;
-      var node = nodes[i];
-      for (var up = 0; up < 8 && node; up++) {
-        var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
-        var sectionText = String(node.textContent || '');
-        if (
-          rect &&
-          rect.width > 260 &&
-          rect.height > 80 &&
-          sectionText.indexOf('删除') !== -1
-        ) {
-          return node;
-        }
-        node = node.parentElement;
-      }
-    }
-    return null;
-  }
-
-  function findDeleteAccountActionRow(section, delBtn) {
-    if (!section || !delBtn || !section.contains(delBtn)) return delBtn;
-    var node = delBtn;
-    while (node.parentElement && node.parentElement !== section) {
-      var parent = node.parentElement;
-      var text = String(parent.textContent || '');
-      if (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1) {
-        node = parent;
-        continue;
-      }
-      break;
-    }
-    return node;
-  }
-
   function findAdminButtonRow(delBtn) {
     if (!delBtn) return null;
     var node = delBtn.parentElement;
@@ -2010,24 +1971,16 @@
     var delBtn = findNativeDeleteAccountButton();
     var existing = document.getElementById(MEMBER_RESETPWD_BTN_ID);
     if (!delBtn) { if (existing) existing.remove(); return; }
-    var profilePage = window.location.pathname.startsWith('/settings/profile');
-    var dangerSection = profilePage ? findDangerZoneSection() : null;
-    var actionRow = dangerSection ? findDeleteAccountActionRow(dangerSection, delBtn) : delBtn;
-    var adminRow = !dangerSection ? findAdminButtonRow(delBtn) : null;
-    // 已注入且仍在正确容器内则不重复插
-    if (existing && (
-      (dangerSection && dangerSection.contains(existing)) ||
-      (adminRow && adminRow.contains(existing)) ||
-      (!dangerSection && !adminRow && existing.nextElementSibling === delBtn)
-    )) return;
-    if (existing) existing.remove();
-    var wrap = dangerSection ? document.createElement('div') : null;
-    if (wrap) {
-      wrap.id = MEMBER_RESETPWD_BTN_ID;
-      wrap.style.cssText = 'display:flex;align-items:center;margin:0 0 10px 0;min-height:32px;';
+    var adminRow = findAdminButtonRow(delBtn);
+    if (!adminRow) {
+      if (existing) existing.remove();
+      return;
     }
+    // 已注入且仍在正确容器内则不重复插
+    if (existing && adminRow.contains(existing)) return;
+    if (existing) existing.remove();
     var btn = document.createElement('button');
-    if (!wrap) btn.id = MEMBER_RESETPWD_BTN_ID;
+    btn.id = MEMBER_RESETPWD_BTN_ID;
     btn.type = 'button';
     btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78Zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><span>重置密码</span>';
     // 固定为 Twenty 默认小按钮尺寸；避免读取到删除按钮内部文本节点后变成很矮的小标签。
@@ -2045,16 +1998,8 @@
       e.preventDefault(); e.stopPropagation();
       openResetPwdByEmail(findMemberEmailOnPage());
     });
-    if (wrap) wrap.appendChild(btn);
-    if (adminRow) {
-      btn.style.marginRight = '8px';
-      adminRow.insertBefore(btn, delBtn);
-    } else if (dangerSection && actionRow && actionRow.parentNode === dangerSection) {
-      dangerSection.insertBefore(wrap, actionRow);
-    } else {
-      btn.style.marginRight = '8px';
-      delBtn.parentNode.insertBefore(btn, delBtn);
-    }
+    btn.style.marginRight = '8px';
+    adminRow.insertBefore(btn, delBtn);
   }
 
   // ── boot ──────────────────────────────────────────────────────────────────
