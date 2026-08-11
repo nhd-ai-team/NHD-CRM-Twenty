@@ -1988,15 +1988,22 @@ function createHttpError(message, status = 400, detail = null) {
 }
 
 async function checkWhatsAppRecipientForUser(authenticated, phone) {
-  const sessionName = await resolveUserWahaSessionName(authenticated);
-  const session = normalizeWahaSession(await getWahaSession(sessionName));
-  if (!session.connected) throw createHttpError('WhatsApp 当前未连接，请先在设置中完成绑定', 409);
-
-  const binding = await getActiveWhatsAppBindingBySession(sessionName);
-  if (!binding) throw createHttpError('该会话所属 WhatsApp 未绑定到 CRM 账号，请先在设置中点击“绑定到我的账号”', 403);
-  if (binding.user_id !== authenticated.userId) {
-    throw createHttpError(`该 WhatsApp 已绑定到 ${formatBindingOwner(binding)}，当前账号不能使用该号码发送消息`, 403);
+  const binding = await getCurrentUserWhatsAppBinding(authenticated.userId);
+  if (!binding?.provider_session) {
+    throw createHttpError('当前 CRM 账号还没有绑定 WhatsApp，请先到“设置 -> 账户 -> 渠道”完成绑定', 403);
   }
+
+  const sessionName = binding.provider_session;
+  let session;
+  try {
+    session = normalizeWahaSession(await getWahaSession(sessionName));
+  } catch (error) {
+    if (isWahaSessionNotFound(error)) {
+      throw createHttpError('当前绑定的 WhatsApp 会话不存在或已失效，请先到“设置 -> 账户 -> 渠道”重新绑定', 409);
+    }
+    throw error;
+  }
+  if (!session.connected) throw createHttpError('WhatsApp 当前未连接，请先在设置中完成绑定', 409);
   if (phoneFromJid(session.accountId) === phone) throw createHttpError('不能向当前绑定的 WhatsApp 号码发起会话', 400);
 
   const checkResponse = await fetchWaha(
