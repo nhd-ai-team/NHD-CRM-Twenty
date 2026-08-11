@@ -587,7 +587,9 @@
     var active = isChannelsSettingsPage();
     item.setAttribute('data-active', active ? '1' : '0');
     item.style.background = active ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))' : 'transparent';
-    item.style.color = '';
+    item.style.color = 'var(--twenty-font-color-secondary,#52525b)';
+    var svg = item.querySelector('svg');
+    if (svg) svg.style.color = 'var(--twenty-font-color-secondary,#52525b)';
   }
 
   function buildSettingsChannelsNavItem(refAnchor) {
@@ -604,7 +606,7 @@
       'border-radius:' + cs.borderRadius,
       'font-size:' + cs.fontSize,
       'font-weight:' + cs.fontWeight,
-      'color:' + cs.color,
+      'color:var(--twenty-font-color-secondary,#52525b)',
       'text-decoration:none',
       'width:100%',
       'box-sizing:border-box',
@@ -621,7 +623,7 @@
     svg.setAttribute('stroke-width', '2');
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
-    svg.style.cssText = 'flex-shrink:0;';
+    svg.style.cssText = 'flex-shrink:0;color:var(--twenty-font-color-secondary,#52525b);';
     svg.innerHTML = CHANNELS_SVG;
     var span = document.createElement('span');
     span.textContent = CHANNELS_SETTINGS_LABEL;
@@ -1937,7 +1939,9 @@
   }
 
   function ensureMemberResetPwdButton() {
-    if (!window.location.pathname.startsWith('/settings/workspace-members')) {
+    var canInjectHere = window.location.pathname.startsWith('/settings/profile') ||
+      window.location.pathname.startsWith('/settings/workspace-members');
+    if (!canInjectHere) {
       var stale = document.getElementById(MEMBER_RESETPWD_BTN_ID);
       if (stale) stale.remove();
       return;
@@ -1951,7 +1955,7 @@
     var btn = document.createElement('button');
     btn.id = MEMBER_RESETPWD_BTN_ID;
     btn.type = 'button';
-    btn.textContent = '重置密码';
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78Zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><span>重置密码</span>';
     // 高度/圆角/字号量取原生「删除账户」按钮以对齐，避免撑高整行导致相邻按钮边框溢出。
     var cs = null;
     try { cs = window.getComputedStyle(delBtn); } catch (e) {}
@@ -1960,6 +1964,7 @@
     var fsize = (cs && cs.fontSize) || '13px';
     btn.style.cssText = [
       'margin-right:8px', 'box-sizing:border-box', 'align-self:center',
+      'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:6px',
       'height:' + h + 'px', 'padding:0 12px', 'border-radius:' + radius,
       'border:1px solid #d97706', 'background:transparent', 'color:#d97706',
       'font-size:' + fsize, 'font-weight:600', 'line-height:1', 'font-family:inherit', 'cursor:pointer',
