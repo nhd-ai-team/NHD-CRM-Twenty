@@ -83,17 +83,25 @@ const upload = multer({
   }),
   limits: { fileSize: MAX_UPLOAD_BYTES },
 });
-app.use('/api/uploads/conversation-files', express.static(UPLOAD_DIR, {
+// 下载文件名：磁盘上存的是随机名（时间戳-uuid），会导致下载保存成一串乱码般的
+// 随机串。支持用 ?filename= 传原始名，优先用它做 Content-Disposition，让下载保留
+// 真实文件名（WhatsApp 入站等会带上）；没有则回退磁盘存储名。
+app.use('/api/uploads/conversation-files', (req, res, next) => {
+  let desired = '';
+  try {
+    desired = req.query && req.query.filename ? decodeURIComponent(String(req.query.filename)) : '';
+  } catch { desired = ''; }
+  const name = normalizeUploadFilename(desired || path.basename(req.path));
+  const enc = encodeURIComponent(name);
+  // 官网 widget 跑在客户官网域名下，对 crm.chinanhd.com 是跨域访问；HTML `download`
+  // 属性跨域会被浏览器忽略，显式带 Content-Disposition: attachment 后浏览器一律按下载
+  // 处理，避免 .pdf/.docx 跨域打开失败。
+  res.setHeader('Content-Disposition', `attachment; filename="${enc}"; filename*=UTF-8''${enc}`);
+  next();
+}, express.static(UPLOAD_DIR, {
   fallthrough: false,
-  setHeaders: (res, filePath) => {
+  setHeaders: (res) => {
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-    // 官网 widget 跑在客户官网域名下，对 crm.chinanhd.com 是跨域访问；HTML `download`
-    // 属性跨域会被浏览器直接忽略（Chrome/Firefox 规范行为），届时点击附件链接会变成
-    // 普通跨域导航，.docx/.pdf 这类浏览器无法内联渲染的格式就会打开失败/空白/报错。
-    // 显式带上 Content-Disposition: attachment 后，不管 `download` 属性生不生效，
-    // 浏览器都会按下载处理，从根上避免这个失败。
-    const name = encodeURIComponent(path.basename(filePath));
-    res.setHeader('Content-Disposition', `attachment; filename="${name}"; filename*=UTF-8''${name}`);
   },
 }));
 
@@ -994,7 +1002,10 @@ function messageContent(payload = {}) {
     if (mime.startsWith('image/')) return { content: payload.body || '[图片]', type: 'image', mediaUrl: media.url };
     if (mime.startsWith('video/')) return { content: payload.body || '[视频]', type: 'video', mediaUrl: media.url };
     if (mime.startsWith('audio/')) return { content: '[语音]', type: 'audio', mediaUrl: media.url };
-    return { content: media.filename || payload.body || '[文件]', type: 'file', mediaUrl: media.url };
+    // WAHA 给的 media.filename 常是 UTF-8 被当 latin1 传过来的乱码，走同款归一化修复
+    // （normalizeUploadFilename 会侦测 mojibake 并 latin1→utf8 还原）。
+    const fileTitle = media.filename ? normalizeUploadFilename(media.filename) : (payload.body || '[文件]');
+    return { content: fileTitle, type: 'file', mediaUrl: media.url };
   }
   if (payload.body) return { content: payload.body, type: 'text' };
   return { content: '[暂不支持的消息]', type: 'unknown' };
@@ -2352,7 +2363,10 @@ async function downloadWahaMediaToLocalFile(rawUrl, mimetype, filenameHint) {
   const ext = extensionFromName(filenameHint || pathAndQuery) || WAHA_MEDIA_MIME_EXT[String(mimetype || '').toLowerCase()] || '';
   const storedName = `${Date.now()}-${crypto.randomUUID()}${ext}`;
   await fs.promises.writeFile(path.join(UPLOAD_DIR, storedName), buffer);
-  return `/conv-api/uploads/conversation-files/${encodeURIComponent(storedName)}`;
+  // 带上原始文件名（归一化后），让下载时保留真实名而不是磁盘随机名。
+  const original = filenameHint ? normalizeUploadFilename(filenameHint) : '';
+  const suffix = original ? `?filename=${encodeURIComponent(original)}` : '';
+  return `/conv-api/uploads/conversation-files/${encodeURIComponent(storedName)}${suffix}`;
 }
 
 function normalizeWahaSession(session = {}) {
