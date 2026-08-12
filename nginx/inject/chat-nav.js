@@ -238,7 +238,16 @@
   }
 
   function getTwentyAccessToken() {
-    return AUTH_TOKEN || getTokenFromValue(getCookie('tokenPair')) || getTokenFromWebStorage(window.sessionStorage) || getTokenFromWebStorage(window.localStorage);
+    var candidates = [
+      AUTH_TOKEN,
+      getTokenFromValue(getCookie('tokenPair')),
+      getTokenFromWebStorage(window.sessionStorage),
+      getTokenFromWebStorage(window.localStorage),
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      if (isUsableAccessToken(candidates[i])) return candidates[i];
+    }
+    return '';
   }
 
   function getTwentyAuthHeaders(extra) {
@@ -262,6 +271,13 @@
     }
   }
 
+  function isUsableAccessToken(token) {
+    var payload = token ? decodeJwtPayload(token) : null;
+    if (!payload || !payload.workspaceId) return false;
+    var now = Math.floor(Date.now() / 1000);
+    return typeof payload.exp !== 'number' || payload.exp > now + 30;
+  }
+
   function getTokenFromValue(value) {
     try {
       var raw = decodeURIComponent(String(value || ''));
@@ -282,8 +298,7 @@
       for (var i = 0; i < storage.length; i++) {
         var key = storage.key(i);
         var token = getTokenFromValue(storage.getItem(key));
-        var payload = token ? decodeJwtPayload(token) : null;
-        if (payload && payload.workspaceId) return token;
+        if (isUsableAccessToken(token)) return token;
       }
     } catch (e) {}
     return '';
@@ -295,6 +310,12 @@
     try {
       iframe.contentWindow.postMessage({ type: 'twenty-auth-token', token: token }, window.location.origin);
     } catch (e) {}
+  }
+
+  function refreshIframeAuthToken() {
+    var iframe = document.getElementById(IFRAME_ID);
+    if (!iframe || iframe.style.display === 'none') return;
+    postAuthTokenToIframe(iframe);
   }
 
   function getViewSrc(view) {
@@ -497,9 +518,13 @@
   function buildNavItem(refAnchor, opts) {
     var cs = window.getComputedStyle(refAnchor);
 
-    var el = document.createElement('div');
+    var el = document.createElement(opts.href ? 'a' : 'div');
     el.id = opts.navId;
-    el.role = 'button';
+    if (opts.href) {
+      el.href = opts.href;
+    } else {
+      el.role = 'button';
+    }
     el.tabIndex = 0;
     el.setAttribute('data-active', '0');
     el.style.cssText = [
@@ -517,6 +542,7 @@
       'background:transparent',
       'transition:background .1s',
       'user-select:none',
+      'text-decoration:none',
     ].join(';');
 
     // Chat bubble SVG matching Twenty's icon size
@@ -572,6 +598,31 @@
   function removeChannelsSettingsPage() {
     var page = document.getElementById(CHANNELS_SETTINGS_PAGE_ID);
     if (page) page.remove();
+  }
+
+  function isCustomManagedSettingsPage() {
+    return window.location.pathname === '/settings/accounts' ||
+      window.location.pathname.indexOf('/settings/accounts/') === 0;
+  }
+
+  function removeInjectedSettingsNavItems() {
+    [
+      ACCOUNTS_SETTINGS_NAV_ID,
+      EMAILS_SETTINGS_NAV_ID,
+      CHANNELS_SETTINGS_NAV_ID,
+      CALENDARS_SETTINGS_NAV_ID,
+      WORKSPACE_SETTINGS_NAV_ID,
+      OBJECTS_SETTINGS_NAV_ID,
+      MEMBERS_SETTINGS_NAV_ID,
+      API_SETTINGS_NAV_ID,
+      RBAC_SETTINGS_NAV_ID,
+    ].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      var wrapper = el.closest('[data-settings-injected-nav-wrapper="1"], [data-settings-channels-nav-wrapper="1"]');
+      if (wrapper) wrapper.remove();
+      else el.remove();
+    });
   }
 
   function settingsDrawerRight() {
@@ -1383,11 +1434,17 @@
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeInjectedNavItems();
-      ensureSettingsChannelsNav();
-      ensureSettingsAccountsChannelsCard();
-      ensureSettingsAccountsRbacCard();
-      renderChannelsSettingsPage();
-      renderRbacSettingsPage();
+      if (isCustomManagedSettingsPage()) {
+        ensureSettingsChannelsNav();
+        ensureSettingsAccountsChannelsCard();
+        ensureSettingsAccountsRbacCard();
+        renderChannelsSettingsPage();
+        renderRbacSettingsPage();
+      } else {
+        removeInjectedSettingsNavItems();
+        removeChannelsSettingsPage();
+        removeRbacSettingsPage();
+      }
       return;
     }
     removeChannelsSettingsPage();
@@ -2053,7 +2110,7 @@
   }
 
   function ensureMemberResetPwdButton() {
-    var canInjectHere = window.location.pathname.startsWith('/settings');
+    var canInjectHere = window.location.pathname.indexOf('/settings/workspace-members') === 0;
     if (!canInjectHere) {
       var stale = document.getElementById(MEMBER_RESETPWD_BTN_ID);
       if (stale) stale.remove();
@@ -2097,7 +2154,13 @@
 
   installAuthCapture();
 
-  function tick() { tryInsert(); ensureConvertTopButton(); ensureFollowUpEntry(); ensureAttachEntry(); ensureMemberResetPwdButton(); }
+  function tick() {
+    tryInsert();
+    ensureConvertTopButton();
+    ensureFollowUpEntry();
+    ensureAttachEntry();
+    if (window.location.pathname.indexOf('/settings/workspace-members') === 0) ensureMemberResetPwdButton();
+  }
 
   var observer = new MutationObserver(tick);
   observer.observe(document.body, { childList: true, subtree: true });
@@ -2112,5 +2175,6 @@
   // or metadata refreshes. Keep a low-frequency fallback so our entry survives
   // those rerenders without requiring a full browser refresh.
   setInterval(tick, 2000);
+  setInterval(refreshIframeAuthToken, 30000);
 
 })();

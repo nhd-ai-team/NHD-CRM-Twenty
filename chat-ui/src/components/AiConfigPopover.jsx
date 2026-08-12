@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock3, X, Check } from 'lucide-react'
+import { Clock3, X } from 'lucide-react'
 import { CHANNELS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -48,26 +48,33 @@ function timeInputStyle(disabled) {
   }
 }
 
-function saveButtonStyle(enabled) {
-  return {
-    height: 30, padding: '0 12px', borderRadius: 6, border: 'none',
-    display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
-    background: enabled ? 'var(--accent)' : 'var(--bg-active)',
-    color: enabled ? '#fff' : 'var(--text-muted)',
-    fontSize: 12, fontWeight: 700, cursor: enabled ? 'pointer' : 'not-allowed',
-    transition: 'background .15s',
-  }
-}
-
 function activeLabel(setting) {
   if (!setting?.enabled) return '已关闭'
   if (setting.scheduleEnabled && !setting.activeNow) return '非生效时间'
   return '生效中'
 }
 
+function normalizeSetting(setting) {
+  return {
+    enabled: !!setting.enabled,
+    scheduleEnabled: !!setting.scheduleEnabled,
+    scheduleStart: setting.scheduleStart || '09:00',
+    scheduleEnd: setting.scheduleEnd || '18:00',
+    timezone: setting.timezone || 'Asia/Shanghai',
+  }
+}
+
+function settingsEqual(a, b) {
+  return a.enabled === b.enabled &&
+    a.scheduleEnabled === b.scheduleEnabled &&
+    a.scheduleStart === b.scheduleStart &&
+    a.scheduleEnd === b.scheduleEnd &&
+    a.timezone === b.timezone
+}
+
 export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
-  // 时间为本地草稿：编辑时间只改这里，点「保存」才提交。key=渠道，值={ start, end }
-  const [timeDrafts, setTimeDrafts] = useState({})
+  const [drafts, setDrafts] = useState({})
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose() }
@@ -75,10 +82,23 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useEffect(() => {
+    const next = {}
+    for (const ch of AI_CHANNELS) {
+      next[ch.id] = normalizeSetting(settings.find(s => s.channel === ch.id) || {
+        channel: ch.id,
+        enabled: ch.id === 'website',
+        scheduleEnabled: false,
+        scheduleStart: '09:00',
+        scheduleEnd: '18:00',
+        timezone: 'Asia/Shanghai',
+      })
+    }
+    setDrafts(next)
+  }, [settings])
+
   const patchDraft = (channel, patch) =>
-    setTimeDrafts(prev => ({ ...prev, [channel]: { ...prev[channel], ...patch } }))
-  const clearDraft = (channel) =>
-    setTimeDrafts(prev => { const next = { ...prev }; delete next[channel]; return next })
+    setDrafts(prev => ({ ...prev, [channel]: { ...prev[channel], ...patch } }))
 
   const settingOf = (id) => settings.find(s => s.channel === id) || {
     channel: id,
@@ -87,6 +107,27 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
     scheduleStart: '09:00',
     scheduleEnd: '18:00',
     timezone: 'Asia/Shanghai',
+  }
+
+  const draftOf = (id) => drafts[id] || normalizeSetting(settingOf(id))
+
+  const dirtyChannels = AI_CHANNELS.filter(ch => !settingsEqual(draftOf(ch.id), normalizeSetting(settingOf(ch.id))))
+  const dirty = dirtyChannels.length > 0
+  const disabled = loading || saving
+
+  const handleSaveAll = async () => {
+    if (!dirty || disabled) return
+    setSaving(true)
+    try {
+      for (const ch of dirtyChannels) {
+        const draft = draftOf(ch.id)
+        const ok = await onSave(ch.id, draft)
+        if (ok === false) return
+      }
+      onClose()
+    } finally {
+      setSaving(false)
+    }
   }
 
   return createPortal(
@@ -136,19 +177,11 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
           时间按中国时间 Asia/Shanghai 生效。开始时间晚于结束时间时，系统会按跨天时间段处理，例如 18:00 到 09:00。
         </div>
 
-        <div style={{ overflow: 'auto', padding: '10px 18px 18px' }}>
+        <div style={{ overflow: 'auto', padding: '10px 18px 18px', flex: 1 }}>
           {AI_CHANNELS.map(ch => {
             const setting = settingOf(ch.id)
-            const scheduleEnabled = !!setting.scheduleEnabled
-            const disabled = loading
-            const savedStart = setting.scheduleStart || '09:00'
-            const savedEnd = setting.scheduleEnd || '18:00'
-            // 优先显示本地草稿，未编辑则显示已保存值
-            const draft = timeDrafts[ch.id] || {}
-            const start = draft.start ?? savedStart
-            const end = draft.end ?? savedEnd
-            const dirty = start !== savedStart || end !== savedEnd
-            const canSave = scheduleEnabled && dirty && !disabled
+            const draft = draftOf(ch.id)
+            const rowDirty = !settingsEqual(draft, normalizeSetting(setting))
             return (
               <div key={ch.id} style={{
                 display: 'grid',
@@ -157,82 +190,102 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
                 borderBottom: '1px solid var(--border-soft)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                  <ChannelIcon channel={ch.id} size={18} />
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{ch.label}</div>
-                    <div style={{
-                      marginTop: 3, fontSize: 11, color: setting.enabled && (!scheduleEnabled || setting.activeNow) ? 'var(--accent)' : 'var(--text-muted)',
-                    }}>
-                      {activeLabel(setting)}
+                    <ChannelIcon channel={ch.id} size={18} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{ch.label}</div>
+                      <div style={{
+                        marginTop: 3, fontSize: 11, color: draft.enabled && (!draft.scheduleEnabled || setting.activeNow) ? 'var(--accent)' : 'var(--text-muted)',
+                      }}>
+                        {rowDirty ? '待保存' : activeLabel(setting)}
+                      </div>
+                    </div>
+                    <div style={{ marginLeft: 'auto' }}>
+                      <Toggle
+                        on={!!draft.enabled}
+                        disabled={disabled}
+                        onClick={() => patchDraft(ch.id, { enabled: !draft.enabled })}
+                      />
                     </div>
                   </div>
-                  <div style={{ marginLeft: 'auto' }}>
-                    <Toggle
-                      on={!!setting.enabled}
+
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
                       disabled={disabled}
-                      onClick={() => onSave(ch.id, { enabled: !setting.enabled })}
+                      onClick={() => patchDraft(ch.id, { scheduleEnabled: false })}
+                      style={modeButtonStyle(!draft.scheduleEnabled)}
+                    >
+                      全天
+                    </button>
+                    <button
+                      disabled={disabled}
+                      onClick={() => patchDraft(ch.id, { scheduleEnabled: true })}
+                      style={modeButtonStyle(draft.scheduleEnabled)}
+                    >
+                      按时段
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
+                    <input
+                      type="time"
+                      value={draft.scheduleStart}
+                      disabled={disabled || !draft.scheduleEnabled}
+                      onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
+                      style={timeInputStyle(disabled || !draft.scheduleEnabled)}
+                    />
+                    <span>至</span>
+                    <input
+                      type="time"
+                      value={draft.scheduleEnd}
+                      disabled={disabled || !draft.scheduleEnabled}
+                      onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
+                      style={timeInputStyle(disabled || !draft.scheduleEnabled)}
                     />
                   </div>
                 </div>
-
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    disabled={disabled}
-                    onClick={() => { clearDraft(ch.id); onSave(ch.id, { scheduleEnabled: false, scheduleStart: savedStart, scheduleEnd: savedEnd }) }}
-                    style={modeButtonStyle(!scheduleEnabled)}
-                  >
-                    全天
-                  </button>
-                  <button
-                    disabled={disabled}
-                    onClick={() => onSave(ch.id, { scheduleEnabled: true, scheduleStart: savedStart, scheduleEnd: savedEnd })}
-                    style={modeButtonStyle(scheduleEnabled)}
-                  >
-                    按时段
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
-                  <input
-                    type="time"
-                    value={start}
-                    disabled={disabled || !scheduleEnabled}
-                    onChange={e => patchDraft(ch.id, { start: e.target.value })}
-                    style={timeInputStyle(disabled || !scheduleEnabled)}
-                  />
-                  <span>至</span>
-                  <input
-                    type="time"
-                    value={end}
-                    disabled={disabled || !scheduleEnabled}
-                    onChange={e => patchDraft(ch.id, { end: e.target.value })}
-                    style={timeInputStyle(disabled || !scheduleEnabled)}
-                  />
-                  <button
-                    disabled={!canSave}
-                    onClick={async () => {
-                      const ok = await onSave(ch.id, { scheduleEnabled: true, scheduleStart: start, scheduleEnd: end })
-                      if (ok !== false) clearDraft(ch.id)
-                    }}
-                    style={saveButtonStyle(canSave)}
-                    title={scheduleEnabled ? (dirty ? '保存时间段' : '暂无改动') : '请先切换到「按时段」'}
-                  >
-                    <Check size={14} /> 保存
-                  </button>
-                </div>
-              </div>
-            )
+              )
           })}
         </div>
 
-        {error && (
-          <div style={{
-            padding: '10px 18px', fontSize: 12, color: '#e1262b',
+          {error && (
+            <div style={{
+              padding: '10px 18px', fontSize: 12, color: '#e1262b',
             borderTop: '1px solid var(--border-soft)', background: 'rgba(225,38,43,.06)',
           }}>
             {error}
-          </div>
-        )}
+            </div>
+          )}
+
+          <footer style={{
+            height: 64, padding: '0 40px', borderTop: '1px solid var(--border-soft)',
+            display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 14,
+            flexShrink: 0, background: 'var(--bg-primary)',
+          }}>
+            <button
+              disabled={saving}
+              onClick={onClose}
+              style={{
+                height: 34, minWidth: 76, borderRadius: 8, border: '2px solid #ff2b2b',
+                background: 'transparent', color: '#ff2b2b', fontSize: 13, fontWeight: 700,
+                cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? .6 : 1,
+              }}
+            >
+              取消
+            </button>
+            <button
+              disabled={!dirty || disabled}
+              onClick={handleSaveAll}
+              style={{
+                height: 34, minWidth: 86, borderRadius: 8, border: '2px solid #ff2b2b',
+                background: dirty && !disabled ? '#ff2b2b' : 'transparent',
+                color: dirty && !disabled ? '#fff' : '#ff8a8a',
+                fontSize: 13, fontWeight: 700,
+                cursor: dirty && !disabled ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {saving ? '保存中' : '保存'}
+            </button>
+          </footer>
       </section>
     </>,
     document.body,

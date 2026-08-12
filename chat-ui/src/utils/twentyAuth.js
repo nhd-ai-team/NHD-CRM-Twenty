@@ -30,6 +30,13 @@ function getTwentyAccessTokenFromCookie(sourceWindow = window) {
   return parseTokenFromValue(readCookie(sourceWindow, 'tokenPair'))
 }
 
+function isUsableAccessToken(token) {
+  const payload = decodeJwtPayload(token)
+  if (!payload?.workspaceId) return false
+  const now = Math.floor(Date.now() / 1000)
+  return typeof payload.exp !== 'number' || payload.exp > now + 30
+}
+
 function getTwentyAccessTokenFromStorage(sourceWindow = window) {
   try {
     const stores = [sourceWindow.sessionStorage, sourceWindow.localStorage]
@@ -37,7 +44,7 @@ function getTwentyAccessTokenFromStorage(sourceWindow = window) {
       for (let i = 0; i < store.length; i += 1) {
         const key = store.key(i)
         const token = parseTokenFromValue(store.getItem(key))
-        if (decodeJwtPayload(token)?.workspaceId) return token
+        if (isUsableAccessToken(token)) return token
       }
     }
   } catch {
@@ -69,11 +76,17 @@ function decodeJwtPayload(token) {
 export function getTwentyAccessToken() {
   const hash = window.location.hash?.replace(/^#/, '') || ''
   const params = new URLSearchParams(hash)
-  return params.get('twentyAccessToken') ||
-    sessionStorage.getItem('twentyAccessToken') ||
-    getTwentyAccessTokenFromCookie() ||
-    getTwentyAccessTokenFromStorage() ||
-    getTwentyAccessTokenFromParent()
+  const candidates = [
+    params.get('twentyAccessToken'),
+    sessionStorage.getItem('twentyAccessToken'),
+    getTwentyAccessTokenFromCookie(),
+    getTwentyAccessTokenFromStorage(),
+    getTwentyAccessTokenFromParent(),
+  ]
+  for (const token of candidates) {
+    if (isUsableAccessToken(token)) return token
+  }
+  return ''
 }
 
 export function withTwentyAuthHeaders(headers = {}) {
@@ -94,7 +107,7 @@ export function installTwentyAuthMessageListener() {
     if (event.origin !== window.location.origin) return
     if (event.data?.type !== 'twenty-auth-token') return
     const token = parseTokenFromValue(event.data.token)
-    if (!decodeJwtPayload(token)?.workspaceId) return
+    if (!isUsableAccessToken(token)) return
     sessionStorage.setItem('twentyAccessToken', token)
   }
   window.addEventListener('message', onMessage)

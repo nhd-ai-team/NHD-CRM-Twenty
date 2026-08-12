@@ -397,9 +397,16 @@ async function resolveAuditActor(req) {
 
 async function resolveConversationViewer(req) {
   const token = getExplicitTwentyTokenFromRequest(req);
-  const tokenPayload = decodeJwtPayload(token);
+  if (!token) return null;
+  let tokenPayload;
+  try {
+    tokenPayload = await verifyTwentyAccessToken(token);
+  } catch (error) {
+    console.warn('[auth] viewer token verification failed:', error.message);
+    return null;
+  }
   const userId = tokenPayload?.sub || '';
-  if (!token || !userId || !tokenPayload?.workspaceId) return null;
+  if (!userId || !tokenPayload?.workspaceId) return null;
   const schema = await getWorkspaceSchema();
   const result = await pool.query(
     `SELECT id, "userId", "userEmail", "nameFirstName", "nameLastName"
@@ -443,8 +450,9 @@ async function resolveConversationViewer(req) {
 }
 
 function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1) {
-  // v2.1：未登录、拥有 boss 角色（仅查看总经理）、或拥有 admin 角色（scope=all）均可见全部会话
-  if (!viewer || viewer.role === 'admin' || viewer.role === 'boss') return { sql: 'TRUE', params: [] };
+  // v2.1：拥有 boss 角色（仅查看总经理）或 admin 角色（scope=all）可见全部会话；未登录不可见。
+  if (!viewer) return { sql: 'FALSE', params: [] };
+  if (viewer.role === 'admin' || viewer.role === 'boss') return { sql: 'TRUE', params: [] };
   const memberParam = `$${startIndex}`;
   const userParam = `$${startIndex + 1}`;
   return {
@@ -489,7 +497,10 @@ async function requireConversationAccess(req, res, options = {}) {
     res.status(404).json({ error: 'conversation not found' });
     return null;
   }
-  if (!viewer) return { viewer, conversation };
+  if (!viewer) {
+    res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+    return null;
+  }
   if (viewer.role === 'admin' || viewer.role === 'boss') {
     // admin 看全部且可写；boss（总经理）看全部但仅查看
     if (options.write && viewer.role !== 'admin') {
@@ -1564,6 +1575,7 @@ app.get('/api/conversations', async (req, res) => {
     // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
     const scheduleActive = aiScheduleActiveExpression('cs');
     const viewer = await resolveConversationViewer(req);
+    if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
     const visibility = conversationVisibilityWhere(viewer);
     // admin 的 visibility.sql 是常量 TRUE（不含 $1/$2），但下面 canReply/
     // isAssignedToMe/hasTakenOverBefore 仍引用 $1，必须单独传 1 个参数；
@@ -1572,22 +1584,20 @@ app.get('/api/conversations', async (req, res) => {
     // 之前统一按 visibility.params 传，对 admin 传成了 []，导致 "no parameter $1"；
     // 若直接照抄 sales 传两个参数，admin 的 SQL 只声明了 $1，又会变成
     // "bind message supplies 2 parameters, but prepared statement requires 1"。
-    const listParams = !viewer || viewer.isBoss
+    const listParams = viewer.isBoss
       ? []
       : viewer.role === 'admin'
         ? [viewer.workspaceMemberId]
         : [viewer.workspaceMemberId, viewer.userId];
-    const viewerRole = viewer?.isBoss ? "'boss'" : viewer ? "'sales'" : "'anonymous'";
+    const viewerRole = viewer.isBoss ? "'boss'" : `'${viewer.role || 'sales'}'`;
     // AI 模式（ai_enabled 为真）下：仅接管自己的会话可回复；AI 关闭时：非关闭会话销售均可直接回复，无需先接管。
     const aiEnabledExpr = `(COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'))`;
-    const canReplyExpression = viewer?.isBoss
+    const canReplyExpression = viewer.isBoss
       ? 'false'
-      : viewer
-        ? `((${aiEnabledExpr} AND c.status = 'takeover' AND c.agent_id = $1) OR (NOT ${aiEnabledExpr} AND c.status <> 'closed'))`
-        : `((${aiEnabledExpr} AND c.status = 'takeover') OR (NOT ${aiEnabledExpr} AND c.status <> 'closed'))`;
-    const canTakeoverExpression = viewer?.isBoss ? 'false' : viewer ? `(c.status = 'open')` : `(c.status = 'open')`;
-    const assignedToMeExpression = viewer && !viewer.isBoss ? `(c.agent_id = $1)` : 'false';
-    const takenBeforeExpression = viewer && !viewer.isBoss ? `EXISTS (
+      : `((${aiEnabledExpr} AND c.status = 'takeover' AND c.agent_id = $1) OR (NOT ${aiEnabledExpr} AND c.status <> 'closed'))`;
+    const canTakeoverExpression = viewer.isBoss ? 'false' : `(c.status = 'open')`;
+    const assignedToMeExpression = !viewer.isBoss ? `(c.agent_id = $1)` : 'false';
+    const takenBeforeExpression = !viewer.isBoss ? `EXISTS (
       SELECT 1 FROM conv.conversation_participants cp
       WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
     )` : 'false';
@@ -2298,7 +2308,9 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
 });
 
 // 渠道级 AI 自动回复开关（工作台齿轮的「生效范围」）
-app.get('/api/ai-settings', async (_req, res) => {
+app.get('/api/ai-settings', async (req, res) => {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
   try {
     const scheduleActive = aiScheduleActiveExpression('cs');
     const result = await pool.query(
@@ -2333,6 +2345,8 @@ app.get('/api/ai-settings', async (_req, res) => {
 });
 
 app.patch('/api/ai-settings', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
   const channel = String(req.body?.channel || '').trim();
   const enabled = req.body?.enabled;
   const scheduleEnabled = req.body?.scheduleEnabled === undefined ? false : req.body.scheduleEnabled;
@@ -2370,6 +2384,10 @@ app.patch('/api/ai-settings', requireSameSite, async (req, res) => {
     // 清掉该渠道的会话级覆盖，令现有会话立即继承渠道设置
     await client.query(`UPDATE conv.conversations SET ai_enabled = NULL WHERE channel = $1`, [channel]);
     await client.query('COMMIT');
+    recordAuditEvent('ai-settings.updated', {
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      payload: { channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone },
+    });
     const row = saved.rows[0];
     res.json({
       channel: row.channel,

@@ -113,6 +113,7 @@ export default function App() {
   const handleAiSave = useCallback(async (channel, patch) => {
     const ok = await aiSettings.save(channel, patch)
     if (ok) reloadConversations().catch(() => {})
+    return ok
   }, [aiSettings, reloadConversations])
 
   const [layout, setLayout] = useState(() => getLayout(window.innerWidth))

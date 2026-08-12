@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import styled from '@emotion/styled';
+import { useRecoilValue } from 'recoil';
 
+import { tokenPairState } from '@/auth/states/tokenPairState';
 import { SettingsPageContainer } from '@/settings/components/SettingsPageContainer';
 import { IconSettings } from '@/ui/display/icon';
 import { SubMenuTopBarContainer } from '@/ui/layout/page/SubMenuTopBarContainer';
@@ -19,6 +21,8 @@ type WhatsAppStatus = {
     ownerName?: string;
   };
 };
+
+const CONV_API_PREFIX = '/conv-api';
 
 const Card = styled.div`
   border: 1px solid ${({ theme }) => theme.border.color.light};
@@ -169,6 +173,7 @@ const QrImage = styled.img`
 `;
 
 export const SettingsAccountsChannels = () => {
+  const tokenPair = useRecoilValue(tokenPairState);
   const [status, setStatus] = useState<WhatsAppStatus | null>(null);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [pairingCode, setPairingCode] = useState('');
@@ -176,6 +181,14 @@ export const SettingsAccountsChannels = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const accessToken = tokenPair?.accessToken?.token;
+
+  const authHeaders = accessToken
+    ? {
+        Authorization: `Bearer ${accessToken}`,
+        'X-Twenty-Access-Token': accessToken,
+      }
+    : {};
 
   const statusLabel = useMemo(() => {
     if (!status?.status) return '未连接';
@@ -191,6 +204,7 @@ export const SettingsAccountsChannels = () => {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
         ...(options?.headers || {}),
       },
     });
@@ -205,7 +219,7 @@ export const SettingsAccountsChannels = () => {
     setIsLoading(true);
     setError('');
     try {
-      const data = await requestJson('/api/channel-accounts/whatsapp/status');
+      const data = await requestJson(`${CONV_API_PREFIX}/channel-accounts/whatsapp/status`);
       setStatus(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'WhatsApp 状态读取失败');
@@ -219,10 +233,21 @@ export const SettingsAccountsChannels = () => {
     setError('');
     setMessage('');
     try {
-      await requestJson('/api/channel-accounts/whatsapp/restart', {
+      await requestJson(`${CONV_API_PREFIX}/channel-accounts/whatsapp/restart`, {
         method: 'POST',
       });
-      setQrUrl(`/api/channel-accounts/whatsapp/qr?t=${Date.now()}`);
+      const response = await fetch(`${CONV_API_PREFIX}/channel-accounts/whatsapp/qr?t=${Date.now()}`, {
+        headers: authHeaders,
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || data.detail || '二维码刷新失败');
+      }
+      const objectUrl = URL.createObjectURL(await response.blob());
+      setQrUrl((current) => {
+        if (current.startsWith('blob:')) URL.revokeObjectURL(current);
+        return objectUrl;
+      });
       await refreshStatus();
     } catch (err) {
       setError(err instanceof Error ? err.message : '二维码刷新失败');
@@ -238,7 +263,7 @@ export const SettingsAccountsChannels = () => {
     setPairingCode('');
     try {
       const data = await requestJson(
-        '/api/channel-accounts/whatsapp/request-code',
+        `${CONV_API_PREFIX}/channel-accounts/whatsapp/request-code`,
         {
           method: 'POST',
           body: JSON.stringify({ phoneNumber }),
@@ -259,7 +284,7 @@ export const SettingsAccountsChannels = () => {
     setError('');
     setMessage('');
     try {
-      const data = await requestJson('/api/channel-accounts/whatsapp/bind', {
+      const data = await requestJson(`${CONV_API_PREFIX}/channel-accounts/whatsapp/bind`, {
         method: 'POST',
       });
       setStatus(data);
@@ -277,7 +302,7 @@ export const SettingsAccountsChannels = () => {
     setError('');
     setMessage('');
     try {
-      await requestJson('/api/channel-accounts/whatsapp', { method: 'DELETE' });
+      await requestJson(`${CONV_API_PREFIX}/channel-accounts/whatsapp`, { method: 'DELETE' });
       setQrUrl('');
       setPairingCode('');
       setMessage('已解绑。');
@@ -292,6 +317,12 @@ export const SettingsAccountsChannels = () => {
   useEffect(() => {
     refreshStatus();
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (qrUrl.startsWith('blob:')) URL.revokeObjectURL(qrUrl);
+    };
+  }, [qrUrl]);
 
   return (
     <SubMenuTopBarContainer Icon={IconSettings} title="Settings">

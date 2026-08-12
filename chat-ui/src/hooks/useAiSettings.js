@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 // 渠道级 AI 自动回复配置（工作台齿轮的「生效范围」）
 export function useAiSettings() {
@@ -8,7 +9,10 @@ export function useAiSettings() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch(`/conv-api/ai-settings?_=${Date.now()}`, { cache: 'no-store' })
+      const response = await fetch(`/conv-api/ai-settings?_=${Date.now()}`, {
+        cache: 'no-store',
+        headers: withTwentyAuthHeaders(),
+      })
       if (!response.ok) throw new Error('无法加载 AI 配置')
       setSettings(await response.json())
       setError('')
@@ -30,7 +34,7 @@ export function useAiSettings() {
     try {
       const response = await fetch('/conv-api/ai-settings', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           channel,
           enabled: !!next.enabled,

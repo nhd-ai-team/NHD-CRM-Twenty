@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 // 邮箱视图数据：复用 conv-api，仅取 channel='email' 的会话（只读，无发送/接管）。
 export function useEmails() {
@@ -7,11 +8,17 @@ export function useEmails() {
   const [search, setSearch] = useState('')
 
   const load = useCallback(async () => {
-    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, { cache: 'no-store' })
+    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, {
+      cache: 'no-store',
+      headers: withTwentyAuthHeaders(),
+    })
     if (!response.ok) throw new Error('无法加载邮件')
     const list = (await response.json()).filter(c => c.channel === 'email')
     const withMessages = await Promise.all(list.map(async conv => {
-      const messages = await fetch(`/conv-api/conversations/${conv.id}/messages?_=${Date.now()}`, { cache: 'no-store' })
+      const messages = await fetch(`/conv-api/conversations/${conv.id}/messages?_=${Date.now()}`, {
+        cache: 'no-store',
+        headers: withTwentyAuthHeaders(),
+      })
         .then(r => r.ok ? r.json() : [])
       return { ...conv, messages: messages.map(m => ({ ...m, sentAt: new Date(m.sentAt) })) }
     }))
