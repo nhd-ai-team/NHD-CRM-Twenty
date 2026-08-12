@@ -116,6 +116,107 @@ function normalizePhoneInput(value) {
   return null;
 }
 
+function mapLegacyOpportunityInput(data = {}) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return { data, changed: false };
+  const next = { ...data };
+  let changed = false;
+
+  const assignIfMissing = (targetKey, value) => {
+    if (value === undefined || value === null || value === '') return;
+    if (next[targetKey] === undefined || next[targetKey] === null || next[targetKey] === '') {
+      next[targetKey] = value;
+      changed = true;
+    }
+  };
+
+  if (next.phone !== undefined && next.whatsapp === undefined) {
+    const normalizedPhone = typeof next.phone === 'object'
+      ? {
+          primaryPhoneNumber: next.phone.primaryPhoneNumber,
+          primaryPhoneCallingCode: next.phone.primaryPhoneCallingCode,
+          primaryPhoneCountryCode: next.phone.primaryPhoneCountryCode,
+        }
+      : normalizePhoneInput(next.phone);
+    if (normalizedPhone) assignIfMissing('whatsapp', normalizedPhone);
+    delete next.phone;
+    changed = true;
+  }
+
+  if (next.email !== undefined && next.youXiang === undefined) {
+    const email = firstValidEmail(next.email);
+    if (email) assignIfMissing('youXiang', { primaryEmail: email });
+    delete next.email;
+    changed = true;
+  }
+
+  if (typeof next.youXiang === 'string') {
+    const email = firstValidEmail(next.youXiang);
+    next.youXiang = email ? { primaryEmail: email } : undefined;
+    changed = true;
+  }
+
+  if (next.country !== undefined && next.guoJiaDiQu === undefined) {
+    const country = typeof next.country === 'object'
+      ? {
+          addressCountry: next.country.addressCountry,
+          addressState: next.country.addressState,
+          addressCity: next.country.addressCity,
+          addressStreet1: next.country.addressStreet1,
+          addressStreet2: next.country.addressStreet2,
+          addressPostcode: next.country.addressPostcode,
+        }
+      : { addressCountry: String(next.country || '').trim() };
+    if (country.addressCountry) assignIfMissing('guoJiaDiQu', country);
+    delete next.country;
+    changed = true;
+  }
+
+  if (next.keHuLeiXing !== undefined && next.gongSiLeiXing === undefined) {
+    const customerType = normalizeCustomerType(next.keHuLeiXing);
+    if (customerType) assignIfMissing('gongSiLeiXing', customerType);
+    delete next.keHuLeiXing;
+    changed = true;
+  }
+
+  if (next.message !== undefined && next.zuiXinGenJin === undefined) {
+    const note = String(next.message || '').trim();
+    if (note) assignIfMissing('zuiXinGenJin', { markdown: note });
+    delete next.message;
+    changed = true;
+  }
+
+  if (next.note !== undefined && next.zuiXinGenJin === undefined) {
+    const note = String(next.note || '').trim();
+    if (note) assignIfMissing('zuiXinGenJin', { markdown: note });
+    delete next.note;
+    changed = true;
+  }
+
+  return { data: next, changed };
+}
+
+function mapLegacyCreateOpportunityGraphQLPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { payload, changed: false };
+  const query = String(payload.query || '');
+  const variables = payload.variables;
+  const data = variables && typeof variables === 'object' ? variables.data : null;
+  if (!/\bcreateOpportunity\b/.test(query) || !data || typeof data !== 'object' || Array.isArray(data)) {
+    return { payload, changed: false };
+  }
+  const mapped = mapLegacyOpportunityInput(data);
+  if (!mapped.changed) return { payload, changed: false };
+  return {
+    payload: {
+      ...payload,
+      variables: {
+        ...variables,
+        data: mapped.data,
+      },
+    },
+    changed: true,
+  };
+}
+
 function normalizeWebsiteFormPayload(body = {}) {
   const form = body.form && typeof body.form === 'object' ? body.form : body;
   const name = firstString(form.name, form.fullName, form.full_name, form.contactName, form.contact_name, form.customerName, form.customer_name);
@@ -183,6 +284,8 @@ function isWebsiteFormPayload(body = {}) {
 module.exports = {
   firstValidEmail,
   isWebsiteFormPayload,
+  mapLegacyCreateOpportunityGraphQLPayload,
+  mapLegacyOpportunityInput,
   normalizeEmailList,
   normalizeCustomerType,
   normalizeOpportunityStage,

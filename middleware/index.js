@@ -18,6 +18,7 @@ const {
 const { conversationVisibilityWhere } = require('./lib/conversation-visibility');
 const {
   isWebsiteFormPayload,
+  mapLegacyCreateOpportunityGraphQLPayload,
   normalizeWebsiteFormPayload,
 } = require('./lib/website-form');
 
@@ -781,6 +782,29 @@ async function twentyGraphQL(query, variables = {}, token = TWENTY_API_KEY) {
   if (json.errors) throw new Error(json.errors[0].message);
   return json.data;
 }
+
+app.post('/api/graphql-compat', async (req, res) => {
+  const mapped = mapLegacyCreateOpportunityGraphQLPayload(req.body);
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    const authorization = String(req.headers.authorization || '');
+    if (authorization) headers.Authorization = authorization;
+    else if (TWENTY_API_KEY) headers.Authorization = `Bearer ${TWENTY_API_KEY}`;
+    const response = await fetch(`${TWENTY_API_URL}/graphql`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(mapped.payload),
+    });
+    const text = await response.text();
+    res.status(response.status);
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'application/json; charset=utf-8');
+    if (mapped.changed) res.setHeader('X-CRM-GraphQL-Compat', 'legacy-opportunity-input');
+    res.send(text);
+  } catch (error) {
+    console.error('[graphql-compat] forward failed:', error.message);
+    res.status(502).json({ error: 'graphql compat forward failed', detail: error.message });
+  }
+});
 
 async function searchCompaniesByName(q, limit = 8, token = TWENTY_API_KEY) {
   const term = String(q || '').trim();
