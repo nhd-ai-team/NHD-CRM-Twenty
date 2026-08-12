@@ -44,7 +44,8 @@ cd ..
 cd "/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm"
 /usr/local/bin/docker exec twenty-chat-ui-1 sh -lc "rm -rf /usr/share/nginx/html/chat/*"
 /usr/local/bin/docker cp chat-ui/dist/. twenty-chat-ui-1:/usr/share/nginx/html/chat/
-/usr/local/bin/docker cp middleware/lib twenty-middleware-1:/app/lib
+/usr/local/bin/docker exec twenty-middleware-1 sh -lc "rm -rf /app/lib && mkdir -p /app/lib"
+/usr/local/bin/docker cp middleware/lib/. twenty-middleware-1:/app/lib/
 /usr/local/bin/docker cp middleware/index.js twenty-middleware-1:/app/index.js
 /usr/local/bin/docker restart twenty-middleware-1
 /usr/local/bin/docker exec twenty-twenty-portal-1 nginx -s reload
@@ -58,6 +59,7 @@ cd "/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm"
 curl -sS http://127.0.0.1:3000/chat/ | grep -o 'assets/index-[^"]*\.js' | head -1
 curl -sS http://127.0.0.1:3000/settings/profile | grep -o 'chat-nav.js?v=[^"]*' | head -1
 curl -sS http://127.0.0.1:3000/conv-api/health
+/usr/local/bin/docker exec twenty-middleware-1 node -e "const m=require('./lib/ai-settings'); if (typeof m.buildAiSettingResponses !== 'function') process.exit(1); console.log('ai-settings-lib-ok')"
 curl -sS -o /tmp/ai-settings-batch-noauth.txt -w "%{http_code}" \
   -X PATCH http://127.0.0.1:3000/conv-api/ai-settings/batch \
   -H "Content-Type: application/json" \
@@ -70,6 +72,7 @@ cat /tmp/ai-settings-batch-noauth.txt
 - `/chat/` 返回最新构建后的 `assets/index-*.js`。
 - `/settings/profile` 返回当前发布的 `chat-nav.js?v=...`。
 - `/conv-api/health` 返回 `{"status":"ok",...}`。
+- 容器内 `buildAiSettingResponses` 校验输出 `ai-settings-lib-ok`，确认 middleware 运行态加载的是最新 `lib/ai-settings.js`。
 - 未登录调用 `/conv-api/ai-settings/batch` 返回 `401`。
 
 ## 四、当前工程边界
