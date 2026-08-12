@@ -16,6 +16,10 @@ const {
   serializeAiSettingRow,
 } = require('./lib/ai-settings');
 const { conversationVisibilityWhere } = require('./lib/conversation-visibility');
+const {
+  isWebsiteFormPayload,
+  normalizeWebsiteFormPayload,
+} = require('./lib/website-form');
 
 const app = express();
 // verify 回调保留原始 body，供 Instagram/Meta 的 X-Hub-Signature-256 校验使用。
@@ -1355,11 +1359,54 @@ async function persistWebsiteMessage(body) {
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
+async function createWebsiteFormOpportunity(body, req) {
+  const { opportunity, raw } = normalizeWebsiteFormPayload(body);
+  const result = await twentyGraphQL(
+    'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
+    { data: opportunity },
+    TWENTY_API_KEY,
+  );
+  const created = result?.createOpportunity;
+  if (!created?.id) throw new Error('createOpportunity returned empty id');
+  await recordAuditEvent('website_form.created_opportunity', {
+    channel: 'website_form',
+    requestSummary: req ? {
+      origin: req.headers.origin || '',
+      referer: req.headers.referer || '',
+      userAgent: req.headers['user-agent'] || '',
+    } : undefined,
+    payload: {
+      opportunityId: created.id,
+      fields: Object.keys(raw).filter((key) => raw[key]),
+      source: opportunity.keHuLaiYuan,
+      stage: opportunity.stage,
+    },
+  });
+  return { opportunityId: created.id, name: created.name, source: opportunity.keHuLaiYuan, stage: opportunity.stage };
+}
+
+app.post('/api/website/form', async (req, res) => {
+  if (WEBSITE_INGEST_SECRET && req.headers['x-webhook-secret'] !== WEBSITE_INGEST_SECRET) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  try {
+    const created = await createWebsiteFormOpportunity(req.body, req);
+    res.status(201).json({ received: true, ...created });
+  } catch (error) {
+    console.error('[website-form] create opportunity failed:', error.message);
+    res.status(502).json({ error: 'website form ingest failed', detail: error.message });
+  }
+});
+
 app.post('/api/website/webhook', async (req, res) => {
   if (WEBSITE_INGEST_SECRET && req.headers['x-webhook-secret'] !== WEBSITE_INGEST_SECRET) {
     return res.status(401).json({ error: 'unauthorized' });
   }
   try {
+    if (isWebsiteFormPayload(req.body)) {
+      const created = await createWebsiteFormOpportunity(req.body, req);
+      return res.status(201).json({ received: true, ...created });
+    }
     await persistWebsiteMessage(req.body);
     res.status(200).json({ received: true });
   } catch (error) {
