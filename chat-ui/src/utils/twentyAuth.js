@@ -89,6 +89,22 @@ export function getTwentyAccessToken() {
   return ''
 }
 
+export function waitForTwentyAccessToken(timeoutMs = 5000) {
+  const token = getTwentyAccessToken()
+  if (token) return Promise.resolve(token)
+
+  return new Promise((resolve) => {
+    const startedAt = Date.now()
+    const timer = window.setInterval(() => {
+      const nextToken = getTwentyAccessToken()
+      if (nextToken || Date.now() - startedAt >= timeoutMs) {
+        window.clearInterval(timer)
+        resolve(nextToken || '')
+      }
+    }, 250)
+  })
+}
+
 export function withTwentyAuthHeaders(headers = {}) {
   const token = getTwentyAccessToken()
   const baseHeaders = { ...headers, 'X-Chat-Ui-Version': '20260730-auth-2' }

@@ -19,6 +19,7 @@
   var MEMBERS_SETTINGS_NAV_ID = '__settings_members_nav_item__';
   var API_SETTINGS_NAV_ID = '__settings_api_nav_item__';
   var CHANNELS_SETTINGS_PAGE_ID = '__settings_channels_page__';
+  var EMAILS_SETTINGS_CARD_ID = '__settings_emails_card__';
   var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
   var WEBSITE_RELATED_MODAL_ID = '__website_related_modal__';
   // 权限管理（仅管理员可见）
@@ -1400,37 +1401,69 @@
     button.style.cursor = 'pointer';
   }
 
-  function ensureSettingsAccountsChannelsCard() {
-    if (window.location.pathname !== '/settings/accounts') {
-      var stale = document.getElementById(CHANNELS_SETTINGS_CARD_ID);
-      if (stale) stale.remove();
-      return;
-    }
-    if (document.getElementById(CHANNELS_SETTINGS_CARD_ID)) return;
-    var sections = Array.from(document.querySelectorAll('h2, [role="heading"]'));
-    var settingsHeading = sections.find(function (el) {
-      var text = (el.textContent || '').trim();
-      return text === 'Settings' || text === '设置';
+  function removeSettingsAccountsCards() {
+    [EMAILS_SETTINGS_CARD_ID, CHANNELS_SETTINGS_CARD_ID].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.remove();
     });
-    if (!settingsHeading) return;
-    var section = settingsHeading.closest('section') || settingsHeading.parentElement;
-    if (!section) return;
-    var cardsHost = Array.from(section.querySelectorAll('div')).find(function (el) {
+  }
+
+  function findSettingsAccountsCardsHost() {
+    var headings = Array.from(document.querySelectorAll('h1, h2, [role="heading"]'));
+    var settingsHeading = headings.find(function (el) {
+      var text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      return ['Settings', '设置', 'Accounts', 'Account', '账户', '账号'].indexOf(text) !== -1;
+    });
+    var section = settingsHeading && (settingsHeading.closest('section') || settingsHeading.parentElement);
+    if (!section) section = document.querySelector('main') || document.querySelector('[role="main"]');
+    if (!section) return null;
+    return Array.from(section.querySelectorAll('div')).find(function (el) {
       var rect = el.getBoundingClientRect();
-      return rect.width > 300 && rect.height > 40 && window.getComputedStyle(el).display === 'flex';
-    });
-    if (!cardsHost) return;
+      var style = window.getComputedStyle(el);
+      return rect.width > 300 && rect.height > 40 && style.display === 'flex';
+    }) || section;
+  }
+
+  function buildSettingsAccountsCard(opts) {
     var card = document.createElement('div');
-    card.id = CHANNELS_SETTINGS_CARD_ID;
+    card.id = opts.id;
     card.style.cssText = 'border:1px solid #e4e4e7;border-radius:8px;padding:16px;min-width:220px;flex:1;cursor:pointer;background:#fff;color:#71717a';
     card.innerHTML =
       '<div style="display:flex;align-items:center;gap:12px;color:#3f3f46;font-weight:600">' +
-        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + CHANNELS_SVG + '</svg>' +
-        '<span style="flex:1">渠道</span><span style="color:#a1a1aa">›</span>' +
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + opts.svg + '</svg>' +
+        '<span style="flex:1">' + opts.label + '</span><span style="color:#a1a1aa">›</span>' +
       '</div>' +
-      '<div style="padding-left:32px;margin-top:8px;font-size:13px">绑定 WhatsApp 等外部沟通渠道。</div>';
-    card.addEventListener('click', function () { window.location.href = CHANNELS_SETTINGS_PATH; });
-    cardsHost.appendChild(card);
+      '<div style="padding-left:32px;margin-top:8px;font-size:13px">' + opts.description + '</div>';
+    card.addEventListener('click', function () { window.location.href = opts.href; });
+    return card;
+  }
+
+  function ensureSettingsAccountsCards() {
+    if (window.location.pathname !== '/settings/accounts') {
+      removeSettingsAccountsCards();
+      return;
+    }
+    if (document.getElementById(EMAILS_SETTINGS_CARD_ID) && document.getElementById(CHANNELS_SETTINGS_CARD_ID)) return;
+    var cardsHost = findSettingsAccountsCardsHost();
+    if (!cardsHost) return;
+    if (!document.getElementById(EMAILS_SETTINGS_CARD_ID)) {
+      cardsHost.appendChild(buildSettingsAccountsCard({
+        id: EMAILS_SETTINGS_CARD_ID,
+        href: '/settings/accounts/emails',
+        label: '电子邮件',
+        description: '绑定和管理 CRM 邮箱账号。',
+        svg: EMAILS_SVG,
+      }));
+    }
+    if (!document.getElementById(CHANNELS_SETTINGS_CARD_ID)) {
+      cardsHost.appendChild(buildSettingsAccountsCard({
+        id: CHANNELS_SETTINGS_CARD_ID,
+        href: CHANNELS_SETTINGS_PATH,
+        label: CHANNELS_SETTINGS_LABEL,
+        description: '绑定 WhatsApp 等外部沟通渠道。',
+        svg: CHANNELS_SVG,
+      }));
+    }
   }
 
   function tryInsert() {
@@ -1439,7 +1472,7 @@
       removeInjectedNavItems();
       if (isCustomManagedSettingsPage()) {
         ensureSettingsChannelsNav();
-        ensureSettingsAccountsChannelsCard();
+        ensureSettingsAccountsCards();
         ensureSettingsAccountsRbacCard();
         renderChannelsSettingsPage();
         renderRbacSettingsPage();
