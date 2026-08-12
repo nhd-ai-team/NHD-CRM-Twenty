@@ -10,8 +10,8 @@ const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
 const {
   AI_SETTING_CHANNELS,
-  DEFAULT_AI_TIMEZONE,
   aiScheduleActiveExpression,
+  buildAiSettingResponses,
   normalizeAiSettingPayload,
   serializeAiSettingRow,
 } = require('./lib/ai-settings');
@@ -2299,20 +2299,8 @@ app.get('/api/ai-settings', async (req, res) => {
          FROM conv.channel_settings cs
         ORDER BY channel`,
     );
-    const map = new Map(result.rows.map(r => [r.channel, r]));
     // 保证四个渠道恒定返回，缺失的按官网默认开、其余关兜底
-    res.json(AI_SETTING_CHANNELS.map(channel => {
-      const row = map.get(channel);
-      return {
-        channel,
-        enabled: row ? row.enabled : channel === 'website',
-        scheduleEnabled: row ? row.scheduleEnabled : false,
-        scheduleStart: row ? formatTimeValue(row.scheduleStart) : null,
-        scheduleEnd: row ? formatTimeValue(row.scheduleEnd) : null,
-        timezone: row?.timezone || DEFAULT_AI_TIMEZONE,
-        activeNow: row ? row.activeNow : true,
-      };
-    }));
+    res.json(buildAiSettingResponses(result.rows));
   } catch (error) {
     console.error('[ai-settings] load failed:', error.message);
     res.status(502).json({ error: 'ai settings load failed', detail: error.message });

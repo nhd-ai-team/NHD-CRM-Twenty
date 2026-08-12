@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  buildAiSettingResponses,
   formatTimeValue,
   normalizeAiSettingPayload,
   normalizeTimeValue,
@@ -67,6 +68,55 @@ test('serializeAiSettingRow normalizes response shape', () => {
     timezone: 'Asia/Shanghai',
     activeNow: true,
   });
+});
+
+test('buildAiSettingResponses keeps stable channel defaults without endpoint-only formatting', () => {
+  assert.deepEqual(buildAiSettingResponses([{
+    channel: 'whatsapp',
+    enabled: true,
+    scheduleEnabled: true,
+    scheduleStart: '18:00:00',
+    scheduleEnd: '09:00:00',
+    timezone: 'Asia/Shanghai',
+    activeNow: false,
+  }]), [
+    {
+      channel: 'website',
+      enabled: true,
+      scheduleEnabled: false,
+      scheduleStart: null,
+      scheduleEnd: null,
+      timezone: 'Asia/Shanghai',
+      activeNow: true,
+    },
+    {
+      channel: 'whatsapp',
+      enabled: true,
+      scheduleEnabled: true,
+      scheduleStart: '18:00',
+      scheduleEnd: '09:00',
+      timezone: 'Asia/Shanghai',
+      activeNow: false,
+    },
+    {
+      channel: 'instagram',
+      enabled: false,
+      scheduleEnabled: false,
+      scheduleStart: null,
+      scheduleEnd: null,
+      timezone: 'Asia/Shanghai',
+      activeNow: true,
+    },
+    {
+      channel: 'facebook',
+      enabled: false,
+      scheduleEnabled: false,
+      scheduleStart: null,
+      scheduleEnd: null,
+      timezone: 'Asia/Shanghai',
+      activeNow: true,
+    },
+  ]);
 });
 
 test('conversationVisibilityWhere keeps admin/boss global and sales scoped', () => {

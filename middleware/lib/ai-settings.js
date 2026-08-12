@@ -61,10 +61,30 @@ function serializeAiSettingRow(row = {}) {
   };
 }
 
+function buildAiSettingResponses(rows = []) {
+  const map = new Map(rows.map(row => [row.channel, row]));
+  return AI_SETTING_CHANNELS.map(channel => {
+    const row = map.get(channel);
+    if (!row) {
+      return {
+        channel,
+        enabled: channel === 'website',
+        scheduleEnabled: false,
+        scheduleStart: null,
+        scheduleEnd: null,
+        timezone: DEFAULT_AI_TIMEZONE,
+        activeNow: true,
+      };
+    }
+    return serializeAiSettingRow(row);
+  });
+}
+
 module.exports = {
   AI_SETTING_CHANNELS,
   DEFAULT_AI_TIMEZONE,
   aiScheduleActiveExpression,
+  buildAiSettingResponses,
   formatTimeValue,
   normalizeAiSettingPayload,
   normalizeTimeValue,
