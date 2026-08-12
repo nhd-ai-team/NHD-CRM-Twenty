@@ -291,6 +291,7 @@ td.muted{color:var(--text-tertiary);}
     <a class="toc-item" href="#s11">12 · 关键风险</a>
     <a class="toc-item" href="#s10">13 · 当前不做</a>
     <a class="toc-item" href="#s12">14 · WhatsApp 多账号绑定与权限隔离</a>
+    <a class="toc-item" href="#s13">15 · 近期交付进展（2026-08-10~12）</a>
   </nav>
 
   <main class="main">
@@ -321,7 +322,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td style="width:180px;"><strong>产品阶段</strong></td><td>多渠道 AI 智能 CRM v1.0（MVP）</td></tr>
             <tr><td><strong>版本定位</strong></td><td>多渠道对话中间层 + AI 智能客服能力层 + Twenty CRM 销售闭环</td></tr>
             <tr><td><strong>创建日期</strong></td><td>2026-07-15</td></tr>
-            <tr><td><strong>最后更新</strong></td><td>2026-08-07：新增第 14 节「WhatsApp 多账号绑定与权限隔离（v2.1）」——多账号绑定 + RBAC 可见性需求（鉴权中间件、自助绑定、角色可见范围、conv.channel_accounts 表、conv.audit_events 审计表）。此前 2026-08-06：按当前代码更新官网表单重复提交方案 C、线索转客户 / 转项目、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
+            <tr><td><strong>最后更新</strong></td><td>2026-08-12：新增第 15 节「近期交付进展（2026-08-10~12）」——线索维度附件汇总、管理员重置密码、三身份 RBAC、邮件 SMTP、四对象负责人体系统一、跟进时间戳 UTC+8、三表同步触发器修复、Twenty 升级 v2.17.0；相关代码已在分支 <code>feat/crm-attachments-rbac-email-20260811</code>。此前 2026-08-07：新增第 14 节「WhatsApp 多账号绑定与权限隔离（v2.1）」——多账号绑定 + RBAC 可见性需求。2026-08-06：按当前代码更新官网表单重复提交方案 C、线索转客户 / 转项目、AI 自动回复开关、附件发送、渠道绑定与三表同步规则。</td></tr>
             <tr><td><strong>v1.0 目标日期</strong></td><td>2026-07-31</td></tr>
             <tr><td><strong>评审对象</strong></td><td>业务方、销售团队、运营团队、CRM / 中间层研发、官网供应商</td></tr>
             <tr><td><strong>文档目标</strong></td><td>明确「多渠道统一会话 + AI 可配置介入 + 人工接管 + CRM 沉淀」的产品边界与交付计划</td></tr>
@@ -1237,6 +1238,59 @@ td.muted{color:var(--text-tertiary);}
           <li>管理员（admin）可查看全部销售会话；越权访问他人会话被服务端拒绝并返回 403。</li>
           <li>修改角色范围后立即生效，无需重新登录。</li>
           <li>销售离职后，其客户会话可转交给新负责人，WA 号主绑定关系可保留或转移。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- S13 -->
+    <section class="section" id="s13">
+      <div class="section-header">
+        <span class="section-num">15</span>
+        <h2 class="section-title">近期交付进展<span class="section-title-en">Recent Delivery · 2026-08-10 ~ 08-12</span></h2>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">本期已交付（分支 feat/crm-attachments-rbac-email-20260811）</div>
+        <p>以下能力已实现并实测通过，代码集中在上述分支（origin=nhd-ai-team/NHD-CRM-Twenty），尚未合入 main。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>能力</th><th>说明</th><th>实现要点</th></tr></thead>
+            <tbody>
+              <tr><td><strong>线索维度附件汇总</strong></td><td>线索详情页悬浮「📎 附件」入口 + 弹窗，跨渠道汇总该线索收发的全部附件。</td><td>middleware <code>GET /api/attachments?subjectType=opportunity</code>，按会话可见性过滤；前端 <code>nginx/inject/chat-nav.js</code>，同「跟进记录」模式。</td></tr>
+              <tr><td><strong>管理员重置密码</strong></td><td>后台管理员可为成员重置登录密码；权限页成员行与 Twenty 原生成员页均有入口。<strong>仅后台管理员可重置</strong>。</td><td><code>POST /api/rbac/members/:id/reset-password</code>（requireAdmin + requireSameSite），bcryptjs 生成 $2a$ 哈希写 <code>core.user.passwordHash</code>（saltRounds=10、≥8 位，被 Twenty 原生校验通过）。</td></tr>
+              <tr><td><strong>忘记密码（自助）</strong></td><td>确认 Twenty 原生已内置整套自助找回流程且可用（先前「未做」为误判）。</td><td>generatePasswordResetToken / emailPasswordResetLink / updatePasswordViaResetToken + 前端 useHandleResetPassword；依赖 SMTP。</td></tr>
+              <tr><td><strong>邮件 SMTP</strong></td><td>系统邮件（重置链接等）可正常发出，已实测发信成功。</td><td>docker-compose 给 server + worker 注入 EMAIL_*（QQ 邮箱 smtp.qq.com:465）；凭据存于 .env，不入库；SERVER_URL=https://crm.chinanhd.com。</td></tr>
+              <tr><td><strong>三身份权限精简</strong></td><td>角色收敛为三身份：后台管理员 / 销售主管 / 销售；删除无人使用的 boss。</td><td>清理 <code>conv.role_scopes</code> 的 boss；前端「管理员」文案改「后台管理员」。</td></tr>
+              <tr><td><strong>四对象负责人体系统一</strong></td><td>person / company / opportunity / xiangMu 全部具备 <code>owner</code>(负责人) + <code>xieBanRen</code>(协办人) 关系字段，为行级权限提供归属地基。</td><td>RELATION MANY_TO_ONE → workspaceMember（onDelete SET_NULL）；因 workspaceMember 是系统对象，UI 建不了，只能走 metadata API（幂等脚本 <code>scripts/ensure-*-field*.mjs</code>）。</td></tr>
+              <tr><td><strong>跟进时间戳修正</strong></td><td>跟进记录时间由 UTC+0 修正为 UTC+8（东八区）。</td><td>middleware 容器跑 UTC，formatFollowUpTime 改用 Intl.DateTimeFormat 按 Asia/Shanghai 格式化。</td></tr>
+              <tr><td><strong>WhatsApp 入站附件文件名修复</strong></td><td>解决入站附件文件名乱码，以及下载文件名为磁盘随机名的问题。</td><td>WAHA filename UTF-8 被当 latin1 → normalizeUploadFilename latin1→utf8 还原；下载路由支持 <code>?filename=</code> 指定原始名并据此设 Content-Disposition。仅影响修复后新入站文件。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub">
+        <div class="sub-title">生产故障修复</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>问题</th><th>根因</th><th>修复</th></tr></thead>
+            <tbody>
+              <tr><td><strong>三表同步全量写入失败</strong></td><td>opportunity 字段改名（phone→whatsapp、country→keHuGuoJia、message→beiZhu）后，<code>sync_from_*</code> 触发器仍引用旧列名，导致任意商机写入（设 owner / 改关键联系人 / 编辑）整单失败。</td><td>迁移 <code>migrations/20260810_fix_sync_column_rename_and_name_overwrite.sql</code> 重建三函数，对齐列名，并将关键联系人姓名改为「只填空不覆盖」（COALESCE）。</td></tr>
+              <tr><td><strong>官网表单建单全 500</strong></td><td>触发器 <code>dedup_website_form_opportunity</code> 引用已改名/删除的列（youXiang→youXiangPrimaryEmail 等），每次 INSERT 报 <code>record "new" has no field</code> → 静默 500。</td><td>迁移 <code>migrations/20260811_fix_dedup_website_form_youxiang_column.sql</code>。<strong>教训：改 opportunity 字段名需扫全部触发器函数（不止 sync_from_*）。</strong>约 08-11 12:22~18:48 期间表单在 CRM 侧丢失，需从 Gravity Forms Entries 补录。</td></tr>
+              <tr><td><strong>Twenty 升级 v2.17.0 幽灵字段</strong></td><td>升级过程中断建字段操作，残留幽灵字段 <code>xieTongFuZeRen</code>（元数据在、物理列缺），堵死 opportunity / person / 项目 建单。</td><td>xiangMu 走 deleteOneField API 删；opportunity/person 被判「标准字段」拒删 → DB 清理（迁移 <code>20260812_drop_xietong_fuzeren_ghost_field.sql</code>）。升级后全面体检通过。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="callout note"><strong>标准流程（复发坑）：</strong>改任何「参与三表同步的字段名」后必须：① 同步更新 <code>conv.sync_from_*</code> 三函数中旧列名（读 <code>($1)."col"</code> 与写 <code>"col"=</code> 两处）；② <code>grep pg_proc.prosrc</code> 扫全部触发器函数（含 dedup_website_form_opportunity）；③ 核对元数据 fieldMetadata ↔ 物理列一致（半残字段会让整表 INSERT 全崩）；④ 清元数据缓存 + 重启 server/worker；⑤ 实测一次商机写入确认。</div>
+
+      <div class="sub">
+        <div class="sub-title">进行中 / 待续</div>
+        <ul>
+          <li><strong>原生 RBAC 行级权限落地：</strong>销售主管「团队可见」目前仍按「仅自己」生效，需基于 Twenty 原生 rowLevelPermissionPredicate + 已统一的负责人字段实现（方案见 <code>docs/16 三角色权限方案初版</code>）。</li>
+          <li><strong>Bug（不影响功能）：</strong>设置 → 数据模型字段列表看不到新建的 owner / 协办人字段（记录网格可见），疑前端 Apollo / IndexedDB 持久化缓存，待排查。</li>
+          <li><strong>合入 main：</strong>本期能力仍在特性分支，待验收后合并。</li>
         </ul>
       </div>
     </section>

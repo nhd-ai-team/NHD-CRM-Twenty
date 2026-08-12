@@ -8,9 +8,16 @@
   var MAIL_NAV_ID = '__mail_nav_item__';
   var SETTINGS_LABEL = '设置';
   var SETTINGS_NAV_ID = '__settings_nav_item__';
+  var ACCOUNTS_SETTINGS_NAV_ID = '__settings_accounts_nav_item__';
+  var EMAILS_SETTINGS_NAV_ID = '__settings_emails_nav_item__';
   var CHANNELS_SETTINGS_LABEL = '渠道';
   var CHANNELS_SETTINGS_PATH = '/settings/accounts/channels';
   var CHANNELS_SETTINGS_NAV_ID = '__settings_channels_nav_item__';
+  var CALENDARS_SETTINGS_NAV_ID = '__settings_calendars_nav_item__';
+  var WORKSPACE_SETTINGS_NAV_ID = '__settings_workspace_nav_item__';
+  var OBJECTS_SETTINGS_NAV_ID = '__settings_objects_nav_item__';
+  var MEMBERS_SETTINGS_NAV_ID = '__settings_members_nav_item__';
+  var API_SETTINGS_NAV_ID = '__settings_api_nav_item__';
   var CHANNELS_SETTINGS_PAGE_ID = '__settings_channels_page__';
   var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
   var WEBSITE_RELATED_MODAL_ID = '__website_related_modal__';
@@ -29,7 +36,13 @@
   var CHAT_SVG = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
   var MAIL_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
   var SETTINGS_SVG = '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
+  var ACCOUNTS_SVG = '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>';
+  var EMAILS_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
   var CHANNELS_SVG = '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>';
+  var CALENDAR_SVG = '<path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/>';
+  var DATABASE_SVG = '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>';
+  var USERS_SVG = '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>';
+  var KEY_SVG = '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>';
 
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
@@ -592,17 +605,17 @@
     if (svg) svg.style.color = 'var(--twenty-font-color-secondary,#52525b)';
   }
 
-  function buildSettingsChannelsNavItem(refAnchor) {
+  function buildSettingsNavAnchor(refAnchor, opts) {
     var cs = window.getComputedStyle(refAnchor);
     var el = document.createElement('a');
-    el.id = CHANNELS_SETTINGS_NAV_ID;
-    el.href = CHANNELS_SETTINGS_PATH;
+    el.id = opts.id;
+    el.href = opts.href || '#';
     el.style.cssText = [
       'display:flex',
       'align-items:center',
       'gap:8px',
       'padding:' + cs.padding,
-      'padding-left:32px',
+      'padding-left:' + (opts.level === 2 ? '32px' : '0'),
       'border-radius:' + cs.borderRadius,
       'font-size:' + cs.fontSize,
       'font-weight:' + cs.fontWeight,
@@ -624,9 +637,9 @@
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
     svg.style.cssText = 'flex-shrink:0;color:var(--twenty-font-color-secondary,#52525b);';
-    svg.innerHTML = CHANNELS_SVG;
+    svg.innerHTML = opts.svg;
     var span = document.createElement('span');
-    span.textContent = CHANNELS_SETTINGS_LABEL;
+    span.textContent = opts.label;
     span.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
     el.appendChild(svg);
     el.appendChild(span);
@@ -639,29 +652,107 @@
     return el;
   }
 
-  function ensureSettingsChannelsNav() {
-    if (!isSettingsPage()) return;
-    var emailAnchor = document.querySelector('a[href="/settings/accounts/emails"]');
-    var accountAnchor = document.querySelector('a[href="/settings/accounts"]');
-    var refAnchor = emailAnchor || accountAnchor;
-    if (!refAnchor || !refAnchor.parentElement) return;
-    var listEl = refAnchor.parentElement.parentElement || refAnchor.parentElement;
-    var existing = document.getElementById(CHANNELS_SETTINGS_NAV_ID);
-    var wrapper = existing ? existing.closest('[data-settings-channels-nav-wrapper="1"]') : null;
+  function buildSettingsChannelsNavItem(refAnchor) {
+    return buildSettingsNavAnchor(refAnchor, {
+      id: CHANNELS_SETTINGS_NAV_ID,
+      href: CHANNELS_SETTINGS_PATH,
+      label: CHANNELS_SETTINGS_LABEL,
+      svg: CHANNELS_SVG,
+      level: 2,
+    });
+  }
+
+  function ensureInjectedSettingsItem(refAnchor, afterEl, opts) {
+    var nativeAnchor = opts.href ? document.querySelector('a[href="' + opts.href + '"]') : null;
+    var existing = nativeAnchor || document.getElementById(opts.id);
+    var wrapper = existing ? existing.closest('[data-settings-injected-nav-wrapper="1"], [data-settings-channels-nav-wrapper="1"]') : null;
     if (!existing) {
-      existing = buildSettingsChannelsNavItem(refAnchor);
+      existing = buildSettingsNavAnchor(refAnchor, opts);
       wrapper = document.createElement(refAnchor.parentElement.tagName);
       wrapper.className = refAnchor.parentElement.className;
-      wrapper.setAttribute('data-settings-channels-nav-wrapper', '1');
+      wrapper.setAttribute('data-settings-injected-nav-wrapper', '1');
       wrapper.appendChild(existing);
     }
-    if (emailAnchor && emailAnchor.parentElement && wrapper.previousElementSibling !== emailAnchor.parentElement) {
-      emailAnchor.parentElement.insertAdjacentElement('afterend', wrapper);
-    } else if (!emailAnchor && accountAnchor && accountAnchor.parentElement && wrapper.previousElementSibling !== accountAnchor.parentElement) {
-      accountAnchor.parentElement.insertAdjacentElement('afterend', wrapper);
-    } else if (wrapper.parentElement !== listEl) {
-      listEl.appendChild(wrapper);
+    var anchorParent = nativeAnchor ? nativeAnchor.parentElement : wrapper;
+    var target = wrapper || anchorParent;
+    if (!target) return existing;
+    var span = existing.querySelector('span');
+    if (span && opts.label) span.textContent = opts.label;
+    if (afterEl && target.previousElementSibling !== afterEl) afterEl.insertAdjacentElement('afterend', target);
+    return existing;
+  }
+
+  function ensureSettingsChannelsNav() {
+    if (!isSettingsPage()) return;
+    function settingsAnchorByText(text) {
+      return Array.from(document.querySelectorAll('a[href^="/settings/"]')).find(function (anchor) {
+        return (anchor.textContent || '').replace(/\s+/g, ' ').trim() === text;
+      }) || null;
     }
+    var profileAnchor = document.querySelector('a[href="/settings/profile"]');
+    var appearanceAnchor = document.querySelector('a[href="/settings/profile/appearance"]') || settingsAnchorByText('体验') || settingsAnchorByText('Appearance');
+    var anySettingsAnchor = document.querySelector('a[href^="/settings/"]');
+    var refAnchor = appearanceAnchor || profileAnchor || anySettingsAnchor;
+    if (!refAnchor || !refAnchor.parentElement) return;
+    var afterProfileGroup = appearanceAnchor && appearanceAnchor.parentElement ? appearanceAnchor.parentElement : refAnchor.parentElement;
+    var accountsAnchor = ensureInjectedSettingsItem(refAnchor, afterProfileGroup, {
+      id: ACCOUNTS_SETTINGS_NAV_ID,
+      href: '/settings/accounts',
+      label: '账户',
+      svg: ACCOUNTS_SVG,
+    });
+    var accountsRow = accountsAnchor && accountsAnchor.parentElement;
+    var emailAnchor = ensureInjectedSettingsItem(refAnchor, accountsRow, {
+      id: EMAILS_SETTINGS_NAV_ID,
+      href: '/settings/accounts/emails',
+      label: '电子邮件',
+      svg: EMAILS_SVG,
+      level: 2,
+    });
+    var emailRow = emailAnchor && emailAnchor.parentElement;
+    var channelsAnchor = ensureInjectedSettingsItem(refAnchor, emailRow || accountsRow, {
+      id: CHANNELS_SETTINGS_NAV_ID,
+      href: CHANNELS_SETTINGS_PATH,
+      label: CHANNELS_SETTINGS_LABEL,
+      svg: CHANNELS_SVG,
+      level: 2,
+    });
+    var channelsRow = channelsAnchor && channelsAnchor.parentElement;
+    var calendarAnchor = ensureInjectedSettingsItem(refAnchor, channelsRow || emailRow || accountsRow, {
+      id: CALENDARS_SETTINGS_NAV_ID,
+      href: '',
+      label: '日历',
+      svg: CALENDAR_SVG,
+      level: 2,
+    });
+    var calendarRow = calendarAnchor && calendarAnchor.parentElement;
+    var workspaceAnchor = ensureInjectedSettingsItem(refAnchor, calendarRow || channelsRow || emailRow || accountsRow, {
+      id: WORKSPACE_SETTINGS_NAV_ID,
+      href: '/settings/workspace',
+      label: '常规',
+      svg: SETTINGS_SVG,
+    });
+    var workspaceRow = workspaceAnchor && workspaceAnchor.parentElement;
+    var objectsAnchor = ensureInjectedSettingsItem(refAnchor, workspaceRow, {
+      id: OBJECTS_SETTINGS_NAV_ID,
+      href: '/settings/objects',
+      label: '数据模型',
+      svg: DATABASE_SVG,
+    });
+    var objectsRow = objectsAnchor && objectsAnchor.parentElement;
+    var membersAnchor = ensureInjectedSettingsItem(refAnchor, objectsRow, {
+      id: MEMBERS_SETTINGS_NAV_ID,
+      href: '/settings/workspace-members',
+      label: '成员',
+      svg: USERS_SVG,
+    });
+    var membersRow = membersAnchor && membersAnchor.parentElement;
+    ensureInjectedSettingsItem(refAnchor, membersRow, {
+      id: API_SETTINGS_NAV_ID,
+      href: '/settings/api-keys',
+      label: 'API 和 Webhooks',
+      svg: KEY_SVG,
+    });
     setSettingsChannelsActive();
   }
 

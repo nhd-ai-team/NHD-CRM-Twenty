@@ -18,7 +18,7 @@
 
 | 点 | 需求说明 | 备注 |
 |---|---|---|
-| **附件按线索维度跟踪** | 跟进模块本身**不需要**上传附件功能；但需要把一个线索整个聊天过程中（可能横跨 WhatsApp、官网等多个渠道会话）收发过的所有附件，按**线索**维度汇总展示，方便回溯"这个客户前后发过哪些文件"。 | 技术路线可参考本次会话刚做完的「跟进记录」入口——同样是线索详情页悬浮入口 + 弹窗列表，按 `syncGroupCode`/conversation→contact 关联汇总跨渠道数据；区别是这次汇总的是 `conv.messages` 里带 `attachments`/`media_url` 的消息，不是 `conv.follow_ups`。待排期实现。 |
+| ✅ **附件按线索维度跟踪**（已完成，2026-08-10，分支 `feat/crm-attachments-rbac-email-20260811`） | 跟进模块本身**不需要**上传附件功能；但需要把一个线索整个聊天过程中（可能横跨 WhatsApp、官网等多个渠道会话）收发过的所有附件，按**线索**维度汇总展示，方便回溯"这个客户前后发过哪些文件"。 | 已实现：线索详情页悬浮「📎 附件」入口 + 弹窗，middleware `GET /api/attachments?subjectType=opportunity` 按会话可见性过滤，前端复用「跟进记录」模式（`nginx/inject/chat-nav.js`）。 |
 | **WhatsApp 主动建会话方式调整** | 按客户方要求的方式来——即"直接搜号码建会话"，而不是我们原设计的"必须先收到对方消息才能建"。 | 需要重新设计这部分交互和后端逻辑，原设计（`docs/09-WhatsApp主动新建会话第一性原理与对抗性审查.md`）需要重新评估调整。 |
 
 ---
@@ -27,7 +27,7 @@
 
 | 点 | 需求说明 |
 |---|---|
-| **忘记密码 / 管理员重置密码** | 本期核心目标之一。Twenty 原生没有这个能力（查过源码 `twenty/server/src/core/auth`，没有 forgot-password/reset-password resolver），需要自研——用户忘记密码时，管理员能在后台帮其重置。 |
+| ✅ **管理员重置密码**（已完成，2026-08-10）+ **忘记密码自助**（确认 Twenty 原生已内置且可用，先前「原生没有」为误判） | 管理员重置：`POST /api/rbac/members/:id/reset-password`（requireAdmin），bcryptjs 写 `core.user.passwordHash`，权限页 + 原生成员页均有入口，仅后台管理员可重置。自助找回：Twenty 原生 generatePasswordResetToken / emailPasswordResetLink / updatePasswordViaResetToken + 前端 useHandleResetPassword，依赖已配置的 SMTP（QQ 邮箱）。 |
 | **沟通状态菜单改表单形式呈现与优化** | 当前「沟通状态」（原「对话历史」，Twenty 原生对象 `duiHuaLiShi`）的展示需要改成以表单形式呈现，并做优化。具体表单字段/交互需要进一步对齐细节后再排期实现。 |
 
 ### 本期明确不做 / 冻结

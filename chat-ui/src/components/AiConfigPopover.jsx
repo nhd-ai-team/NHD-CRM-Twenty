@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock3, X } from 'lucide-react'
+import { Clock3, X, Check } from 'lucide-react'
 import { CHANNELS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 
@@ -48,6 +48,17 @@ function timeInputStyle(disabled) {
   }
 }
 
+function saveButtonStyle(enabled) {
+  return {
+    height: 30, padding: '0 12px', borderRadius: 6, border: 'none',
+    display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+    background: enabled ? 'var(--accent)' : 'var(--bg-active)',
+    color: enabled ? '#fff' : 'var(--text-muted)',
+    fontSize: 12, fontWeight: 700, cursor: enabled ? 'pointer' : 'not-allowed',
+    transition: 'background .15s',
+  }
+}
+
 function activeLabel(setting) {
   if (!setting?.enabled) return '已关闭'
   if (setting.scheduleEnabled && !setting.activeNow) return '非生效时间'
@@ -55,11 +66,19 @@ function activeLabel(setting) {
 }
 
 export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
+  // 时间为本地草稿：编辑时间只改这里，点「保存」才提交。key=渠道，值={ start, end }
+  const [timeDrafts, setTimeDrafts] = useState({})
+
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  const patchDraft = (channel, patch) =>
+    setTimeDrafts(prev => ({ ...prev, [channel]: { ...prev[channel], ...patch } }))
+  const clearDraft = (channel) =>
+    setTimeDrafts(prev => { const next = { ...prev }; delete next[channel]; return next })
 
   const settingOf = (id) => settings.find(s => s.channel === id) || {
     channel: id,
@@ -122,12 +141,18 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
             const setting = settingOf(ch.id)
             const scheduleEnabled = !!setting.scheduleEnabled
             const disabled = loading
-            const start = setting.scheduleStart || '09:00'
-            const end = setting.scheduleEnd || '18:00'
+            const savedStart = setting.scheduleStart || '09:00'
+            const savedEnd = setting.scheduleEnd || '18:00'
+            // 优先显示本地草稿，未编辑则显示已保存值
+            const draft = timeDrafts[ch.id] || {}
+            const start = draft.start ?? savedStart
+            const end = draft.end ?? savedEnd
+            const dirty = start !== savedStart || end !== savedEnd
+            const canSave = scheduleEnabled && dirty && !disabled
             return (
               <div key={ch.id} style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(150px, 1.1fr) minmax(168px, .9fr) minmax(238px, 1.2fr)',
+                gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, .8fr) minmax(320px, 1.3fr)',
                 alignItems: 'center', gap: 14, minHeight: 74,
                 borderBottom: '1px solid var(--border-soft)',
               }}>
@@ -153,14 +178,14 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button
                     disabled={disabled}
-                    onClick={() => onSave(ch.id, { scheduleEnabled: false, scheduleStart: start, scheduleEnd: end })}
+                    onClick={() => { clearDraft(ch.id); onSave(ch.id, { scheduleEnabled: false, scheduleStart: savedStart, scheduleEnd: savedEnd }) }}
                     style={modeButtonStyle(!scheduleEnabled)}
                   >
                     全天
                   </button>
                   <button
                     disabled={disabled}
-                    onClick={() => onSave(ch.id, { scheduleEnabled: true, scheduleStart: start, scheduleEnd: end })}
+                    onClick={() => onSave(ch.id, { scheduleEnabled: true, scheduleStart: savedStart, scheduleEnd: savedEnd })}
                     style={modeButtonStyle(scheduleEnabled)}
                   >
                     按时段
@@ -172,7 +197,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
                     type="time"
                     value={start}
                     disabled={disabled || !scheduleEnabled}
-                    onChange={e => onSave(ch.id, { scheduleEnabled: true, scheduleStart: e.target.value, scheduleEnd: end })}
+                    onChange={e => patchDraft(ch.id, { start: e.target.value })}
                     style={timeInputStyle(disabled || !scheduleEnabled)}
                   />
                   <span>至</span>
@@ -180,9 +205,20 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
                     type="time"
                     value={end}
                     disabled={disabled || !scheduleEnabled}
-                    onChange={e => onSave(ch.id, { scheduleEnabled: true, scheduleStart: start, scheduleEnd: e.target.value })}
+                    onChange={e => patchDraft(ch.id, { end: e.target.value })}
                     style={timeInputStyle(disabled || !scheduleEnabled)}
                   />
+                  <button
+                    disabled={!canSave}
+                    onClick={async () => {
+                      const ok = await onSave(ch.id, { scheduleEnabled: true, scheduleStart: start, scheduleEnd: end })
+                      if (ok !== false) clearDraft(ch.id)
+                    }}
+                    style={saveButtonStyle(canSave)}
+                    title={scheduleEnabled ? (dirty ? '保存时间段' : '暂无改动') : '请先切换到「按时段」'}
+                  >
+                    <Check size={14} /> 保存
+                  </button>
                 </div>
               </div>
             )
