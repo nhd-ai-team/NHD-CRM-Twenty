@@ -81,6 +81,7 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
             loading={aiSettings.loading}
             error={aiSettings.error}
             onSave={aiSettings.save}
+            onSaveAll={aiSettings.saveAll}
             onClose={() => setAiOpen(false)}
           />
         )}
@@ -112,6 +113,11 @@ export default function App() {
   // 保存渠道 AI 配置后立即刷新会话列表，令「接管会话」按钮的灰/亮状态即时联动
   const handleAiSave = useCallback(async (channel, patch) => {
     const ok = await aiSettings.save(channel, patch)
+    if (ok) reloadConversations().catch(() => {})
+    return ok
+  }, [aiSettings, reloadConversations])
+  const handleAiSaveAll = useCallback(async (items) => {
+    const ok = await aiSettings.saveAll(items)
     if (ok) reloadConversations().catch(() => {})
     return ok
   }, [aiSettings, reloadConversations])
@@ -149,7 +155,7 @@ export default function App() {
           setActiveChannel={setActiveChannel}
           contactOpen={contactOpen}
           onToggleContact={() => setContactOpen((open) => !open)}
-          aiSettings={{ ...aiSettings, save: handleAiSave }}
+          aiSettings={{ ...aiSettings, save: handleAiSave, saveAll: handleAiSaveAll }}
         />
 
         <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>

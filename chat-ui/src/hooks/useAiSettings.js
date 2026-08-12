@@ -59,7 +59,50 @@ export function useAiSettings() {
     }
   }, [settings])
 
+  const saveAll = useCallback(async (items) => {
+    const patches = Array.isArray(items) ? items : []
+    if (patches.length === 0) return true
+    const previous = settings
+    const byChannel = new Map(patches.map(item => [item.channel, item]))
+    const nextSettings = settings.map(setting => {
+      const patch = byChannel.get(setting.channel)
+      return patch ? { ...setting, ...patch } : setting
+    })
+    setSettings(nextSettings)
+    try {
+      const response = await fetch('/conv-api/ai-settings/batch', {
+        method: 'PATCH',
+        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          settings: patches.map(item => ({
+            channel: item.channel,
+            enabled: !!item.enabled,
+            scheduleEnabled: !!item.scheduleEnabled,
+            scheduleStart: item.scheduleStart || null,
+            scheduleEnd: item.scheduleEnd || null,
+            timezone: item.timezone || 'Asia/Shanghai',
+          })),
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || 'AI 配置保存失败')
+      }
+      const saved = await response.json()
+      const savedByChannel = new Map((saved.settings || []).map(item => [item.channel, item]))
+      setSettings(prev => prev.map(setting => savedByChannel.has(setting.channel)
+        ? { ...setting, ...savedByChannel.get(setting.channel) }
+        : setting))
+      setError('')
+      return true
+    } catch (e) {
+      setSettings(previous)
+      setError(e.message)
+      return false
+    }
+  }, [settings])
+
   const toggle = useCallback((channel, enabled) => save(channel, { enabled }), [save])
 
-  return { settings, loading, error, reload: load, save, toggle }
+  return { settings, loading, error, reload: load, save, saveAll, toggle }
 }

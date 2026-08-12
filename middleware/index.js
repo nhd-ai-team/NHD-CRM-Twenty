@@ -8,6 +8,14 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
+const {
+  AI_SETTING_CHANNELS,
+  DEFAULT_AI_TIMEZONE,
+  aiScheduleActiveExpression,
+  normalizeAiSettingPayload,
+  serializeAiSettingRow,
+} = require('./lib/ai-settings');
+const { conversationVisibilityWhere } = require('./lib/conversation-visibility');
 
 const app = express();
 // verify 回调保留原始 body，供 Instagram/Meta 的 X-Hub-Signature-256 校验使用。
@@ -446,33 +454,6 @@ async function resolveConversationViewer(req) {
     isBoss: role === 'boss',
     role,
     scope,
-  };
-}
-
-function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1) {
-  // v2.1：拥有 boss 角色（仅查看总经理）或 admin 角色（scope=all）可见全部会话；未登录不可见。
-  if (!viewer) return { sql: 'FALSE', params: [] };
-  if (viewer.role === 'admin' || viewer.role === 'boss') return { sql: 'TRUE', params: [] };
-  const memberParam = `$${startIndex}`;
-  const userParam = `$${startIndex + 1}`;
-  return {
-    sql: `((
-      ${alias}.channel = 'website'
-      AND (
-        ${alias}.status = 'open'
-        OR ${alias}.agent_id = ${memberParam}
-        OR EXISTS (
-          SELECT 1
-          FROM conv.conversation_participants cp
-          WHERE cp.conversation_id = ${alias}.id
-            AND cp.workspace_member_id = ${memberParam}
-        )
-      )
-    ) OR (
-      ${alias}.channel = 'whatsapp'
-      AND ${alias}.owner_id = ${userParam}
-    ) OR ${alias}.channel IN ('email', 'instagram', 'facebook'))`,
-    params: [viewer.workspaceMemberId, viewer.userId],
   };
 }
 
@@ -1037,37 +1018,31 @@ function composeAiReplyContent(ai) {
   return text;
 }
 
-const AI_SETTING_CHANNELS = ['website', 'whatsapp', 'instagram', 'facebook'];
-const TIME_VALUE_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-const DEFAULT_AI_TIMEZONE = 'Asia/Shanghai';
-
-function aiScheduleActiveExpression(alias = 'cs') {
-  const prefix = alias ? `${alias}.` : '';
-  const localTime = `(now() AT TIME ZONE COALESCE(${prefix}ai_timezone, '${DEFAULT_AI_TIMEZONE}'))::time`;
-  return `(
-    NOT COALESCE(${prefix}ai_schedule_enabled, false)
-    OR (
-      ${prefix}ai_schedule_start IS NOT NULL
-      AND ${prefix}ai_schedule_end IS NOT NULL
-      AND CASE
-        WHEN ${prefix}ai_schedule_start <= ${prefix}ai_schedule_end
-          THEN (${localTime} >= ${prefix}ai_schedule_start AND ${localTime} < ${prefix}ai_schedule_end)
-        ELSE (${localTime} >= ${prefix}ai_schedule_start OR ${localTime} < ${prefix}ai_schedule_end)
-      END
-    )
-  )`;
-}
-
-function normalizeTimeValue(value) {
-  if (value == null || value === '') return null;
-  const text = String(value).slice(0, 5);
-  if (!TIME_VALUE_RE.test(text)) return null;
-  return text;
-}
-
-function formatTimeValue(value) {
-  if (value == null) return null;
-  return String(value).slice(0, 5);
+async function saveAiSetting(client, setting) {
+  const saved = await client.query(
+    `INSERT INTO conv.channel_settings(
+       channel, ai_enabled, ai_schedule_enabled, ai_schedule_start, ai_schedule_end, ai_timezone, updated_at
+     ) VALUES ($1, $2, $3, $4::time, $5::time, $6, now())
+     ON CONFLICT (channel) DO UPDATE SET
+       ai_enabled = EXCLUDED.ai_enabled,
+       ai_schedule_enabled = EXCLUDED.ai_schedule_enabled,
+       ai_schedule_start = EXCLUDED.ai_schedule_start,
+       ai_schedule_end = EXCLUDED.ai_schedule_end,
+       ai_timezone = EXCLUDED.ai_timezone,
+       updated_at = now()
+     RETURNING channel, ai_enabled AS "enabled", ai_schedule_enabled AS "scheduleEnabled",
+               ai_schedule_start AS "scheduleStart", ai_schedule_end AS "scheduleEnd",
+               ai_timezone AS "timezone", ${aiScheduleActiveExpression('')} AS "activeNow"`,
+    [
+      setting.channel,
+      setting.enabled,
+      setting.scheduleEnabled,
+      setting.scheduleStart,
+      setting.scheduleEnd,
+      setting.timezone,
+    ],
+  );
+  return serializeAiSettingRow(saved.rows[0]);
 }
 
 async function loadAiPolicy(conversationId) {
@@ -2347,61 +2322,65 @@ app.get('/api/ai-settings', async (req, res) => {
 app.patch('/api/ai-settings', requireSameSite, async (req, res) => {
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
-  const channel = String(req.body?.channel || '').trim();
-  const enabled = req.body?.enabled;
-  const scheduleEnabled = req.body?.scheduleEnabled === undefined ? false : req.body.scheduleEnabled;
-  const scheduleStart = normalizeTimeValue(req.body?.scheduleStart);
-  const scheduleEnd = normalizeTimeValue(req.body?.scheduleEnd);
-  const timezone = String(req.body?.timezone || DEFAULT_AI_TIMEZONE).trim() || DEFAULT_AI_TIMEZONE;
-  if (!AI_SETTING_CHANNELS.includes(channel)) return res.status(400).json({ error: 'unsupported channel' });
-  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be boolean' });
-  if (typeof scheduleEnabled !== 'boolean') return res.status(400).json({ error: 'scheduleEnabled must be boolean' });
-  if (req.body?.scheduleStart && !scheduleStart) return res.status(400).json({ error: 'scheduleStart must be HH:mm' });
-  if (req.body?.scheduleEnd && !scheduleEnd) return res.status(400).json({ error: 'scheduleEnd must be HH:mm' });
-  if (scheduleEnabled && (!scheduleStart || !scheduleEnd)) {
-    return res.status(400).json({ error: 'scheduleStart and scheduleEnd are required when schedule is enabled' });
+  const normalized = normalizeAiSettingPayload(req.body);
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
+  const setting = normalized.setting;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const saved = await saveAiSetting(client, setting);
+    // 清掉该渠道的会话级覆盖，令现有会话立即继承渠道设置
+    await client.query(`UPDATE conv.conversations SET ai_enabled = NULL WHERE channel = $1`, [setting.channel]);
+    await client.query('COMMIT');
+    recordAuditEvent('ai-settings.updated', {
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      payload: setting,
+    });
+    res.json(saved);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[ai-settings] update failed:', error.message);
+    res.status(502).json({ error: 'ai settings update failed', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/ai-settings/batch', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const input = Array.isArray(req.body?.settings) ? req.body.settings : [];
+  if (input.length === 0) return res.status(400).json({ error: 'settings must be a non-empty array' });
+  if (input.length > AI_SETTING_CHANNELS.length) return res.status(400).json({ error: 'too many settings' });
+  const seen = new Set();
+  const settings = [];
+  for (const item of input) {
+    const normalized = normalizeAiSettingPayload(item);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    if (seen.has(normalized.setting.channel)) return res.status(400).json({ error: 'duplicate channel' });
+    seen.add(normalized.setting.channel);
+    settings.push(normalized.setting);
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const saved = await client.query(
-      `INSERT INTO conv.channel_settings(
-         channel, ai_enabled, ai_schedule_enabled, ai_schedule_start, ai_schedule_end, ai_timezone, updated_at
-       ) VALUES ($1, $2, $3, $4::time, $5::time, $6, now())
-       ON CONFLICT (channel) DO UPDATE SET
-         ai_enabled = EXCLUDED.ai_enabled,
-         ai_schedule_enabled = EXCLUDED.ai_schedule_enabled,
-         ai_schedule_start = EXCLUDED.ai_schedule_start,
-         ai_schedule_end = EXCLUDED.ai_schedule_end,
-         ai_timezone = EXCLUDED.ai_timezone,
-         updated_at = now()
-       RETURNING channel, ai_enabled AS "enabled", ai_schedule_enabled AS "scheduleEnabled",
-                 ai_schedule_start AS "scheduleStart", ai_schedule_end AS "scheduleEnd",
-                 ai_timezone AS "timezone", ${aiScheduleActiveExpression('')} AS "activeNow"`,
-      [channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone],
-    );
-    // 清掉该渠道的会话级覆盖，令现有会话立即继承渠道设置
-    await client.query(`UPDATE conv.conversations SET ai_enabled = NULL WHERE channel = $1`, [channel]);
+    const saved = [];
+    for (const setting of settings) {
+      saved.push(await saveAiSetting(client, setting));
+    }
+    await client.query(`UPDATE conv.conversations SET ai_enabled = NULL WHERE channel = ANY($1::text[])`, [settings.map(item => item.channel)]);
     await client.query('COMMIT');
-    recordAuditEvent('ai-settings.updated', {
+    recordAuditEvent('ai-settings.batch_updated', {
       actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
-      payload: { channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone },
+      payload: { settings },
     });
-    const row = saved.rows[0];
-    res.json({
-      channel: row.channel,
-      enabled: row.enabled,
-      scheduleEnabled: row.scheduleEnabled,
-      scheduleStart: formatTimeValue(row.scheduleStart),
-      scheduleEnd: formatTimeValue(row.scheduleEnd),
-      timezone: row.timezone || DEFAULT_AI_TIMEZONE,
-      activeNow: row.activeNow,
-    });
+    res.json({ settings: saved });
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('[ai-settings] update failed:', error.message);
-    res.status(502).json({ error: 'ai settings update failed', detail: error.message });
+    console.error('[ai-settings] batch update failed:', error.message);
+    res.status(502).json({ error: 'ai settings batch update failed', detail: error.message });
   } finally {
     client.release();
   }
@@ -4465,7 +4444,7 @@ app.use((error, _req, res, next) => {
   return next(error);
 });
 
-app.get('/health', async (_req, res) => {
+async function sendHealth(_req, res) {
   try {
     await pool.query('SELECT 1');
     res.json({
@@ -4476,7 +4455,10 @@ app.get('/health', async (_req, res) => {
       facebook_configured: !!(META_VERIFY_TOKEN && FACEBOOK_PAGE_ACCESS_TOKEN),
     });
   } catch (error) { res.status(503).json({ status: 'error', error: error.message }); }
-});
+}
+
+app.get('/health', sendHealth);
+app.get('/api/health', sendHealth);
 
 // ── 邮箱：IMAP 只读收取 → conv 库 email 渠道（沉淀查看，不回复/不接 AI）────────────
 
@@ -4614,7 +4596,21 @@ function startEmailPoller() {
   setInterval(run, IMAP_POLL_SECONDS * 1000);
 }
 
-ensureSchema().then(() => {
+async function startServer() {
+  await ensureSchema();
   app.listen(PORT, () => console.log(`[middleware] listening on ${PORT}`));
   startEmailPoller();
-}).catch(error => { console.error(error); process.exit(1); });
+}
+
+if (require.main === module) {
+  startServer().catch(error => { console.error(error); process.exit(1); });
+}
+
+module.exports = {
+  app,
+  conversationVisibilityWhere,
+  getInitialStartUid,
+  normalizeAiSettingPayload,
+  serializeAiSettingRow,
+  startServer,
+};

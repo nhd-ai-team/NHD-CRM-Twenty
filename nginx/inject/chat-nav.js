@@ -1408,7 +1408,10 @@
     }
     if (document.getElementById(CHANNELS_SETTINGS_CARD_ID)) return;
     var sections = Array.from(document.querySelectorAll('h2, [role="heading"]'));
-    var settingsHeading = sections.find(function (el) { return (el.textContent || '').trim() === 'Settings'; });
+    var settingsHeading = sections.find(function (el) {
+      var text = (el.textContent || '').trim();
+      return text === 'Settings' || text === '设置';
+    });
     if (!settingsHeading) return;
     var section = settingsHeading.closest('section') || settingsHeading.parentElement;
     if (!section) return;

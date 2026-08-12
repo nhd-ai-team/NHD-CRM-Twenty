@@ -72,7 +72,7 @@ function settingsEqual(a, b) {
     a.timezone === b.timezone
 }
 
-export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
+export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, onClose }) {
   const [drafts, setDrafts] = useState({})
   const [saving, setSaving] = useState(false)
 
@@ -119,10 +119,15 @@ export function AiConfigPopover({ settings, loading, error, onSave, onClose }) {
     if (!dirty || disabled) return
     setSaving(true)
     try {
-      for (const ch of dirtyChannels) {
-        const draft = draftOf(ch.id)
-        const ok = await onSave(ch.id, draft)
+      if (onSaveAll) {
+        const ok = await onSaveAll(dirtyChannels.map(ch => ({ channel: ch.id, ...draftOf(ch.id) })))
         if (ok === false) return
+      } else {
+        for (const ch of dirtyChannels) {
+          const draft = draftOf(ch.id)
+          const ok = await onSave(ch.id, draft)
+          if (ok === false) return
+        }
       }
       onClose()
     } finally {
