@@ -8,9 +8,16 @@
   var MAIL_NAV_ID = '__mail_nav_item__';
   var SETTINGS_LABEL = '设置';
   var SETTINGS_NAV_ID = '__settings_nav_item__';
+  var ACCOUNTS_SETTINGS_NAV_ID = '__settings_accounts_nav_item__';
+  var EMAILS_SETTINGS_NAV_ID = '__settings_emails_nav_item__';
   var CHANNELS_SETTINGS_LABEL = '渠道';
   var CHANNELS_SETTINGS_PATH = '/settings/accounts/channels';
   var CHANNELS_SETTINGS_NAV_ID = '__settings_channels_nav_item__';
+  var CALENDARS_SETTINGS_NAV_ID = '__settings_calendars_nav_item__';
+  var WORKSPACE_SETTINGS_NAV_ID = '__settings_workspace_nav_item__';
+  var OBJECTS_SETTINGS_NAV_ID = '__settings_objects_nav_item__';
+  var MEMBERS_SETTINGS_NAV_ID = '__settings_members_nav_item__';
+  var API_SETTINGS_NAV_ID = '__settings_api_nav_item__';
   var CHANNELS_SETTINGS_PAGE_ID = '__settings_channels_page__';
   var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
   var WEBSITE_RELATED_MODAL_ID = '__website_related_modal__';
@@ -29,7 +36,13 @@
   var CHAT_SVG = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
   var MAIL_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
   var SETTINGS_SVG = '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.51a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>';
+  var ACCOUNTS_SVG = '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>';
+  var EMAILS_SVG = '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>';
   var CHANNELS_SVG = '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>';
+  var CALENDAR_SVG = '<path d="M8 2v4"/><path d="M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18"/>';
+  var DATABASE_SVG = '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>';
+  var USERS_SVG = '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>';
+  var KEY_SVG = '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>';
 
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
@@ -587,24 +600,26 @@
     var active = isChannelsSettingsPage();
     item.setAttribute('data-active', active ? '1' : '0');
     item.style.background = active ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))' : 'transparent';
-    item.style.color = active ? 'var(--twenty-color-purple-50,#9333ea)' : '';
+    item.style.color = 'var(--twenty-font-color-secondary,#52525b)';
+    var svg = item.querySelector('svg');
+    if (svg) svg.style.color = 'var(--twenty-font-color-secondary,#52525b)';
   }
 
-  function buildSettingsChannelsNavItem(refAnchor) {
+  function buildSettingsNavAnchor(refAnchor, opts) {
     var cs = window.getComputedStyle(refAnchor);
     var el = document.createElement('a');
-    el.id = CHANNELS_SETTINGS_NAV_ID;
-    el.href = CHANNELS_SETTINGS_PATH;
+    el.id = opts.id;
+    el.href = opts.href || '#';
     el.style.cssText = [
       'display:flex',
       'align-items:center',
       'gap:8px',
       'padding:' + cs.padding,
-      'padding-left:32px',
+      'padding-left:' + (opts.level === 2 ? '32px' : '0'),
       'border-radius:' + cs.borderRadius,
       'font-size:' + cs.fontSize,
       'font-weight:' + cs.fontWeight,
-      'color:' + cs.color,
+      'color:var(--twenty-font-color-secondary,#52525b)',
       'text-decoration:none',
       'width:100%',
       'box-sizing:border-box',
@@ -621,10 +636,10 @@
     svg.setAttribute('stroke-width', '2');
     svg.setAttribute('stroke-linecap', 'round');
     svg.setAttribute('stroke-linejoin', 'round');
-    svg.style.cssText = 'flex-shrink:0;';
-    svg.innerHTML = CHANNELS_SVG;
+    svg.style.cssText = 'flex-shrink:0;color:var(--twenty-font-color-secondary,#52525b);';
+    svg.innerHTML = opts.svg;
     var span = document.createElement('span');
-    span.textContent = CHANNELS_SETTINGS_LABEL;
+    span.textContent = opts.label;
     span.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
     el.appendChild(svg);
     el.appendChild(span);
@@ -637,29 +652,107 @@
     return el;
   }
 
-  function ensureSettingsChannelsNav() {
-    if (!isSettingsPage()) return;
-    var emailAnchor = document.querySelector('a[href="/settings/accounts/emails"]');
-    var accountAnchor = document.querySelector('a[href="/settings/accounts"]');
-    var refAnchor = emailAnchor || accountAnchor;
-    if (!refAnchor || !refAnchor.parentElement) return;
-    var listEl = refAnchor.parentElement.parentElement || refAnchor.parentElement;
-    var existing = document.getElementById(CHANNELS_SETTINGS_NAV_ID);
-    var wrapper = existing ? existing.closest('[data-settings-channels-nav-wrapper="1"]') : null;
+  function buildSettingsChannelsNavItem(refAnchor) {
+    return buildSettingsNavAnchor(refAnchor, {
+      id: CHANNELS_SETTINGS_NAV_ID,
+      href: CHANNELS_SETTINGS_PATH,
+      label: CHANNELS_SETTINGS_LABEL,
+      svg: CHANNELS_SVG,
+      level: 2,
+    });
+  }
+
+  function ensureInjectedSettingsItem(refAnchor, afterEl, opts) {
+    var nativeAnchor = opts.href ? document.querySelector('a[href="' + opts.href + '"]') : null;
+    var existing = nativeAnchor || document.getElementById(opts.id);
+    var wrapper = existing ? existing.closest('[data-settings-injected-nav-wrapper="1"], [data-settings-channels-nav-wrapper="1"]') : null;
     if (!existing) {
-      existing = buildSettingsChannelsNavItem(refAnchor);
+      existing = buildSettingsNavAnchor(refAnchor, opts);
       wrapper = document.createElement(refAnchor.parentElement.tagName);
       wrapper.className = refAnchor.parentElement.className;
-      wrapper.setAttribute('data-settings-channels-nav-wrapper', '1');
+      wrapper.setAttribute('data-settings-injected-nav-wrapper', '1');
       wrapper.appendChild(existing);
     }
-    if (emailAnchor && emailAnchor.parentElement && wrapper.previousElementSibling !== emailAnchor.parentElement) {
-      emailAnchor.parentElement.insertAdjacentElement('afterend', wrapper);
-    } else if (!emailAnchor && accountAnchor && accountAnchor.parentElement && wrapper.previousElementSibling !== accountAnchor.parentElement) {
-      accountAnchor.parentElement.insertAdjacentElement('afterend', wrapper);
-    } else if (wrapper.parentElement !== listEl) {
-      listEl.appendChild(wrapper);
+    var anchorParent = nativeAnchor ? nativeAnchor.parentElement : wrapper;
+    var target = wrapper || anchorParent;
+    if (!target) return existing;
+    var span = existing.querySelector('span');
+    if (span && opts.label) span.textContent = opts.label;
+    if (afterEl && target.previousElementSibling !== afterEl) afterEl.insertAdjacentElement('afterend', target);
+    return existing;
+  }
+
+  function ensureSettingsChannelsNav() {
+    if (!isSettingsPage()) return;
+    function settingsAnchorByText(text) {
+      return Array.from(document.querySelectorAll('a[href^="/settings/"]')).find(function (anchor) {
+        return (anchor.textContent || '').replace(/\s+/g, ' ').trim() === text;
+      }) || null;
     }
+    var profileAnchor = document.querySelector('a[href="/settings/profile"]');
+    var appearanceAnchor = document.querySelector('a[href="/settings/profile/appearance"]') || settingsAnchorByText('体验') || settingsAnchorByText('Appearance');
+    var anySettingsAnchor = document.querySelector('a[href^="/settings/"]');
+    var refAnchor = appearanceAnchor || profileAnchor || anySettingsAnchor;
+    if (!refAnchor || !refAnchor.parentElement) return;
+    var afterProfileGroup = appearanceAnchor && appearanceAnchor.parentElement ? appearanceAnchor.parentElement : refAnchor.parentElement;
+    var accountsAnchor = ensureInjectedSettingsItem(refAnchor, afterProfileGroup, {
+      id: ACCOUNTS_SETTINGS_NAV_ID,
+      href: '/settings/accounts',
+      label: '账户',
+      svg: ACCOUNTS_SVG,
+    });
+    var accountsRow = accountsAnchor && accountsAnchor.parentElement;
+    var emailAnchor = ensureInjectedSettingsItem(refAnchor, accountsRow, {
+      id: EMAILS_SETTINGS_NAV_ID,
+      href: '/settings/accounts/emails',
+      label: '电子邮件',
+      svg: EMAILS_SVG,
+      level: 2,
+    });
+    var emailRow = emailAnchor && emailAnchor.parentElement;
+    var channelsAnchor = ensureInjectedSettingsItem(refAnchor, emailRow || accountsRow, {
+      id: CHANNELS_SETTINGS_NAV_ID,
+      href: CHANNELS_SETTINGS_PATH,
+      label: CHANNELS_SETTINGS_LABEL,
+      svg: CHANNELS_SVG,
+      level: 2,
+    });
+    var channelsRow = channelsAnchor && channelsAnchor.parentElement;
+    var calendarAnchor = ensureInjectedSettingsItem(refAnchor, channelsRow || emailRow || accountsRow, {
+      id: CALENDARS_SETTINGS_NAV_ID,
+      href: '',
+      label: '日历',
+      svg: CALENDAR_SVG,
+      level: 2,
+    });
+    var calendarRow = calendarAnchor && calendarAnchor.parentElement;
+    var workspaceAnchor = ensureInjectedSettingsItem(refAnchor, calendarRow || channelsRow || emailRow || accountsRow, {
+      id: WORKSPACE_SETTINGS_NAV_ID,
+      href: '/settings/workspace',
+      label: '常规',
+      svg: SETTINGS_SVG,
+    });
+    var workspaceRow = workspaceAnchor && workspaceAnchor.parentElement;
+    var objectsAnchor = ensureInjectedSettingsItem(refAnchor, workspaceRow, {
+      id: OBJECTS_SETTINGS_NAV_ID,
+      href: '/settings/objects',
+      label: '数据模型',
+      svg: DATABASE_SVG,
+    });
+    var objectsRow = objectsAnchor && objectsAnchor.parentElement;
+    var membersAnchor = ensureInjectedSettingsItem(refAnchor, objectsRow, {
+      id: MEMBERS_SETTINGS_NAV_ID,
+      href: '/settings/workspace-members',
+      label: '成员',
+      svg: USERS_SVG,
+    });
+    var membersRow = membersAnchor && membersAnchor.parentElement;
+    ensureInjectedSettingsItem(refAnchor, membersRow, {
+      id: API_SETTINGS_NAV_ID,
+      href: '/settings/api-keys',
+      label: 'API 和 Webhooks',
+      svg: KEY_SVG,
+    });
     setSettingsChannelsActive();
   }
 
@@ -1922,6 +2015,29 @@
     return m ? m[0] : '';
   }
 
+  function findAdminButtonRow(delBtn) {
+    if (!delBtn) return null;
+    var node = delBtn.parentElement;
+    for (var up = 0; up < 6 && node; up++) {
+      var text = String(node.textContent || '');
+      var buttons = node.querySelectorAll ? node.querySelectorAll('button, [role="button"], a') : [];
+      var rect = node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+      if (
+        rect &&
+        rect.width > 80 &&
+        rect.height > 20 &&
+        rect.height < 80 &&
+        buttons.length >= 2 &&
+        (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1) &&
+        (text.indexOf('假装') !== -1 || text.indexOf('Impersonate') !== -1)
+      ) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
   function openResetPwdByEmail(email) {
     if (!email) { window.alert('未能从页面识别该成员邮箱，无法重置'); return; }
     window.fetch('/conv-api/rbac/members', { method: 'GET', credentials: 'same-origin', headers: getTwentyAuthHeaders() })
@@ -1937,33 +2053,44 @@
   }
 
   function ensureMemberResetPwdButton() {
+    var canInjectHere = window.location.pathname.startsWith('/settings');
+    if (!canInjectHere) {
+      var stale = document.getElementById(MEMBER_RESETPWD_BTN_ID);
+      if (stale) stale.remove();
+      return;
+    }
     var delBtn = findNativeDeleteAccountButton();
     var existing = document.getElementById(MEMBER_RESETPWD_BTN_ID);
     if (!delBtn) { if (existing) existing.remove(); return; }
-    // 已注入且就在删除按钮前面则不重复插
-    if (existing && existing.nextElementSibling === delBtn) return;
+    var adminRow = findAdminButtonRow(delBtn);
+    if (!adminRow) {
+      if (existing) existing.remove();
+      return;
+    }
+    // 已注入且仍在正确容器内则不重复插
+    if (existing && adminRow.contains(existing)) return;
     if (existing) existing.remove();
     var btn = document.createElement('button');
     btn.id = MEMBER_RESETPWD_BTN_ID;
     btn.type = 'button';
-    btn.textContent = '重置密码';
-    // 高度/圆角/字号量取原生「删除账户」按钮以对齐，避免撑高整行导致相邻按钮边框溢出。
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78Zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><span>重置密码</span>';
+    // 固定为 Twenty 默认小按钮尺寸；避免读取到删除按钮内部文本节点后变成很矮的小标签。
     var cs = null;
     try { cs = window.getComputedStyle(delBtn); } catch (e) {}
-    var h = delBtn.offsetHeight || 32;
     var radius = (cs && cs.borderRadius) || '8px';
-    var fsize = (cs && cs.fontSize) || '13px';
     btn.style.cssText = [
-      'margin-right:8px', 'box-sizing:border-box', 'align-self:center',
-      'height:' + h + 'px', 'padding:0 12px', 'border-radius:' + radius,
-      'border:1px solid #d97706', 'background:transparent', 'color:#d97706',
-      'font-size:' + fsize, 'font-weight:600', 'line-height:1', 'font-family:inherit', 'cursor:pointer',
+      'box-sizing:border-box', 'align-self:center',
+      'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:6px',
+      'height:32px', 'min-height:32px', 'min-width:96px', 'padding:0 12px', 'border-radius:' + radius,
+      'border:1px solid #d97706', 'background:#fff', 'color:#d97706',
+      'font-size:13px', 'font-weight:600', 'line-height:30px', 'font-family:inherit', 'cursor:pointer',
     ].join(';');
     btn.addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
       openResetPwdByEmail(findMemberEmailOnPage());
     });
-    delBtn.parentNode.insertBefore(btn, delBtn);
+    btn.style.marginRight = '8px';
+    adminRow.insertBefore(btn, delBtn);
   }
 
   // ── boot ──────────────────────────────────────────────────────────────────

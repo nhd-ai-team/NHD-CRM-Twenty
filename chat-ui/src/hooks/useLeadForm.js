@@ -56,7 +56,7 @@ export function useLeadForm({ selected, selectedId }) {
         method: 'POST', headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(draft),
       })
       const d = await res.json().catch(() => ({}))
-      if (!res.ok) { setToast({ type: 'err', msg: d.error || `转化失败 (${res.status})` }); return }
+      if (!res.ok) { setToast({ type: 'err', msg: [d.error, d.detail].filter(Boolean).join('：') || `转化失败 (${res.status})` }); return }
       setToast({ type: 'ok', msg: (d.updated ? '已更新到线索' : '已转为线索并写入线索') })
     } catch (e) {
       setToast({ type: 'err', msg: e.message })

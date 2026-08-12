@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { X, UserPlus, CheckCircle, Loader2, Info } from 'lucide-react'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
+import { STAGE_OPTIONS, INITIAL_STAGE, CONTACT_METHOD_STAGE } from '../utils/leadDraft'
 
 // 下拉选项与 Opportunity 的 SELECT 字段选项一一对应（label 显示 / value 入库）。
 const SOURCE_OPTIONS = [
@@ -10,15 +11,8 @@ const SOURCE_OPTIONS = [
 const COMPANY_TYPE_OPTIONS = [
   ['中间商', 'ZHONG_JIAN_SHANG'], ['业主', 'YE_ZHU'], ['EPC', 'EPC'], ['技术咨询', 'JI_SHU_ZI_XUN'],
 ]
-const STAGE_OPTIONS = [
-  ['线索', 'XIANSUO'], ['有效线索', 'YOUXIAO_XIANSUO'], ['询价', 'XUNJIA'], ['报价', 'BAOJIA'],
-  ['审样', 'SHENYANG'], ['谈判', 'TANPAN'], ['已下单', 'YIXIADAN'], ['已付款', 'YIFUKUAN'],
-  ['已发货', 'YIFAHUO'], ['已成交', 'YICHENGJIAO'],
-]
 // 会话渠道 → 客户来源默认值
 const SOURCE_BY_CHANNEL = { whatsapp: 'WHATSAPP', website: 'GUAN_WANG_KE_FU', instagram: 'INS', facebook: 'FACEBOOK' }
-const INITIAL_STAGE = 'XIANSUO'
-const CONTACT_METHOD_STAGE = 'YOUXIAO_XIANSUO'
 
 function applyContactMethodStage(form) {
   if (form.source === 'GUAN_WANG_BIAO_DAN') return { ...form, stage: INITIAL_STAGE }

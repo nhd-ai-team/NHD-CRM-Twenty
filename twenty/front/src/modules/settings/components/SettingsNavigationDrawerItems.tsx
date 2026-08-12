@@ -1,16 +1,13 @@
-import { useCallback } from 'react';
-import { useMatch, useNavigate, useResolvedPath } from 'react-router-dom';
+import { useMatch, useResolvedPath } from 'react-router-dom';
 
-import { useAuth } from '@/auth/hooks/useAuth';
-import { AppPath } from '@/types/AppPath';
 import {
   IconAt,
   IconCalendarEvent,
   IconColorSwatch,
-  IconHierarchy2,
-  IconLogout,
+  IconDatabase,
+  IconKey,
+  IconLink,
   IconMail,
-  IconRobot,
   IconSettings,
   IconUserCircle,
   IconUsers,
@@ -19,24 +16,18 @@ import { NavigationDrawerItem } from '@/ui/navigation/navigation-drawer/componen
 import { NavigationDrawerItemGroup } from '@/ui/navigation/navigation-drawer/components/NavigationDrawerItemGroup';
 import { NavigationDrawerSection } from '@/ui/navigation/navigation-drawer/components/NavigationDrawerSection';
 import { NavigationDrawerSectionTitle } from '@/ui/navigation/navigation-drawer/components/NavigationDrawerSectionTitle';
-import { useIsFeatureEnabled } from '@/workspace/hooks/useIsFeatureEnabled';
 
 export const SettingsNavigationDrawerItems = () => {
-  const navigate = useNavigate();
-  const { signOut } = useAuth();
-
-  const handleLogout = useCallback(() => {
-    signOut();
-    navigate(AppPath.SignIn);
-  }, [signOut, navigate]);
-
-  const isMessagingEnabled = useIsFeatureEnabled('IS_MESSAGING_ENABLED');
   const isAccountsItemActive = !!useMatch({
     path: useResolvedPath('/settings/accounts').pathname,
     end: true,
   });
   const isAccountsEmailsItemActive = !!useMatch({
     path: useResolvedPath('/settings/accounts/emails').pathname,
+    end: true,
+  });
+  const isAccountsChannelsItemActive = !!useMatch({
+    path: useResolvedPath('/settings/accounts/channels').pathname,
     end: true,
   });
 
@@ -66,31 +57,34 @@ export const SettingsNavigationDrawerItems = () => {
             })
           }
         />
-        {isMessagingEnabled && (
-          <NavigationDrawerItemGroup>
-            <NavigationDrawerItem
-              label="Accounts"
-              to="/settings/accounts"
-              Icon={IconAt}
-              active={isAccountsItemActive}
-            />
-            <NavigationDrawerItem
-              level={2}
-              label="Emails"
-              to="/settings/accounts/emails"
-              Icon={IconMail}
-              active={isAccountsEmailsItemActive}
-            />
-            <NavigationDrawerItem
-              level={2}
-              label="Calendars"
-              Icon={IconCalendarEvent}
-              soon
-            />
-          </NavigationDrawerItemGroup>
-        )}
+        <NavigationDrawerItemGroup>
+          <NavigationDrawerItem
+          label="账户"
+            to="/settings/accounts"
+            Icon={IconAt}
+            active={isAccountsItemActive}
+          />
+          <NavigationDrawerItem
+            level={2}
+          label="电子邮件"
+            to="/settings/accounts/emails"
+            Icon={IconMail}
+            active={isAccountsEmailsItemActive}
+          />
+          <NavigationDrawerItem
+            level={2}
+            label="渠道"
+            to="/settings/accounts/channels"
+            Icon={IconLink}
+            active={isAccountsChannelsItemActive}
+          />
+          <NavigationDrawerItem
+            level={2}
+            label="日历"
+            Icon={IconCalendarEvent}
+          />
+        </NavigationDrawerItemGroup>
       </NavigationDrawerSection>
-
       <NavigationDrawerSection>
         <NavigationDrawerSectionTitle label="Workspace" />
         <NavigationDrawerItem
@@ -101,6 +95,17 @@ export const SettingsNavigationDrawerItems = () => {
             !!useMatch({
               path: useResolvedPath('/settings/workspace').pathname,
               end: true,
+            })
+          }
+        />
+        <NavigationDrawerItem
+          label="Data model"
+          to="/settings/objects"
+          Icon={IconDatabase}
+          active={
+            !!useMatch({
+              path: useResolvedPath('/settings/objects/*').pathname,
+              end: false,
             })
           }
         />
@@ -116,35 +121,15 @@ export const SettingsNavigationDrawerItems = () => {
           }
         />
         <NavigationDrawerItem
-          label="Data model"
-          to="/settings/objects"
-          Icon={IconHierarchy2}
+          label="API and Webhooks"
+          to="/settings/api-keys"
+          Icon={IconKey}
           active={
             !!useMatch({
-              path: useResolvedPath('/settings/objects').pathname,
+              path: useResolvedPath('/settings/api-keys/*').pathname,
               end: false,
             })
           }
-        />
-        <NavigationDrawerItem
-          label="Developers"
-          to="/settings/developers/api-keys"
-          Icon={IconRobot}
-          active={
-            !!useMatch({
-              path: useResolvedPath('/settings/developers/api-keys').pathname,
-              end: true,
-            })
-          }
-        />
-      </NavigationDrawerSection>
-
-      <NavigationDrawerSection>
-        <NavigationDrawerSectionTitle label="Other" />
-        <NavigationDrawerItem
-          label="Logout"
-          onClick={handleLogout}
-          Icon={IconLogout}
         />
       </NavigationDrawerSection>
     </>

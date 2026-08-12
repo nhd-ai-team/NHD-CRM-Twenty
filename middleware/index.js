@@ -1980,6 +1980,82 @@ function normalizeOutboundWhatsAppPhone(input) {
   return digits;
 }
 
+function createHttpError(message, status = 400, detail = null) {
+  const error = new Error(message);
+  error.status = status;
+  error.detail = detail;
+  return error;
+}
+
+async function checkWhatsAppRecipientForUser(authenticated, phone) {
+  const binding = await getCurrentUserWhatsAppBinding(authenticated.userId);
+  if (!binding?.provider_session) {
+    throw createHttpError('当前 CRM 账号还没有绑定 WhatsApp，请先到“设置 -> 账户 -> 渠道”完成绑定', 403);
+  }
+
+  const sessionName = binding.provider_session;
+  let session;
+  try {
+    session = normalizeWahaSession(await getWahaSession(sessionName));
+  } catch (error) {
+    if (isWahaSessionNotFound(error)) {
+      throw createHttpError('当前绑定的 WhatsApp 会话不存在或已失效，请先到“设置 -> 账户 -> 渠道”重新绑定', 409);
+    }
+    throw error;
+  }
+  if (!session.connected) throw createHttpError('WhatsApp 当前未连接，请先在设置中完成绑定', 409);
+  if (phoneFromJid(session.accountId) === phone) throw createHttpError('不能向当前绑定的 WhatsApp 号码发起会话', 400);
+
+  const checkResponse = await fetchWaha(
+    `/api/contacts/check-exists?session=${encodeURIComponent(sessionName)}&phone=${encodeURIComponent(phone)}`,
+  );
+  const checked = await checkResponse.json().catch(() => ({}));
+  if (!checkResponse.ok) throw createHttpError(checked.message || 'WhatsApp 号码校验失败', 502, checked);
+  if (!checked.numberExists || !checked.chatId) {
+    throw createHttpError('该号码未注册 WhatsApp，请检查国家区号和号码是否正确', 404, checked);
+  }
+
+  const existing = await pool.query(
+    `SELECT id, status, last_message_at, last_message_preview
+       FROM conv.conversations
+      WHERE channel = 'whatsapp' AND external_chat_id = $1
+      LIMIT 1`,
+    [checked.chatId],
+  );
+  return {
+    phone: `+${phone}`,
+    chatId: checked.chatId,
+    numberExists: true,
+    existingConversationId: existing.rows[0]?.id || null,
+    existingConversationStatus: existing.rows[0]?.status || null,
+    existingLastMessageAt: existing.rows[0]?.last_message_at || null,
+    existingLastMessagePreview: existing.rows[0]?.last_message_preview || '',
+    reused: existing.rowCount > 0,
+    fromAccount: {
+      phone: session.phone || '',
+      displayName: session.displayName || binding.display_name || '',
+      accountId: session.accountId || binding.external_account_id || '',
+      session: sessionName,
+    },
+  };
+}
+
+app.get('/api/conversations/whatsapp/check', requireSameSite, async (req, res) => {
+  const phone = normalizeOutboundWhatsAppPhone(req.query?.phone);
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+
+  if (!/^\d{7,15}$/.test(phone)) {
+    return res.status(400).json({ error: '请输入包含国家区号的有效 WhatsApp 号码，例如 +1 202 555 0147' });
+  }
+
+  try {
+    res.json(await checkWhatsAppRecipientForUser(authenticated, phone));
+  } catch (error) {
+    res.status(error.status || 502).json({ error: error.message || 'WhatsApp 号码校验失败', detail: error.detail || null });
+  }
+});
+
 app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   const phone = normalizeOutboundWhatsAppPhone(req.body?.phone);
   const content = String(req.body?.content || '').trim();
@@ -2013,23 +2089,9 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   }
 
   try {
-    const sessionName = await resolveUserWahaSessionName(authenticated);
-    const session = normalizeWahaSession(await getWahaSession(sessionName));
-    if (!session.connected) return res.status(409).json({ error: 'WhatsApp 当前未连接，请先在设置中完成绑定' });
-    const ownership = await requireBindingForSession(req, res, sessionName);
-    if (!ownership) return;
-    if (phoneFromJid(session.accountId) === phone) return res.status(400).json({ error: '不能向当前绑定的 WhatsApp 号码发起会话' });
-
-    const checkResponse = await fetchWaha(
-      `/api/contacts/check-exists?session=${encodeURIComponent(sessionName)}&phone=${encodeURIComponent(phone)}`,
-    );
-    const checked = await checkResponse.json().catch(() => ({}));
-    if (!checkResponse.ok) throw new Error(checked.message || 'WhatsApp 号码校验失败');
-    if (!checked.numberExists || !checked.chatId) {
-      return res.status(404).json({ error: '该号码未注册 WhatsApp，请检查国家区号和号码是否正确' });
-    }
-
-    const chatId = checked.chatId;
+    const recipient = await checkWhatsAppRecipientForUser(authenticated, phone);
+    const sessionName = recipient.fromAccount.session;
+    const chatId = recipient.chatId;
     const sentResponse = await fetchWaha('/api/sendText', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2100,7 +2162,7 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     return res.status(reused ? 200 : 201).json(result);
   } catch (error) {
     console.error('[whatsapp] start conversation failed:', error.message);
-    return res.status(502).json({ error: '无法发起 WhatsApp 会话', detail: error.message });
+    return res.status(error.status || 502).json({ error: error.status ? error.message : '无法发起 WhatsApp 会话', detail: error.status ? error.detail : error.message });
   } finally {
     await pool.query(
       `DELETE FROM conv.outbound_requests WHERE idempotency_key = $1 AND status = 'processing'`,
@@ -3148,6 +3210,33 @@ const normalizeEmailList = (value) => String(value || '')
   .split(EMAIL_SEPARATOR_RE)
   .map((item) => item.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, ''))
   .filter(Boolean);
+const VALID_OPPORTUNITY_STAGES = new Set([
+  'WEI_CHU_LI_XIANSUO',
+  'XIANSUO',
+  'YOUXIAO_XIANSUO',
+  'QUE_REN_XUN_PAN',
+  'XUN_PAN_ZHUAN_ZONGBU',
+  'ZONGBU_FANG_AN_BAO_JIA',
+  'JI_SHU_CHENG_QING',
+  'SHANG_WU_CHENG_QING',
+  'YI_QIAN_DAN_FU_KUAN',
+  'YI_FA_HUO',
+]);
+const LEGACY_OPPORTUNITY_STAGE_MAP = {
+  XUNJIA: 'QUE_REN_XUN_PAN',
+  BAOJIA: 'ZONGBU_FANG_AN_BAO_JIA',
+  SHENYANG: 'JI_SHU_CHENG_QING',
+  TANPAN: 'SHANG_WU_CHENG_QING',
+  YIXIADAN: 'YI_QIAN_DAN_FU_KUAN',
+  YIFUKUAN: 'YI_QIAN_DAN_FU_KUAN',
+  YICHENGJIAO: 'YI_QIAN_DAN_FU_KUAN',
+  YIFAHUO: 'YI_FA_HUO',
+};
+function normalizeOpportunityStage(value, fallback = 'XIANSUO') {
+  const raw = String(value || '').trim();
+  const mapped = LEGACY_OPPORTUNITY_STAGE_MAP[raw] || raw;
+  return VALID_OPPORTUNITY_STAGES.has(mapped) ? mapped : fallback;
+}
 // 线索转客户：可双向同步的客户类型枚举 + 字段清洗工具
 const SHARED_CUSTOMER_TYPES = new Set(['ZHONG_JIAN_SHANG', 'YE_ZHU', 'EPC', 'JI_SHU_ZI_XUN']);
 const nonBlankOrNull = (value) => {
@@ -3325,7 +3414,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];
   const isWebsiteFormSource = source === 'GUAN_WANG_BIAO_DAN';
   if (personId) data.pointOfContactId = personId;
-  if (b.stage && !isWebsiteFormSource) data.stage = String(b.stage);
+  if (b.stage && !isWebsiteFormSource) data.stage = normalizeOpportunityStage(b.stage);
   if (source) data.keHuLaiYuan = source;
   if (isWebsiteFormSource) data.stage = 'XIANSUO';
   if (b.companyType) data.keHuLeiXing = String(b.companyType);
@@ -3348,6 +3437,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     if (emails.length > 0 && emails.every((item) => EMAIL_RE.test(item))) data[OPPORTUNITY_EMAIL_FIELD] = emails.join(', ');
     else skipped.push('email');
   }
+  if (data.stage) data.stage = normalizeOpportunityStage(data.stage);
   if (!isWebsiteFormSource && (rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
   const country = String(b.country || '').trim();
   if (country) data.country = { addressCountry: country };
@@ -3500,7 +3590,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
            ) THEN $9::text
            ELSE target."emailsPrimaryEmail"
          END,
-         "country" = COALESCE($10, "country"),
+         "guoJiaDiQuAddressCountry" = COALESCE($10, "guoJiaDiQuAddressCountry"),
          "keHuXuQiuChanPin" = COALESCE($11, "keHuXuQiuChanPin"),
          "keHuLaiYuan" = CASE WHEN $12::text IS NULL THEN "keHuLaiYuan" ELSE $12::text::${schema}."person_keHuLaiYuan_enum" END,
          "keHuLeiXing" = CASE WHEN $13::text IS NULL THEN "keHuLeiXing" ELSE $13::text::${schema}."person_keHuLeiXing_enum" END,
@@ -3539,7 +3629,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
        "phonesPrimaryPhoneCountryCode",
        "phonesPrimaryPhoneCallingCode",
        "emailsPrimaryEmail",
-       "country",
+       "guoJiaDiQuAddressCountry",
        "keHuXuQiuChanPin",
        "keHuLaiYuan",
        "keHuLeiXing",
@@ -3697,7 +3787,9 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
   const client = await pool.connect();
   try {
     const schema = await getWorkspaceSchema();
-    const opportunityKeHuLeiXingSelect = await opportunitySelectExpression('keHuLeiXing');
+    const opportunityKeHuLeiXingSelect = (await workspaceColumnExists('opportunity', 'gongSiLeiXing'))
+      ? '"gongSiLeiXing" AS "keHuLeiXing"'
+      : await opportunitySelectExpression('keHuLeiXing');
     await client.query('BEGIN');
 
     const opportunityResult = await client.query(
@@ -3709,12 +3801,12 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
          "syncGroupCode",
          "linkedPersonId",
          "linkedProjectId",
-         "phonePrimaryPhoneNumber",
-         "phonePrimaryPhoneCountryCode",
-         "phonePrimaryPhoneCallingCode",
-         "emailPrimaryEmail",
-         "youXiang",
-         "countryAddressCountry",
+         "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
+         "whatsappPrimaryPhoneCountryCode" AS "phonePrimaryPhoneCountryCode",
+         "whatsappPrimaryPhoneCallingCode" AS "phonePrimaryPhoneCallingCode",
+         "youXiangPrimaryEmail" AS "emailPrimaryEmail",
+         "youXiangPrimaryEmail" AS "youXiang",
+         "guoJiaDiQuAddressCountry" AS "countryAddressCountry",
          "keHuXuQiuChanPin",
          "keHuLaiYuan",
          ${opportunityKeHuLeiXingSelect},
@@ -3849,12 +3941,12 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
          "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1),
          "linkedPersonId" = COALESCE("linkedPersonId", $3),
          name = COALESCE($4, name),
-         "guoJia" = COALESCE($5, "guoJia"),
+         "guoJiaDiQuAddressCountry" = COALESCE($5, "guoJiaDiQuAddressCountry"),
          "xuQiuChanPin" = COALESCE($6, "xuQiuChanPin"),
          "jinEAmountMicros" = COALESCE($7, "jinEAmountMicros"),
          "jinECurrencyCode" = COALESCE($8, "jinECurrencyCode"),
-         "gaiShu" = COALESCE($9, "gaiShu"),
-         "muQianJinDu" = COALESCE($10, "muQianJinDu"),
+         "zuiXinGenJinMarkdown" = COALESCE($9, "zuiXinGenJinMarkdown"),
+         "zuiXinGenJinBlocknote" = COALESCE($10, "zuiXinGenJinBlocknote"),
          "renWuJinDu" = CASE WHEN $11::text IS NULL THEN "renWuJinDu" ELSE $11::text::${schema}."_xiangMu_renWuJinDu_enum" END,
          "updatedAt" = now()
        WHERE target.id = $12
@@ -3869,7 +3961,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
         opportunity.amountAmountMicros || null,
         nonBlankOrNull(opportunity.amountCurrencyCode),
         nonBlankOrNull(opportunity.message),
-        nonBlankOrNull(opportunity.xiangMuJinDu),
+        null,
         taskValue,
         existing.id,
       ],
@@ -3891,12 +3983,12 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
        "updatedByName",
        "updatedByContext",
        "guoNeiHaiWai",
-       "guoJia",
+       "guoJiaDiQuAddressCountry",
        "xuQiuChanPin",
        "jinEAmountMicros",
        "jinECurrencyCode",
-       "gaiShu",
-       "muQianJinDu",
+       "zuiXinGenJinMarkdown",
+       "zuiXinGenJinBlocknote",
        "renWuJinDu",
        "syncGroupCode",
        "sourceOpportunityId",
@@ -3935,7 +4027,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
       opportunity.amountAmountMicros || null,
       nonBlankOrNull(opportunity.amountCurrencyCode),
       nonBlankOrNull(opportunity.message),
-      nonBlankOrNull(opportunity.xiangMuJinDu),
+      null,
       taskValue,
       opportunity.syncGroupCode,
       opportunity.id,
@@ -3961,7 +4053,9 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
   const client = await pool.connect();
   try {
     const schema = await getWorkspaceSchema();
-    const opportunityKeHuLeiXingSelect = await opportunitySelectExpression('keHuLeiXing');
+    const opportunityKeHuLeiXingSelect = (await workspaceColumnExists('opportunity', 'gongSiLeiXing'))
+      ? '"gongSiLeiXing" AS "keHuLeiXing"'
+      : await opportunitySelectExpression('keHuLeiXing');
     await client.query('BEGIN');
 
     const opportunityResult = await client.query(
@@ -3973,20 +4067,19 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
          "syncGroupCode",
          "linkedPersonId",
          "linkedProjectId",
-         "phonePrimaryPhoneNumber",
-         "phonePrimaryPhoneCountryCode",
-         "phonePrimaryPhoneCallingCode",
-         "emailPrimaryEmail",
-         "youXiang",
-         "countryAddressCountry",
+         "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
+         "whatsappPrimaryPhoneCountryCode" AS "phonePrimaryPhoneCountryCode",
+         "whatsappPrimaryPhoneCallingCode" AS "phonePrimaryPhoneCallingCode",
+         "youXiangPrimaryEmail" AS "emailPrimaryEmail",
+         "youXiangPrimaryEmail" AS "youXiang",
+         "guoJiaDiQuAddressCountry" AS "countryAddressCountry",
          "keHuXuQiuChanPin",
          "keHuLaiYuan",
          ${opportunityKeHuLeiXingSelect},
          "zhiWei",
          "amountAmountMicros",
          "amountCurrencyCode",
-         "message",
-         "xiangMuJinDu",
+         "zuiXinGenJinMarkdown" AS "message",
          stage
        FROM ${schema}.opportunity
        WHERE id = $1 AND "deletedAt" IS NULL
