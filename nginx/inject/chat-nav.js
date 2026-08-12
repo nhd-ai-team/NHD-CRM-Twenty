@@ -1470,14 +1470,14 @@
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeInjectedNavItems();
+      ensureSettingsChannelsNav();
       if (isCustomManagedSettingsPage()) {
-        ensureSettingsChannelsNav();
         ensureSettingsAccountsCards();
         ensureSettingsAccountsRbacCard();
         renderChannelsSettingsPage();
         renderRbacSettingsPage();
       } else {
-        removeInjectedSettingsNavItems();
+        removeSettingsAccountsCards();
         removeChannelsSettingsPage();
         removeRbacSettingsPage();
       }
