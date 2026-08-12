@@ -788,8 +788,10 @@ app.post('/api/graphql-compat', async (req, res) => {
   try {
     const headers = { 'Content-Type': 'application/json' };
     const authorization = String(req.headers.authorization || '');
+    const cookie = String(req.headers.cookie || '');
+    if (cookie) headers.Cookie = cookie;
     if (authorization) headers.Authorization = authorization;
-    else if (TWENTY_API_KEY) headers.Authorization = `Bearer ${TWENTY_API_KEY}`;
+    else if (!cookie && TWENTY_API_KEY) headers.Authorization = `Bearer ${TWENTY_API_KEY}`;
     const response = await fetch(`${TWENTY_API_URL}/graphql`, {
       method: 'POST',
       headers,
@@ -798,6 +800,12 @@ app.post('/api/graphql-compat', async (req, res) => {
     const text = await response.text();
     res.status(response.status);
     res.setHeader('Content-Type', response.headers.get('content-type') || 'application/json; charset=utf-8');
+    const setCookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : [];
+    if (setCookies.length) res.setHeader('Set-Cookie', setCookies);
+    else {
+      const setCookie = response.headers.get('set-cookie');
+      if (setCookie) res.setHeader('Set-Cookie', setCookie);
+    }
     if (mapped.changed) res.setHeader('X-CRM-GraphQL-Compat', 'legacy-opportunity-input');
     res.send(text);
   } catch (error) {
