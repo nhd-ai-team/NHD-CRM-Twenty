@@ -11,6 +11,7 @@ const {
 const { conversationVisibilityWhere } = require('../lib/conversation-visibility');
 const {
   isWebsiteFormPayload,
+  mapLegacyCreateOpportunityGraphQLPayload,
   normalizeCustomerType,
   normalizeSource,
   normalizeWebsiteFormPayload,
@@ -184,4 +185,36 @@ test('website form helpers keep unknown optional enums from blocking ingestion',
   assert.equal(normalizeCustomerType('未知类型'), null);
   assert.equal(isWebsiteFormPayload({ event: 'form_submit' }), true);
   assert.equal(isWebsiteFormPayload({ content: 'hello', senderType: 'visitor' }), false);
+});
+
+test('mapLegacyCreateOpportunityGraphQLPayload keeps old /graphql website form address working', () => {
+  const mapped = mapLegacyCreateOpportunityGraphQLPayload({
+    query: 'mutation($data: OpportunityCreateInput!){ createOpportunity(data:$data){ id } }',
+    variables: {
+      data: {
+        name: 'Legacy Web Form',
+        phone: '+86 177 1005 1913',
+        email: 'legacy@example.com',
+        country: 'CN',
+        keHuLeiXing: '中间商',
+        message: '旧官网表单备注',
+        keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
+      },
+    },
+  });
+
+  assert.equal(mapped.changed, true);
+  assert.deepEqual(mapped.payload.variables.data, {
+    name: 'Legacy Web Form',
+    keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
+    whatsapp: {
+      primaryPhoneNumber: '17710051913',
+      primaryPhoneCallingCode: '+86',
+      primaryPhoneCountryCode: 'CN',
+    },
+    youXiang: { primaryEmail: 'legacy@example.com' },
+    guoJiaDiQu: { addressCountry: 'CN' },
+    gongSiLeiXing: 'ZHONG_JIAN_SHANG',
+    zuiXinGenJin: { markdown: '旧官网表单备注' },
+  });
 });
