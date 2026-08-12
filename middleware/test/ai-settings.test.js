@@ -9,6 +9,12 @@ const {
   serializeAiSettingRow,
 } = require('../lib/ai-settings');
 const { conversationVisibilityWhere } = require('../lib/conversation-visibility');
+const {
+  isWebsiteFormPayload,
+  normalizeCustomerType,
+  normalizeSource,
+  normalizeWebsiteFormPayload,
+} = require('../lib/website-form');
 
 test('normalizeTimeValue accepts HH:mm and truncates database time strings', () => {
   assert.equal(normalizeTimeValue('09:30'), '09:30');
@@ -133,4 +139,49 @@ test('conversationVisibilityWhere keeps admin/boss global and sales scoped', () 
   assert.match(visibility.sql, /c\.channel = 'whatsapp'/);
   assert.match(visibility.sql, /email/);
   assert.deepEqual(visibility.params, ['member-1', 'user-1']);
+});
+
+test('normalizeWebsiteFormPayload maps website form fields to current Twenty opportunity input', () => {
+  const normalized = normalizeWebsiteFormPayload({
+    type: 'form_submission',
+    full_name: 'Ada',
+    company_name: 'NHD Test Co',
+    email: ' ada@example.com ',
+    mobile: '+86 177 1005 1913',
+    country: 'CN',
+    product: '过滤设备',
+    message: '需要报价',
+    source: '官网表单',
+    companyType: '业主',
+    pageUrl: 'https://www.chinanhd.com/contact',
+  });
+
+  assert.deepEqual(normalized.opportunity, {
+    name: 'NHD Test Co',
+    keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
+    stage: 'XIANSUO',
+    keHuXuQiuChanPin: '过滤设备',
+    gongSiLeiXing: 'YE_ZHU',
+    youXiang: { primaryEmail: 'ada@example.com' },
+    whatsapp: {
+      primaryPhoneNumber: '17710051913',
+      primaryPhoneCallingCode: '+86',
+      primaryPhoneCountryCode: 'CN',
+    },
+    guoJiaDiQu: { addressCountry: 'CN' },
+    guanWangLianJie: {
+      primaryLinkUrl: 'https://www.chinanhd.com/contact',
+      primaryLinkLabel: 'https://www.chinanhd.com/contact',
+    },
+    zuiXinGenJin: {
+      markdown: '需要报价',
+    },
+  });
+});
+
+test('website form helpers keep unknown optional enums from blocking ingestion', () => {
+  assert.equal(normalizeSource('官网留言'), 'GUAN_WANG_BIAO_DAN');
+  assert.equal(normalizeCustomerType('未知类型'), null);
+  assert.equal(isWebsiteFormPayload({ event: 'form_submit' }), true);
+  assert.equal(isWebsiteFormPayload({ content: 'hello', senderType: 'visitor' }), false);
 });
