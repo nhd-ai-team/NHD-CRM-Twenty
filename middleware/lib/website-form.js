@@ -175,16 +175,16 @@ function mapLegacyOpportunityInput(data = {}) {
     changed = true;
   }
 
-  if (next.message !== undefined && next.zuiXinGenJin === undefined) {
+  if (next.message !== undefined && next.guanWangBeiZhu === undefined) {
     const note = String(next.message || '').trim();
-    if (note) assignIfMissing('zuiXinGenJin', { markdown: note });
+    if (note) assignIfMissing('guanWangBeiZhu', { blocknote: buildBlockNoteDoc(note), markdown: note });
     delete next.message;
     changed = true;
   }
 
-  if (next.note !== undefined && next.zuiXinGenJin === undefined) {
+  if (next.note !== undefined && next.guanWangBeiZhu === undefined) {
     const note = String(next.note || '').trim();
-    if (note) assignIfMissing('zuiXinGenJin', { markdown: note });
+    if (note) assignIfMissing('guanWangBeiZhu', { blocknote: buildBlockNoteDoc(note), markdown: note });
     delete next.note;
     changed = true;
   }
@@ -261,10 +261,9 @@ function normalizeWebsiteFormPayload(body = {}) {
     };
   }
   if (note) {
-    // zuiXinGenJin 是 RICH_TEXT（BlockNote）字段，需提供合法 blocknote JSON 字符串 + markdown；
-    // 直接传 { markdown } 会被校验拒绝（"blocknote must contain valid JSON"）。
-    // 按真实 blocknote 段落数组格式构造，官网表单备注即作为首条跟进内容。
-    opportunity.zuiXinGenJin = {
+    // 官网表单备注单独存到 guanWangBeiZhu（RICH_TEXT），与线索跟进 zuiXinGenJin 区分；
+    // RICH_TEXT 需合法 blocknote JSON 字符串 + markdown，按真实段落数组格式构造。
+    opportunity.guanWangBeiZhu = {
       blocknote: buildBlockNoteDoc(note),
       markdown: note,
     };

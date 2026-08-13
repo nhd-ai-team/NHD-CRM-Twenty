@@ -157,7 +157,9 @@ test('normalizeWebsiteFormPayload maps website form fields to current Twenty opp
     pageUrl: 'https://www.chinanhd.com/contact',
   });
 
-  assert.deepEqual(normalized.opportunity, {
+  // guanWangBeiZhu 是 RICH_TEXT，blocknote 含随机 id，无法 deepEqual，单独校验
+  const { guanWangBeiZhu, ...rest } = normalized.opportunity;
+  assert.deepEqual(rest, {
     name: 'NHD Test Co',
     keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
     stage: 'XIANSUO',
@@ -165,19 +167,16 @@ test('normalizeWebsiteFormPayload maps website form fields to current Twenty opp
     gongSiLeiXing: 'YE_ZHU',
     youXiang: { primaryEmail: 'ada@example.com' },
     whatsapp: {
-      primaryPhoneNumber: '17710051913',
-      primaryPhoneCallingCode: '+86',
-      primaryPhoneCountryCode: 'CN',
+      primaryPhoneNumber: '+8617710051913',
     },
     guoJiaDiQu: { addressCountry: 'CN' },
     guanWangLianJie: {
       primaryLinkUrl: 'https://www.chinanhd.com/contact',
       primaryLinkLabel: 'https://www.chinanhd.com/contact',
     },
-    zuiXinGenJin: {
-      markdown: '需要报价',
-    },
   });
+  assert.equal(guanWangBeiZhu.markdown, '需要报价');
+  assert.doesNotThrow(() => JSON.parse(guanWangBeiZhu.blocknote));
 });
 
 test('website form helpers keep unknown optional enums from blocking ingestion', () => {
@@ -204,17 +203,17 @@ test('mapLegacyCreateOpportunityGraphQLPayload keeps old /graphql website form a
   });
 
   assert.equal(mapped.changed, true);
-  assert.deepEqual(mapped.payload.variables.data, {
+  const { guanWangBeiZhu: legacyNote, ...legacyRest } = mapped.payload.variables.data;
+  assert.deepEqual(legacyRest, {
     name: 'Legacy Web Form',
     keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
     whatsapp: {
-      primaryPhoneNumber: '17710051913',
-      primaryPhoneCallingCode: '+86',
-      primaryPhoneCountryCode: 'CN',
+      primaryPhoneNumber: '+8617710051913',
     },
     youXiang: { primaryEmail: 'legacy@example.com' },
     guoJiaDiQu: { addressCountry: 'CN' },
     gongSiLeiXing: 'ZHONG_JIAN_SHANG',
-    zuiXinGenJin: { markdown: '旧官网表单备注' },
   });
+  assert.equal(legacyNote.markdown, '旧官网表单备注');
+  assert.doesNotThrow(() => JSON.parse(legacyNote.blocknote));
 });
