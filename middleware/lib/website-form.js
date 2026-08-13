@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const EMAIL_SEPARATOR_RE = /[\s,;，；]+/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const VALID_OPPORTUNITY_STAGES = new Set([
@@ -92,26 +93,22 @@ function normalizePhoneInput(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
   const compact = raw.replace(/[\s()-]+/g, '');
+  // 中国大陆手机号：11 位，可带或不带 +86 / 86 前缀。统一转成 E.164（+86139...），
+  // 与 Person 创建成功范式一致（Twenty 电话校验不认拆分的 callingCode/countryCode）。
   const chinaMatch = compact.match(/^\+?86(1\d{10})$/);
   if (chinaMatch) {
-    return {
-      primaryPhoneNumber: chinaMatch[1],
-      primaryPhoneCallingCode: '+86',
-      primaryPhoneCountryCode: 'CN',
-    };
+    return { primaryPhoneNumber: `+86${chinaMatch[1]}` };
   }
   if (/^1\d{10}$/.test(compact)) {
-    return {
-      primaryPhoneNumber: compact,
-      primaryPhoneCallingCode: '+86',
-      primaryPhoneCountryCode: 'CN',
-    };
+    return { primaryPhoneNumber: `+86${compact}` };
   }
+  // 已带 + 的国际号码，原样保留（E.164）。
   if (/^\+\d{5,15}$/.test(compact)) {
     return { primaryPhoneNumber: compact };
   }
+  // 不带 + 的国际号码，补 + 前缀。
   if (/^\d{5,15}$/.test(compact)) {
-    return { primaryPhoneNumber: compact };
+    return { primaryPhoneNumber: `+${compact}` };
   }
   return null;
 }
@@ -217,6 +214,20 @@ function mapLegacyCreateOpportunityGraphQLPayload(payload = {}) {
   };
 }
 
+// 把一段文本构造成 Twenty RICH_TEXT（BlockNote）字段所需的 blocknote JSON 字符串。
+// 真实格式取自 opportunity.zuiXinGenJinBlocknote 列：段落数组，每块含 id/type/props/content/children。
+function buildBlockNoteDoc(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const blocks = (lines.length ? lines : ['']).map((line) => ({
+    id: crypto.randomUUID(),
+    type: 'paragraph',
+    props: { backgroundColor: 'default', textColor: 'default', textAlignment: 'left' },
+    content: [{ type: 'text', text: line, styles: {} }],
+    children: [],
+  }));
+  return JSON.stringify(blocks);
+}
+
 function normalizeWebsiteFormPayload(body = {}) {
   const form = body.form && typeof body.form === 'object' ? body.form : body;
   const name = firstString(form.name, form.fullName, form.full_name, form.contactName, form.contact_name, form.customerName, form.customer_name);
@@ -250,7 +261,11 @@ function normalizeWebsiteFormPayload(body = {}) {
     };
   }
   if (note) {
+    // zuiXinGenJin 是 RICH_TEXT（BlockNote）字段，需提供合法 blocknote JSON 字符串 + markdown；
+    // 直接传 { markdown } 会被校验拒绝（"blocknote must contain valid JSON"）。
+    // 按真实 blocknote 段落数组格式构造，官网表单备注即作为首条跟进内容。
     opportunity.zuiXinGenJin = {
+      blocknote: buildBlockNoteDoc(note),
       markdown: note,
     };
   }
