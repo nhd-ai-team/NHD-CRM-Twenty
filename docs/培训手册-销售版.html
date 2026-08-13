@@ -106,6 +106,17 @@ ul.plain li{margin:5px 0;}
 .shot .cap{font-size:13px; color:var(--text-tertiary); letter-spacing:0.02em;}
 .shot .cap strong{color:var(--text-secondary);}
 
+/* Real screenshots */
+figure.fig{margin:16px 0;}
+figure.fig img{display:block; width:100%; height:auto; border:1px solid var(--border-subtle);
+  border-radius:8px; background:var(--bg-surface);}
+figure.fig figcaption{margin-top:8px; font-size:12.5px; color:var(--text-tertiary); letter-spacing:0.02em;}
+.figrow{display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0; align-items:start;}
+.figrow figure{margin:0;}
+.figrow img{width:100%; height:auto; border:1px solid var(--border-subtle); border-radius:8px;}
+.figrow figcaption{margin-top:6px; font-size:12px; color:var(--text-tertiary); text-align:center;}
+@media (max-width:700px){ .figrow{grid-template-columns:1fr;} }
+
 /* Callouts */
 .callout{margin:16px 0; padding:14px 18px; border-radius:8px; font-size:14px; line-height:1.65;
   border-left:4px solid var(--info); background:var(--bg-surface);}
@@ -209,9 +220,10 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
             </tbody>
           </table>
         </div>
-        <div class="shot">
-          <div class="icon">🖼️</div>
-          <div class="cap"><strong>[ 截图位置 ]</strong> 主线工作流示意图 / 工作台整体界面全景</div>
+        <div class="figrow">
+          <figure><img src="训练截图/01-官网客服.png" alt="官网客服入口"><figcaption>① 客户从官网客服发起咨询</figcaption></figure>
+          <figure><img src="训练截图/02-工作台资料面板.png" alt="对话工作台与资料面板"><figcaption>② 在对话工作台回复并录资料</figcaption></figure>
+          <figure><img src="训练截图/03-确认更新线索.png" alt="更新线索确认"><figcaption>③ 一键写入 / 更新线索</figcaption></figure>
         </div>
       </div>
 
@@ -228,11 +240,12 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
       <div class="sub">
         <div class="sub-title">首次登录</div>
         <ol class="steps">
-          <li><div class="st-title">打开系统地址</div><div class="st-desc">浏览器访问 <code>https://crm.chinanhd.com</code>（建议用 Chrome / Edge）。</div></li>
-          <li><div class="st-title">输入账号密码</div><div class="st-desc">账号（邮箱）与初始密码由管理员分配。首次登录后请尽快修改密码。</div></li>
+          <li><div class="st-title">收到邀请邮件</div><div class="st-desc">管理员根据登记表，向你的邮箱发送一封 CRM 邀请邮件。点邮件里的链接进入系统。</div></li>
+          <li><div class="st-title">自行设置密码</div><div class="st-desc">首次进入时按提示<strong>自己设置登录密码</strong>（没有统一初始密码）。请设置一个只有你知道的专属密码。</div></li>
+          <li><div class="st-title">登录系统</div><div class="st-desc">之后访问 <code>https://crm.chinanhd.com</code>（建议用 Chrome / Edge），用邮箱 + 你设置的密码登录。</div></li>
           <li><div class="st-title">进入工作台</div><div class="st-desc">登录成功后进入 CRM 主界面，左侧为导航栏，顶部可进入「对话工作台」。</div></li>
         </ol>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 登录页面 + 登录后主界面</div></div>
+        <figure class="fig"><img src="训练截图/04-登录页.png" alt="登录页"><figcaption>登录页（邮箱 + 密码登录）</figcaption></figure>
       </div>
 
       <div class="sub">
@@ -248,7 +261,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
           </table>
         </div>
         <div class="callout warn"><span class="co-label">注意</span>只有<strong>后台管理员</strong>能帮别人重置密码；普通销售之间不能互相重置。重置后请第一时间改成自己的专属密码。</div>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 「忘记密码」入口 + 邮件重置页面</div></div>
+        <figure class="fig"><img src="训练截图/05-更改密码.png" alt="更改密码"><figcaption>设置 → 个人资料 →「更改密码」，系统发送含重置链接的邮件</figcaption></figure>
       </div>
 
       <div class="sub">
@@ -263,7 +276,6 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
             </tbody>
           </table>
         </div>
-        <div class="callout note"><span class=" co-label">说明</span>如果你发现某条数据看不到或改不了，多半是<strong>不属于你负责</strong>的范围，属正常权限控制，可找主管或管理员协调。</div>
       </div>
     </section>
 
@@ -283,7 +295,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
           <li><div class="st-title">用手机扫码</div><div class="st-desc">打开手机 WhatsApp →「已连接的设备 / Linked Devices」→ 扫描屏幕上的二维码（或输入配对码）。</div></li>
           <li><div class="st-title">确认绑定成功</div><div class="st-desc">页面显示「已连接 / 在线」状态即为成功，之后客户消息会自动进入工作台。</div></li>
         </ol>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 渠道设置页 + 扫码绑定界面 + 绑定成功状态</div></div>
+        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图待补充 ]</strong> 渠道设置页 + 扫码绑定界面 + 绑定成功状态</div></div>
       </div>
 
       <div class="sub">
@@ -323,7 +335,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
             </tbody>
           </table>
         </div>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 工作台三区标注图（列表 / 消息 / 资料面板）</div></div>
+        <figure class="fig"><img src="训练截图/07-工作台人工接管.png" alt="对话工作台三区"><figcaption>左：会话列表　中：消息区　右：客户 / 线索资料面板</figcaption></figure>
       </div>
 
       <div class="sub">
@@ -333,7 +345,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
           <li><div class="st-title">发送附件</div><div class="st-desc">点输入框旁的附件按钮，选择文件（图片 / PDF / 文档等）发送给客户。</div></li>
           <li><div class="st-title">查看 / 下载客户发来的附件</div><div class="st-desc">客户发来的文件直接在消息区显示，点击即可打开或下载，下载后文件名为客户原始文件名。</div></li>
         </ol>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 发送附件 + 接收附件的消息气泡</div></div>
+        <figure class="fig"><img src="训练截图/08-工作台附件.png" alt="消息附件"><figcaption>消息区收发附件（PDF / 图片 / 文档等），点击即可打开或下载</figcaption></figure>
       </div>
 
       <div class="sub">
@@ -367,7 +379,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
             </tbody>
           </table>
         </div>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 渠道 AI 自动回复开关 + 生效时段设置</div></div>
+        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图待补充 ]</strong> 渠道 AI 自动回复开关 + 生效时段设置</div></div>
       </div>
 
       <div class="callout tip"><span class="co-label">怎么用</span>常见做法：<strong>上班时间关掉 AI 自己回</strong>，保证专业沟通；<strong>下班 / 节假日打开 AI</strong>，让客户不至于无人应答。你手动回复时会自动接管，AI 即停。</div>
@@ -389,7 +401,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
           <li><div class="st-title">选择公司</div><div class="st-desc">在公司字段搜索库内已有公司；<strong>搜不到就直接新建</strong>，避免重复建。</div></li>
           <li><div class="st-title">点「更新线索」</div><div class="st-desc">信息写入 / 更新到 CRM 的 Opportunity。系统自动补齐线索编码、创建时间等。</div></li>
         </ol>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 资料面板填写 + 公司搜索/新建 + 更新线索按钮</div></div>
+        <figure class="fig"><img src="训练截图/07-工作台人工接管.png" alt="资料面板录入线索"><figcaption>右侧资料面板填写客户信息，点「更新线索」写入 CRM</figcaption></figure>
       </div>
 
       <div class="sub">
@@ -415,7 +427,7 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
           <li>类似地可「转项目」，进入项目跟踪。</li>
           <li>操作前有二次确认；若失败会弹出<strong>明确的失败原因</strong>，按提示处理即可。</li>
         </ul>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 线索列表顶部「转客户」按钮 + 二次确认弹窗</div></div>
+        <figure class="fig"><img src="训练截图/09-转客户确认.png" alt="转客户确认"><figcaption>线索列表顶部「转客户 / 转项目」按钮 + 二次确认弹窗</figcaption></figure>
         <div class="callout note"><span class=" co-label">提示</span>官网询盘表单会<strong>自动建成线索</strong>并标注「客户来源 = 官网表单、进度 = 未处理线索」，你在线索列表就能直接看到，无需手工录入。</div>
       </div>
     </section>
@@ -429,9 +441,9 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
       <p class="lead">把客户、公司、商机、项目关联起来，资料越完整，跟进越高效、交接越顺畅。</p>
 
       <div class="sub">
-        <div class="sub-title">对象之间怎么关联</div>
-        <p>联系人 ↔ 公司 ↔ 商机 / 线索 ↔ 项目 ↔ 任务 可以互相关联。在任意一条记录里，都能看到并跳转到它关联的其他记录，形成完整客户视图。</p>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 一条线索详情页，展示关联的公司 / 联系人 / 项目</div></div>
+        <div class="sub-title">对象之间的数据关联</div>
+        <p>联系人、公司、商机 / 线索、项目之间共享一部分客户信息。<strong>当前主要通过「字段自动同步」保持这些信息一致</strong>——在一处更新，关联记录会自动带过去（详见本章最后「字段自动同步」）。</p>
+        <div class="callout note"><span class="co-label">说明</span>目前<strong>暂不支持在关联记录之间直接点击跳转</strong>，关联体现为数据自动同步，不是页面互相跳转。</div>
       </div>
 
       <div class="sub">
@@ -449,15 +461,15 @@ code{font-family:'SF Mono',Menlo,Consolas,monospace; font-size:0.88em;
       </div>
 
       <div class="sub">
-        <div class="sub-title">跟进记录</div>
-        <p>在线索详情页可查看 / 添加跟进记录，形成时间线，方便回溯每次沟通。跟进时间按<strong>东八区（北京时间）</strong>显示。</p>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 线索详情页「跟进记录」入口 + 时间线弹窗</div></div>
+        <div class="sub-title">跟进记录（最新跟进）</div>
+        <p>跟进记录现在是一个<strong>富文本字段</strong>——在线索的「最新跟进」里直接编辑，可写多行、排版，记录本次沟通的进展。<strong>当前为富文本形式，不再是时间线视图</strong>。</p>
+        <figure class="fig"><img src="训练截图/10-最新跟进富文本.png" alt="最新跟进富文本"><figcaption>线索列表 /详情的「最新跟进」富文本，直接编辑记录进展</figcaption></figure>
       </div>
 
       <div class="sub">
         <div class="sub-title">按线索汇总附件</div>
         <p>线索详情页有悬浮的「📎 附件」入口，点开可看到这个客户<strong>横跨所有渠道</strong>（WhatsApp、官网等）收发过的全部文件，方便回溯「这个客户前后发过哪些资料」。</p>
-        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图位置 ]</strong> 线索详情页「附件」悬浮入口 + 附件汇总弹窗</div></div>
+        <div class="shot"><div class="icon">🖼️</div><div class="cap"><strong>[ 截图待补充 ]</strong> 线索详情页「附件」悬浮入口 + 附件汇总弹窗</div></div>
       </div>
 
       <div class="sub">

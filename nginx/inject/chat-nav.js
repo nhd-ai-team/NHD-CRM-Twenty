@@ -314,9 +314,9 @@
   }
 
   function refreshIframeAuthToken() {
-    var iframe = document.getElementById(IFRAME_ID);
-    if (!iframe || iframe.style.display === 'none') return;
-    postAuthTokenToIframe(iframe);
+    Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (iframe) {
+      if (iframe.style.display !== 'none') postAuthTokenToIframe(iframe);
+    });
   }
 
   function getViewSrc(view) {
@@ -349,13 +349,19 @@
     });
   }
 
-  function getOrCreateIframe() {
-    var existing = document.getElementById(IFRAME_ID);
+  function getIframeId(view) {
+    return IFRAME_ID + '_' + (view || 'chat');
+  }
+
+  function getOrCreateIframe(view) {
+    view = view || 'chat';
+    var existing = document.getElementById(getIframeId(view));
     if (existing) return existing;
 
     var iframe = document.createElement('iframe');
-    iframe.id = IFRAME_ID;
-    iframe.src = getViewSrc(getActiveView() || 'chat');
+    iframe.id = getIframeId(view);
+    iframe.setAttribute('data-chat-view', view);
+    iframe.src = getViewSrc(view);
     iframe.style.cssText = [
       'position:fixed',
       'top:0',
@@ -406,10 +412,10 @@
 
   function showView(view) {
     sessionStorage.setItem(ACTIVE_KEY, view);
-    var iframe = getOrCreateIframe();
-    var src = getViewSrc(view);
-    // 切换视图需重载 iframe（SPA 重读 hash 的 view 参数）
-    if (iframe.getAttribute('src') !== src) iframe.src = src;
+    Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (item) {
+      item.style.display = 'none';
+    });
+    var iframe = getOrCreateIframe(view);
     applyIframeSize(iframe);
     iframe.style.display = 'block';
     postAuthTokenToIframe(iframe);
@@ -419,14 +425,16 @@
 
   function hideChat() {
     sessionStorage.removeItem(ACTIVE_KEY);
-    var iframe = document.getElementById(IFRAME_ID);
-    if (iframe) iframe.style.display = 'none';
+    Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (iframe) {
+      iframe.style.display = 'none';
+    });
     setNavActive('');
   }
 
   function isChatVisible() {
-    var iframe = document.getElementById(IFRAME_ID);
-    return iframe && iframe.style.display !== 'none';
+    return Array.from(document.querySelectorAll('iframe[data-chat-view]')).some(function (iframe) {
+      return iframe.style.display !== 'none';
+    });
   }
 
   // ── nav item active styling ────────────────────────────────────────────────
@@ -511,6 +519,35 @@
       var row = sidebarRowFor(el);
       row.style.display = 'none';
       row.setAttribute('data-chat-hidden-native-nav', '1');
+    });
+  }
+
+  function isLeftNavigationRect(rect) {
+    return rect.left >= 0 &&
+      rect.left <= 320 &&
+      rect.top >= 90 &&
+      rect.top < window.innerHeight - 20 &&
+      rect.width >= 80 &&
+      rect.width <= 360 &&
+      rect.height >= 22 &&
+      rect.height <= 58;
+  }
+
+  function isLeftNavigationAnchor(anchor) {
+    if (!anchor || !anchor.getBoundingClientRect) return false;
+    var rect = anchor.getBoundingClientRect();
+    if (!isLeftNavigationRect(rect)) return false;
+    var text = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+    return !!text;
+  }
+
+  function removeMisplacedInjectedNavItems() {
+    [NAV_ID, MAIL_NAV_ID, SETTINGS_NAV_ID].forEach(function (id) {
+      var item = document.getElementById(id);
+      if (!item) return;
+      var wrapper = item.closest('[data-chat-nav-wrapper="1"]') || item;
+      var rect = wrapper.getBoundingClientRect();
+      if (!isLeftNavigationRect(rect)) wrapper.remove();
     });
   }
 
@@ -1486,8 +1523,11 @@
     removeChannelsSettingsPage();
     removeRbacSettingsPage();
 
+    removeMisplacedInjectedNavItems();
+
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
       var href = a.getAttribute('href') || '';
+      if (!isLeftNavigationAnchor(a)) return false;
       return href.match(/^\/(people|companies|opportunities|notes|tasks|messages)/) ||
              href.match(/^\/objects\//);
     });
@@ -1505,12 +1545,13 @@
       container = refAnchor.parentElement; // keep ref for cloning wrapper
     }
 
-    if (!isSettingsPage() && !document.getElementById(NAV_ID)) {
+    if (!isSettingsPage()) {
       var insertBeforeNode = container;
       [
         { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
         { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
       ].forEach(function (opts) {
+        if (document.getElementById(opts.navId)) return;
         var item = buildNavItem(refAnchor, opts);
         var wrapper = document.createElement(container.tagName);
         wrapper.className = container.className;
@@ -1539,18 +1580,15 @@
 
     setupNavInterception();
 
-    // Pre-create iframe. Keep it hidden, but load it once so the first open is faster.
-    getOrCreateIframe();
     setNavActive(getActiveView());
   }
 
   // ── resize: keep iframe filling the content area ──────────────────────────
 
   window.addEventListener('resize', function () {
-    var iframe = document.getElementById(IFRAME_ID);
-    if (iframe && iframe.style.display !== 'none') {
-      applyIframeSize(iframe);
-    }
+    Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (iframe) {
+      if (iframe.style.display !== 'none') applyIframeSize(iframe);
+    });
   });
 
   // ── 线索转客户：线索列表顶部「转客户」按钮（放在 +New opportunity 左侧）──────────
@@ -2190,12 +2228,19 @@
 
   installAuthCapture();
 
+  var tickInProgress = false;
   function tick() {
-    tryInsert();
-    ensureConvertTopButton();
-    ensureFollowUpEntry();
-    ensureAttachEntry();
-    if (window.location.pathname.indexOf('/settings/workspace-members') === 0) ensureMemberResetPwdButton();
+    if (tickInProgress) return;
+    tickInProgress = true;
+    try {
+      tryInsert();
+      ensureConvertTopButton();
+      ensureFollowUpEntry();
+      ensureAttachEntry();
+      if (window.location.pathname.indexOf('/settings/workspace-members') === 0) ensureMemberResetPwdButton();
+    } finally {
+      tickInProgress = false;
+    }
   }
 
   var observer = new MutationObserver(tick);
