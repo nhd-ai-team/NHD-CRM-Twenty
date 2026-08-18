@@ -14,7 +14,7 @@ export function HistoryApp() {
   const {
     conversations, filtered, selected, selectedId, selectConversation,
     activeStatus, setActiveStatus, search, setSearch,
-  } = useConversations({ includeEmail: false })
+  } = useConversations({ includeEmail: false, view: 'history' })
   const bottomRef = useRef(null)
 
   useEffect(() => { bottomRef.current?.scrollIntoView() }, [selectedId, selected?.messages?.length])

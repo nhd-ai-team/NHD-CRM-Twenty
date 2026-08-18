@@ -135,6 +135,7 @@ services:
 
   # ── 对话工作台前端（生产静态构建）──────────────────────────────────────────
   chat-ui:
+    container_name: twenty-chat-ui
     build:
       context: ./chat-ui
       dockerfile: Dockerfile

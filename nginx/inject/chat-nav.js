@@ -1,7 +1,10 @@
 (function () {
   'use strict';
 
-  var CHAT_SRC   = '/chat/';
+  // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
+  window.__NHD_VERSION__ = '20260813-nav-fix-v8';
+
+  var CHAT_SRC   = '/chat/?v=20260813-chat-ui-auth-fix';
   var LABEL      = '对话工作台';
   var NAV_ID     = '__chat_nav_item__';
   var MAIL_LABEL = '邮箱';
@@ -11,7 +14,7 @@
   var ACCOUNTS_SETTINGS_NAV_ID = '__settings_accounts_nav_item__';
   var EMAILS_SETTINGS_NAV_ID = '__settings_emails_nav_item__';
   var CHANNELS_SETTINGS_LABEL = '渠道';
-  var CHANNELS_SETTINGS_PATH = '/settings/accounts/channels';
+  var CHANNELS_SETTINGS_PATH = '/settings/profile#channels';
   var CHANNELS_SETTINGS_NAV_ID = '__settings_channels_nav_item__';
   var CALENDARS_SETTINGS_NAV_ID = '__settings_calendars_nav_item__';
   var WORKSPACE_SETTINGS_NAV_ID = '__settings_workspace_nav_item__';
@@ -336,7 +339,8 @@
   }
 
   function isChannelsSettingsPage() {
-    return window.location.pathname === CHANNELS_SETTINGS_PATH;
+    return window.location.pathname === '/settings/accounts/channels' ||
+      (window.location.pathname === '/settings/profile' && window.location.hash === '#channels');
   }
 
   function removeInjectedNavItems() {
@@ -389,15 +393,18 @@
       var rect = el.getBoundingClientRect();
       var style = window.getComputedStyle(el);
       // Sidebar is tall (>60% viewport) and not the whole body
+      // 宽度上限放宽到 80%，兼容被拖宽的侧栏/窄视口抽屉，否则 iframe 会从 left:0
+      // 起铺、把左侧菜单整块盖住（看起来就像"菜单不见了"）。
       if (rect.height > window.innerHeight * 0.6 &&
-          rect.width < window.innerWidth * 0.5 &&
+          rect.width < window.innerWidth * 0.8 &&
           rect.left === 0) {
         return rect.right;
       }
     }
     // Fallback: use the nav item's own right edge clamped to a reasonable width
     var nr = navItem.closest('[style*="position"]') || navItem.parentElement;
-    return nr ? Math.min(nr.getBoundingClientRect().right, 300) : 240;
+    var clamp = Math.max(300, Math.round(window.innerWidth * 0.5));
+    return nr ? Math.min(nr.getBoundingClientRect().right, clamp) : 240;
   }
 
   function applyIframeSize(iframe) {
@@ -412,6 +419,10 @@
 
   function showView(view) {
     sessionStorage.setItem(ACTIVE_KEY, view);
+    // 离开设置态时立即清理所有 fixed 覆盖层（渠道/RBAC 面板），
+    // 不等 tick()/tryInsert() 的周期性延迟，避免面板残留在 chat/mail 视图上。
+    removeChannelsSettingsPage();
+    removeRbacSettingsPage();
     Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (item) {
       item.style.display = 'none';
     });
@@ -425,6 +436,9 @@
 
   function hideChat() {
     sessionStorage.removeItem(ACTIVE_KEY);
+    // 同上：收起时清理设置面板覆盖层
+    removeChannelsSettingsPage();
+    removeRbacSettingsPage();
     Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (iframe) {
       iframe.style.display = 'none';
     });
@@ -443,7 +457,14 @@
     [[ 'chat', NAV_ID ], [ 'mail', MAIL_NAV_ID ], [ 'settings', SETTINGS_NAV_ID ]].forEach(function (pair) {
       var el = document.getElementById(pair[1]);
       if (!el) return;
-      var active = pair[0] === 'settings' ? isSettingsPage() && !isChatVisible() : view === pair[0] && !isSettingsPage();
+      var active;
+      if (pair[0] === 'settings') {
+        active = isSettingsPage() && !isChatVisible();
+      } else {
+        // 对话工作台/邮箱：激活条件统一为「当前视图匹配」且「处于聊天态或非原生页面」，
+        // 与原生左侧菜单共用同一套「当前路由=高亮项」逻辑，避免两套机制并存。
+        active = view === pair[0] && (isChatVisible() || !isSettingsPage());
+      }
       el.setAttribute('data-active', active ? '1' : '0');
       el.style.background = active
         ? 'var(--twenty-background-tertiary,rgba(0,0,0,.06))'
@@ -451,6 +472,17 @@
       el.style.color = active
         ? 'var(--twenty-color-purple-50,#9333ea)'
         : '';
+      // 统一选中态：当我们自建入口激活时，清掉原生左侧菜单同组项的 .active，
+      // 避免出现「原生项 + 自建项」同时高亮、两套机制不一致的问题。
+      if (active) {
+        var list = el.closest('[data-chat-nav-wrapper="1"]');
+        list = list ? list.parentElement : el.parentElement;
+        if (list) {
+          Array.from(list.querySelectorAll('a.active')).forEach(function (a) {
+            a.classList.remove('active');
+          });
+        }
+      }
     });
   }
 
@@ -491,14 +523,15 @@
       /^\/objects\/workflows(\/|$)/.test(href || '');
   }
 
-  function sidebarRowFor(el) {
+  function sidebarRowFor(el, maxWidth) {
+    var limit = maxWidth || 360;
     var node = el;
     for (var i = 0; i < 6 && node && node !== document.body; i++) {
       var rect = node.getBoundingClientRect();
       var style = window.getComputedStyle(node);
       if (rect.left <= 320 &&
-          rect.width > 80 && rect.width <= 360 &&
-          rect.height >= 24 && rect.height <= 56 &&
+          rect.width > 80 && rect.width <= limit &&
+          rect.height >= 24 && rect.height <= 72 &&
           style.display !== 'contents') {
         return node;
       }
@@ -515,30 +548,87 @@
       if (!hrefLooksLikeDisabledNav(href) && !textLooksLikeDisabledNav(el.textContent)) return;
       var rect = el.getBoundingClientRect();
       // Only target the left CRM sidebar. Do not hide content inside detail pages.
-      if (rect.left > 360 || rect.width > 420) return;
-      var row = sidebarRowFor(el);
+      // href 命中（工作流）时按导航同一把尺放宽宽度，兼容宽侧栏/抽屉布局；
+      // 纯文本命中仍保持保守上限，避免误隐藏详情页里的同名文字。
+      var byHref = hrefLooksLikeDisabledNav(href);
+      var maxWidth = byHref ? navRowMaxWidth() : 420;
+      if (rect.left > 360 || rect.width > maxWidth) return;
+      var row = sidebarRowFor(el, maxWidth);
       row.style.display = 'none';
       row.setAttribute('data-chat-hidden-native-nav', '1');
     });
   }
 
+  // 左侧导航行的宽度上限不能硬编码：侧栏宽度可被用户拖宽，窄视口下 Twenty 还会
+  // 把导航切成接近全宽的抽屉。实测出现过导航项宽 699px 的布局，旧的 width<=360
+  // 会让判定永久失配 → 自建入口既插不进去、又被当成"跑偏"删掉。
+  function navRowMaxWidth() {
+    return Math.max(360, window.innerWidth - 40);
+  }
+
   function isLeftNavigationRect(rect) {
     return rect.left >= 0 &&
       rect.left <= 320 &&
-      rect.top >= 90 &&
-      rect.top < window.innerHeight - 20 &&
+      rect.top >= 60 &&
+      rect.top < window.innerHeight - 10 &&
       rect.width >= 80 &&
-      rect.width <= 360 &&
+      rect.width <= navRowMaxWidth() &&
       rect.height >= 22 &&
-      rect.height <= 58;
+      rect.height <= 72;
+  }
+
+  // 仅排除我们自己的 iframe（防止递归识别其内链接）。
+  // 注意：旧版这里还排除了 role=dialog / aria-modal / data-modal，但 Twenty 在打开
+  // 设置/详情等模态时会给「整个应用壳或导航抽屉」打上这些属性，导致左导航锚点被误杀
+  // → 菜单永久消失、只能刷新。所以这里只排除自家 iframe，导航锚点改用正向的
+  // 「模块 href + 左对齐几何 + 文本」判定；命令面板链接几何不同不会被误当导航，
+  // 且重复注入会被 getElementById 守卫拦掉，无害。
+  function isInOverlayLayer(el) {
+    if (!el || !el.closest) return false;
+    return !!el.closest('iframe[data-chat-view]');
   }
 
   function isLeftNavigationAnchor(anchor) {
     if (!anchor || !anchor.getBoundingClientRect) return false;
+    if (isInOverlayLayer(anchor)) return false;
     var rect = anchor.getBoundingClientRect();
     if (!isLeftNavigationRect(rect)) return false;
     var text = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
     return !!text;
+  }
+
+  // 放开宽度上限后，用结构特征兜住误判：真正的左侧导航是「左边缘对齐、竖直排列」
+  // 的一组同类锚点。取该组里最靠上的一个做插入参照。只有单个候选时退回旧的
+  // 保守阈值（<=360），避免把主内容区的宽链接当成导航项。
+  function pickNavRefAnchor(anchors) {
+    if (!anchors || anchors.length === 0) return null;
+    var groups = {};
+    anchors.forEach(function (anchor) {
+      var rect = anchor.getBoundingClientRect();
+      var key = String(Math.round(rect.left / 8));
+      if (!groups[key]) groups[key] = [];
+      groups[key].push({ anchor: anchor, top: rect.top });
+    });
+    var best = null;
+    Object.keys(groups).forEach(function (key) {
+      if (!best || groups[key].length > best.length) best = groups[key];
+    });
+    if (best && best.length >= 2) {
+      best.sort(function (a, b) { return a.top - b.top; });
+      return best[0].anchor;
+    }
+    var only = anchors[0];
+    return only.getBoundingClientRect().width <= 360 ? only : null;
+  }
+
+  // 删除判定必须比插入判定更宽松。两端共用同一把尺时，尺子一旦失配就会出现
+  // 「删得掉、插不回」的死锁（宽 699px 布局下菜单永久消失，只能刷新页面）。
+  // 这里只在明显跑到主内容区/视口外时才回收；宽高全 0 属于折叠隐藏态，要保留。
+  function isClearlyMisplacedRect(rect) {
+    if (rect.width === 0 && rect.height === 0) return false;
+    return rect.left > 360 ||
+      rect.height > 120 ||
+      rect.top > window.innerHeight + 200;
   }
 
   function removeMisplacedInjectedNavItems() {
@@ -547,7 +637,7 @@
       if (!item) return;
       var wrapper = item.closest('[data-chat-nav-wrapper="1"]') || item;
       var rect = wrapper.getBoundingClientRect();
-      if (!isLeftNavigationRect(rect)) wrapper.remove();
+      if (isClearlyMisplacedRect(rect)) wrapper.remove();
     });
   }
 
@@ -640,7 +730,8 @@
 
   function isCustomManagedSettingsPage() {
     return window.location.pathname === '/settings/accounts' ||
-      window.location.pathname.indexOf('/settings/accounts/') === 0;
+      window.location.pathname.indexOf('/settings/accounts/') === 0 ||
+      isChannelsSettingsPage();
   }
 
   function removeInjectedSettingsNavItems() {
@@ -843,6 +934,28 @@
       svg: KEY_SVG,
     });
     setSettingsChannelsActive();
+  }
+
+  // 在设置页（含「自定义布局」页）左侧导航尾部追加对话工作台/邮箱两个入口，
+  // 使其与主导航表现一致、可被自定义布局界面看到。复用 buildNavItem 以保证
+  // 点击行为（showView）和选中态（setNavActive）与主导航同一套机制。
+  function ensureSettingsChatNav() {
+    if (!isSettingsPage()) return;
+    var refAnchor = document.querySelector('a[href^="/settings/"]');
+    if (!refAnchor || !refAnchor.parentElement) return;
+    var listEl = refAnchor.parentElement;
+    [
+      { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
+      { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
+    ].forEach(function (opts) {
+      if (document.getElementById(opts.navId)) return;
+      var item = buildNavItem(refAnchor, opts);
+      var wrapper = document.createElement(listEl.tagName);
+      wrapper.className = listEl.className;
+      wrapper.setAttribute('data-chat-nav-wrapper', '1');
+      wrapper.appendChild(item);
+      listEl.appendChild(wrapper);
+    });
   }
 
   function statusLabel(status) {
@@ -1504,10 +1617,14 @@
   }
 
   function tryInsert() {
+    try { var _s = window.__NHD_STATE__; if (_s) { _s.lastTryInsertAt = Date.now(); _s.lastSettings = isSettingsPage(); } } catch (_) {}
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
-      removeInjectedNavItems();
+      // 注入层兼容：在设置页（含「自定义布局」页）左侧导航也呈现对话工作台/邮箱，
+      // 不再整体移除自建入口，避免它们从设置页左侧消失、无法进行自定义布局调整。
+      ensureSettingsChatNav();
       ensureSettingsChannelsNav();
+      setNavActive(getActiveView());
       if (isCustomManagedSettingsPage()) {
         ensureSettingsAccountsCards();
         ensureSettingsAccountsRbacCard();
@@ -1528,13 +1645,16 @@
     var navAnchors = Array.from(document.querySelectorAll('a[href]')).filter(function (a) {
       var href = a.getAttribute('href') || '';
       if (!isLeftNavigationAnchor(a)) return false;
-      return href.match(/^\/(people|companies|opportunities|notes|tasks|messages)/) ||
-             href.match(/^\/objects\//);
+      // 只认「模块根路径」的导航链接（可带 ?viewId=/#hash）。记录详情链接会多一段 id，
+      // 放开宽度上限后如果不卡这一条，列表页内容区的记录行可能被误当成导航参照。
+      return /^\/(people|companies|opportunities|notes|tasks|messages)(\?|#|$)/.test(href) ||
+             /^\/objects\/[^\/?#]+(\?|#|$)/.test(href);
     });
 
-    if (navAnchors.length === 0) return;
-
-    var refAnchor = navAnchors[0];
+    if (window.__NHD_STATE__) window.__NHD_STATE__.lastNavAnchors = navAnchors.length;
+    var refAnchor = pickNavRefAnchor(navAnchors);
+    if (window.__NHD_STATE__) window.__NHD_STATE__.lastRefAnchor = refAnchor ? 'found' : 'null';
+    if (!refAnchor) return;
     var container = refAnchor.parentElement;
     if (!container) return;
 
@@ -1545,8 +1665,14 @@
       container = refAnchor.parentElement; // keep ref for cloning wrapper
     }
 
+    // insertBefore 的参照必须是 listEl 的直接子节点，否则浏览器会抛
+    // NotFoundError（tryInsert 一抛，后面的按钮/入口注入也全被带停）。
+    var insertBeforeNode = refAnchor;
+    while (insertBeforeNode && insertBeforeNode.parentElement !== listEl) {
+      insertBeforeNode = insertBeforeNode.parentElement;
+    }
+
     if (!isSettingsPage()) {
-      var insertBeforeNode = container;
       [
         { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
         { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
@@ -1557,7 +1683,8 @@
         wrapper.className = container.className;
         wrapper.setAttribute('data-chat-nav-wrapper', '1');
         wrapper.appendChild(item);
-        listEl.insertBefore(wrapper, insertBeforeNode);
+        if (insertBeforeNode) listEl.insertBefore(wrapper, insertBeforeNode);
+        else listEl.appendChild(wrapper);
       });
     }
 
@@ -2226,36 +2353,162 @@
 
   // ── boot ──────────────────────────────────────────────────────────────────
 
-  installAuthCapture();
+  // 错误收集数组：任何环节抛错都能事后排查（旧版只在 try/catch 内 console.debug，
+  // 浏览器默认不显示，导致"菜单消失却无任何报错"无从定位）。
+  window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
+
+  window.__NHD_STATE__ = window.__NHD_STATE__ || {
+    ticks: 0, obs: 0, route: 0,
+    lastUrl: '', lastNavAnchors: -1, lastRefAnchor: '?',
+    lastTryInsertAt: 0, lastSettings: null
+  };
 
   var tickInProgress = false;
+  var tickScheduled = false;
   function tick() {
     if (tickInProgress) return;
     tickInProgress = true;
     try {
-      tryInsert();
-      ensureConvertTopButton();
-      ensureFollowUpEntry();
-      ensureAttachEntry();
-      if (window.location.pathname.indexOf('/settings/workspace-members') === 0) ensureMemberResetPwdButton();
+      safeRun('tryInsert', tryInsert);
+      safeRun('ensureConvertTopButton', ensureConvertTopButton);
+      safeRun('ensureFollowUpEntry', ensureFollowUpEntry);
+      safeRun('ensureAttachEntry', ensureAttachEntry);
+      if (window.location.pathname.indexOf('/settings/workspace-members') === 0) {
+        safeRun('ensureMemberResetPwdButton', ensureMemberResetPwdButton);
+      }
     } finally {
       tickInProgress = false;
     }
+    try {
+      var _st = window.__NHD_STATE__;
+      _st.ticks++; _st.lastUrl = location.pathname;
+    } catch (_) {}
   }
 
-  var observer = new MutationObserver(tick);
-  observer.observe(document.body, { childList: true, subtree: true });
+  // 逐个隔离执行：任何单个注入环节抛错都不应拖停其余环节
+  // （历史上 tryInsert 抛 NotFoundError 时，转客户按钮/跟进入口会跟着一起消失）。
+  var safeRunWarned = {};
+  function safeRun(name, fn) {
+    try {
+      fn();
+    } catch (e) {
+      try {
+        window.__NHD_ERRORS__.push({ name: name, msg: (e && e.message) || String(e), at: Date.now() });
+        if (window.__NHD_ERRORS__.length > 50) window.__NHD_ERRORS__.shift();
+      } catch (_) {}
+      if (!safeRunWarned[name]) {
+        safeRunWarned[name] = 1;
+        try { console.warn('[chat-nav] ' + name + ' failed: ' + (e && e.message)); } catch (_) {}
+      }
+    }
+  }
 
-  if (document.readyState === 'complete') {
+  // ── 渲染前兜底（v8）：退出设置后若主页面菜单未注入 / 绑定页残留，在浏览器绘制前整页刷新 ──
+  var SETTINGS_RE = /^\/settings\//;
+  var _leftSettingsAt = 0;
+  function _brokenAfterLeaveReload() {
+    if (!_leftSettingsAt) return;
+    if (Date.now() - _leftSettingsAt > 5000) { _leftSettingsAt = 0; return; }
+    if (SETTINGS_RE.test(window.location.pathname)) return;
+    var overlay = document.getElementById('__settings_channels_page__') || document.getElementById('__settings_rbac_page__');
+    if (overlay) { window.location.replace(window.location.pathname + window.location.search + window.location.hash); return; }
+    var nativeNav = document.querySelector('a[href^="/objects/"],a[href^="/companies/"],a[href^="/opportunities/"],a[href^="/tasks/"],a[href^="/notes/"]');
+    if (nativeNav && !document.getElementById('__chat_nav_item__')) {
+      window.location.replace(window.location.pathname + window.location.search + window.location.hash);
+    }
+  }
+
+  // 路由变化触发器：Twenty 是 SPA，设置/详情的「打开-关闭」本质是 history 路由切换
+  // （含 hash 路由，如 设置→渠道 即 /settings/profile#channels）。
+  // 仅靠 MutationObserver 在 React 重渲染时可能漏触发或时序错位——"退出设置后菜单回不来"
+  // 以及"退出设置后右侧 WhatsApp 绑定页残留"都源于此：removeChannelsSettingsPage / tryInsert
+  // 没被调用。这里拦截 pushState/replaceState 并监听 popstate/hashchange，每次路由变化都
+  // 强制重跑 tick，从根上保证注入/清理在导航后必然执行。
+  function installRouteTrigger() {
+    function fire() {
+      try { if (window.__NHD_STATE__) window.__NHD_STATE__.route++; } catch (_) {}
+      scheduleTick();
+    }
+    var _ps = window.history.pushState, _rs = window.history.replaceState;
+    if (typeof _ps === 'function') {
+      window.history.pushState = function () {
+        var r = _ps.apply(this, arguments); fire(); return r;
+      };
+    }
+    if (typeof _rs === 'function') {
+      window.history.replaceState = function () {
+        var r = _rs.apply(this, arguments); fire(); return r;
+      };
+    }
+    window.addEventListener('popstate', fire);
+    window.addEventListener('hashchange', fire);
+  }
+
+  // 触发机制全部就绪后再做其它初始化；这样即便后续步骤抛错，自动注入链也不受影响。
+  // scheduleTick: 立即跑一次 + 250ms 后再跑一次，兜住 React 异步重渲染导致的时序错位
+  // （tick 跑时菜单锚点尚未挂载，下一帧才出现 → 立即那次找不到锚点，延迟那次补回）。
+  function scheduleTick() {
     tick();
-  } else {
-    window.addEventListener('load', tick);
+    if (tickScheduled) return;
+    tickScheduled = true;
+    setTimeout(function () { tickScheduled = false; tick(); }, 250);
   }
 
-  // Twenty is a SPA: sidebar nodes can be replaced after navigation, role changes,
-  // or metadata refreshes. Keep a low-frequency fallback so our entry survives
-  // those rerenders without requiring a full browser refresh.
+  var observer = new MutationObserver(function () {
+    try { if (window.__NHD_STATE__) window.__NHD_STATE__.obs++; } catch (_) {}
+    scheduleTick();
+    _brokenAfterLeaveReload();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  installRouteTrigger();
+  if (document.readyState === 'complete') tick(); else window.addEventListener('load', tick);
+  // 低频次兜底：React 重渲染 / 元数据刷新后，即便上述触发器都漏了，也能在 2s 内自愈。
   setInterval(tick, 2000);
   setInterval(refreshIframeAuthToken, 30000);
+
+  // 诊断入口：手动强制重跑注入（排查"自动触发器没生效"时调用）。
+  window.__NHD_FORCE_TICK = function () { tick(); return window.__NHD_STATE__; };
+
+  // 鉴权抓取：隔离执行，失败不影响上面的注入触发链。
+  try {
+    installAuthCapture();
+  } catch (e) {
+    try { window.__NHD_ERRORS__.push({ name: 'installAuthCapture', msg: String(e), at: Date.now() }); } catch (_) {}
+  }
+
+
+  // ── 兜底：退出设置时整页重载主页，强制 chat-nav.js 重新执行（修复菜单消失/绑定页残留）──
+      (function () {
+    if (typeof window.__NHD_LEAVE_RELOAD__ === 'function') return;
+    var SETTINGS_RE = /^\/settings\//;
+    var wasInSettings = SETTINGS_RE.test(window.location.pathname);
+    function _absoluteUrl(url) {
+      if (!url) return window.location.pathname + window.location.search + window.location.hash;
+      try { return new URL('' + url, window.location.href).href; } catch (e) { return '' + url; }
+    }
+    function _leaveTo(url) { _leftSettingsAt = Date.now(); window.location.replace(_absoluteUrl(url)); }
+    function _isLeave(url) {
+      if (url === undefined || url === null) return false;
+      var p = ('' + url).split('#')[0];
+      return wasInSettings && !SETTINGS_RE.test(p);
+    }
+    function _watch() {
+      var nowInSettings = SETTINGS_RE.test(window.location.pathname);
+      if (wasInSettings && !nowInSettings) { _leaveTo(); return; }
+      wasInSettings = nowInSettings;
+    }
+    window.addEventListener('popstate', _watch);
+    window.addEventListener('hashchange', _watch);
+    var _ps = history.pushState, _rs = history.replaceState;
+    history.pushState = function (state, title, url) {
+      if (_isLeave(url)) { _leaveTo(url); return; }
+      var r = _ps.apply(history, arguments); _watch(); return r;
+    };
+    history.replaceState = function (state, title, url) {
+      if (_isLeave(url)) { _leaveTo(url); return; }
+      var r = _rs.apply(history, arguments); _watch(); return r;
+    };
+    window.__NHD_LEAVE_RELOAD__ = _watch;
+  })();
 
 })();

@@ -200,6 +200,9 @@ export const SettingsAccountsChannels = () => {
   }, [status?.status]);
 
   const requestJson = async (url: string, options?: RequestInit) => {
+    if (!accessToken) {
+      throw new Error('登录状态正在初始化，请稍后重试。');
+    }
     const response = await fetch(url, {
       ...options,
       headers: {
@@ -315,8 +318,12 @@ export const SettingsAccountsChannels = () => {
   };
 
   useEffect(() => {
+    if (!accessToken) {
+      setError('登录状态正在初始化，请稍后重试。');
+      return;
+    }
     refreshStatus();
-  }, []);
+  }, [accessToken]);
 
   useEffect(() => {
     return () => {

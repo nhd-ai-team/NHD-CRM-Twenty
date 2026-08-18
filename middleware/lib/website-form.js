@@ -242,10 +242,11 @@ function normalizeWebsiteFormPayload(body = {}) {
   const websiteLabel = firstString(form.websiteLabel, form.pageTitle, form.page_title, form.sourcePage);
   const companyType = normalizeCustomerType(firstString(form.companyType, form.gongSiLeiXing, form.keHuLeiXing));
   const source = normalizeSource(firstString(form.source, form.keHuLaiYuan));
-  const stage = normalizeOpportunityStage(form.stage, 'XIANSUO');
+  const stage = normalizeOpportunityStage(form.stage, 'WEI_CHU_LI_XIANSUO');
 
   const opportunity = {
-    name: company || name || email || phone || '官网表单线索',
+    // 标题不再用联系人 name（name 改为建客户联系人 Person，见 index.js createWebsiteFormOpportunity）
+    name: company || email || phone || '官网表单线索',
     keHuLaiYuan: source,
     stage,
   };

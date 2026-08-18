@@ -49,6 +49,22 @@ export function applyContactMethodStage(draft) {
 // 用已保存草稿 + 联系人/渠道默认值，组装侧栏表单初值。
 export function buildDraft(conv) {
   const s = conv?.leadDraft || {}
+  const crm = conv?.crmLeadDraft || null
+  if (crm) {
+    return applyContactMethodStage({
+      name: crm.name ?? '',
+      company: crm.company ?? '',
+      companyId: crm.companyId ?? '',
+      phone: crm.phone ?? conv?.contact?.phone ?? '',
+      email: crm.email ?? conv?.contact?.email ?? '',
+      country: crm.country ?? '',
+      source: crm.source ?? SOURCE_BY_CHANNEL[conv?.channel] ?? '',
+      companyType: crm.companyType ?? '',
+      stage: normalizeStage(crm.stage, INITIAL_STAGE),
+      product: crm.product ?? '',
+      note: crm.note ?? '',
+    })
+  }
   return applyContactMethodStage({
     // 姓名不预填系统占位名（如「网站访客 xxx」），留空让销售填真实联系人姓名。
     name: s.name ?? '',

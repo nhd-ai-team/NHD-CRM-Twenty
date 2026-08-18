@@ -86,7 +86,7 @@
     var existing = document.querySelector('script[data-settings-channels-panel="1"]');
     if (existing) return;
     var script = document.createElement('script');
-    script.src = '/settings-channels-panel.js?v=20260813-panel-cache-v2';
+    script.src = '/settings-channels-panel.js?v=20260813-panel-auth-wait-v1';
     script.async = true;
     script.setAttribute('data-settings-channels-panel', '1');
     script.onload = function () {
@@ -156,4 +156,58 @@
   if (document.readyState === 'complete') guardedTick();
   else window.addEventListener('load', guardedTick);
   setInterval(guardedTick, 2000);
+
+  // ── 渲染前兜底（v5）：退出设置后若主页面菜单未注入 / 绑定页残留，在浏览器绘制前整页刷新 ──
+  var SETTINGS_RE = /^\/settings\//;
+  var _leftSettingsAt = 0;
+  function _brokenAfterLeaveReload() {
+    if (!_leftSettingsAt) return;
+    if (Date.now() - _leftSettingsAt > 5000) { _leftSettingsAt = 0; return; }
+    if (SETTINGS_RE.test(window.location.pathname)) return;
+    var overlay = document.getElementById('__settings_channels_page__') || document.getElementById('__settings_rbac_page__');
+    if (overlay) { window.location.replace(window.location.pathname + window.location.search + window.location.hash); return; }
+    var nativeNav = document.querySelector('a[href^="/objects/"],a[href^="/companies/"],a[href^="/opportunities/"],a[href^="/tasks/"],a[href^="/notes/"]');
+    if (nativeNav && !document.getElementById('__chat_nav_item__')) {
+      window.location.replace(window.location.pathname + window.location.search + window.location.hash);
+    }
+  }
+  try {
+    var _leaveObserver = new MutationObserver(function () { _brokenAfterLeaveReload(); });
+    if (document.body) _leaveObserver.observe(document.body, { childList: true, subtree: true });
+  } catch (e) {}
+
+  // ── 兜底：退出设置时整页重载主页（与 chat-nav.js 同源，确保菜单/绑定页状态复位）──
+      (function () {
+    if (typeof window.__NHD_LEAVE_RELOAD__ === 'function') return;
+    var SETTINGS_RE = /^\/settings\//;
+    var wasInSettings = SETTINGS_RE.test(window.location.pathname);
+    function _absoluteUrl(url) {
+      if (!url) return window.location.pathname + window.location.search + window.location.hash;
+      try { return new URL('' + url, window.location.href).href; } catch (e) { return '' + url; }
+    }
+    function _leaveTo(url) { _leftSettingsAt = Date.now(); window.location.replace(_absoluteUrl(url)); }
+    function _isLeave(url) {
+      if (url === undefined || url === null) return false;
+      var p = ('' + url).split('#')[0];
+      return wasInSettings && !SETTINGS_RE.test(p);
+    }
+    function _watch() {
+      var nowInSettings = SETTINGS_RE.test(window.location.pathname);
+      if (wasInSettings && !nowInSettings) { _leaveTo(); return; }
+      wasInSettings = nowInSettings;
+    }
+    window.addEventListener('popstate', _watch);
+    window.addEventListener('hashchange', _watch);
+    var _ps = history.pushState, _rs = history.replaceState;
+    history.pushState = function (state, title, url) {
+      if (_isLeave(url)) { _leaveTo(url); return; }
+      var r = _ps.apply(history, arguments); _watch(); return r;
+    };
+    history.replaceState = function (state, title, url) {
+      if (_isLeave(url)) { _leaveTo(url); return; }
+      var r = _rs.apply(history, arguments); _watch(); return r;
+    };
+    window.__NHD_LEAVE_RELOAD__ = _watch;
+  })();
+
 })();

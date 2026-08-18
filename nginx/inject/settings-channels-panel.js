@@ -66,6 +66,7 @@
   function getTwentyAccessToken() {
     var candidates = [
       getTokenFromValue(getCookie('tokenPair')),
+      sessionStorage.getItem('twentyAccessToken'),
       getTokenFromWebStorage(window.sessionStorage),
       getTokenFromWebStorage(window.localStorage),
     ];
@@ -75,10 +76,26 @@
     return '';
   }
 
+  function waitForTwentyAccessToken(timeoutMs) {
+    var token = getTwentyAccessToken();
+    if (token) return Promise.resolve(token);
+    return new Promise(function (resolve) {
+      var startedAt = Date.now();
+      var timer = window.setInterval(function () {
+        var nextToken = getTwentyAccessToken();
+        if (nextToken || Date.now() - startedAt >= timeoutMs) {
+          window.clearInterval(timer);
+          resolve(nextToken || '');
+        }
+      }, 250);
+    });
+  }
+
   function getTwentyAuthHeaders(extra) {
     var token = getTwentyAccessToken();
     var headers = extra || {};
     if (token) {
+      headers.Authorization = 'Bearer ' + token;
       headers['X-Twenty-Access-Token'] = token;
       var payload = decodeJwtPayload(token);
       if (payload && payload.sub) headers['X-Twenty-User-Id'] = payload.sub;
@@ -290,7 +307,11 @@
       if (Date.now() - lastStatusStartedAt < MIN_STATUS_INTERVAL_MS) return Promise.resolve(null);
     }
     lastStatusStartedAt = Date.now();
-    statusInFlight = window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin', headers: getTwentyAuthHeaders() })
+    statusInFlight = waitForTwentyAccessToken(6000)
+      .then(function (token) {
+        if (!token) throw new Error('登录状态正在初始化，请刷新 CRM 后重试。');
+        return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin', headers: getTwentyAuthHeaders() });
+      })
       .then(function (response) { return readJsonResponse(response, '状态加载失败'); })
       .then(function (data) {
         setCachedStatus(data);
@@ -454,6 +475,7 @@
     else {
       var cached = getCachedStatus();
       if (cached) renderStatus(root, cached, true);
+      else loadStatus(root, false);
     }
   }
 

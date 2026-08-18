@@ -128,8 +128,19 @@ test('buildAiSettingResponses keeps stable channel defaults without endpoint-onl
 
 test('conversationVisibilityWhere keeps admin/boss global and sales scoped', () => {
   assert.deepEqual(conversationVisibilityWhere(null), { sql: 'FALSE', params: [] });
-  assert.deepEqual(conversationVisibilityWhere({ role: 'admin' }), { sql: 'TRUE', params: [] });
-  assert.deepEqual(conversationVisibilityWhere({ role: 'boss' }), { sql: 'TRUE', params: [] });
+  const adminVisibility = conversationVisibilityWhere({ role: 'admin', workspaceMemberId: 'admin-member', userId: 'admin-user' });
+  assert.match(adminVisibility.sql, /c\.channel <> 'whatsapp'/);
+  assert.match(adminVisibility.sql, /conv\.channel_accounts/);
+  assert.deepEqual(adminVisibility.params, ['admin-member', 'admin-user']);
+
+  const bossHistoryVisibility = conversationVisibilityWhere(
+    { role: 'boss', workspaceMemberId: 'boss-member', userId: 'boss-user' },
+    'c',
+    1,
+    { allowPrivilegedAllChannels: true },
+  );
+  assert.match(bossHistoryVisibility.sql, /TRUE/);
+  assert.deepEqual(bossHistoryVisibility.params, ['boss-member', 'boss-user']);
 
   const visibility = conversationVisibilityWhere({
     role: 'sales',
@@ -162,7 +173,7 @@ test('normalizeWebsiteFormPayload maps website form fields to current Twenty opp
   assert.deepEqual(rest, {
     name: 'NHD Test Co',
     keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
-    stage: 'XIANSUO',
+    stage: 'WEI_CHU_LI_XIANSUO',
     keHuXuQiuChanPin: '过滤设备',
     gongSiLeiXing: 'YE_ZHU',
     youXiang: { primaryEmail: 'ada@example.com' },

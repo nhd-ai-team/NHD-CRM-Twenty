@@ -487,21 +487,21 @@ async function requireConversationAccess(req, res, options = {}) {
     res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
     return null;
   }
-  if (viewer.role === 'admin' || viewer.role === 'boss') {
-    // admin 看全部且可写；boss（总经理）看全部但仅查看
-    if (options.write && viewer.role !== 'admin') {
-      res.status(403).json({ error: '当前角色仅有查看权限，不能接管或发送消息' });
-      return null;
-    }
-    return { viewer, conversation };
-  }
-  const visibility = conversationVisibilityWhere(viewer, 'c', 2);
+  const workspaceSchema = await getWorkspaceSchema();
+  const visibility = conversationVisibilityWhere(viewer, 'c', 2, {
+    workspaceSchema,
+    allowPrivilegedAllChannels: !!options.historyView,
+  });
   const visibleResult = await pool.query(
     `SELECT EXISTS(SELECT 1 FROM conv.conversations c WHERE c.id = $1 AND ${visibility.sql}) AS visible`,
     [conversation.id, ...visibility.params],
   );
   if (!visibleResult.rows[0]?.visible) {
     res.status(403).json({ error: '当前账号无权查看该会话' });
+    return null;
+  }
+  if (options.write && viewer.role === 'boss') {
+    res.status(403).json({ error: '当前角色仅有查看权限，不能接管或发送消息' });
     return null;
   }
   if (options.reply && conversation.aiEnabled && !(conversation.status === 'takeover' && conversation.agent_id === viewer.workspaceMemberId)) {
@@ -688,23 +688,49 @@ async function backfillOpportunityLatestFollowUp(client, schema, opportunityId) 
           (fu.subject_type = 'opportunity' AND fu.subject_id = $1::text)
           OR ct.twenty_opportunity_id = $1::text
         )
-      ORDER BY fu.created_at DESC
-      LIMIT 1`,
+      ORDER BY fu.created_at DESC`,
     [opportunityId],
   );
-  const latest = result.rows[0];
-  const value = latest
-    ? `${latest.content}\n——${latest.createdByName || '未知'} ${formatFollowUpTime(latest.createdAt)}`
-    : '';
+  const entries = result.rows || [];
+  // 每条跟进 => 富文本：一行加粗署名（作者 · 时间）+ 内容段落（多行内容逐段渲染）。
+  const blocks = [];
+  const mdLines = [];
+  for (const e of entries) {
+    const sig = `${e.createdByName || '未知'} · ${formatFollowUpTime(e.createdAt)}`;
+    blocks.push({
+      id: crypto.randomUUID(),
+      type: 'paragraph',
+      props: { backgroundColor: 'default', textColor: 'default', textAlignment: 'left' },
+      content: [{ type: 'text', text: sig, styles: { bold: true } }],
+      children: [],
+    });
+    mdLines.push(`**${sig}**`);
+    const contentLines = String(e.content || '').split(/\r?\n/);
+    for (const line of (contentLines.length ? contentLines : [''])) {
+      blocks.push({
+        id: crypto.randomUUID(),
+        type: 'paragraph',
+        props: { backgroundColor: 'default', textColor: 'default', textAlignment: 'left' },
+        content: [{ type: 'text', text: line, styles: {} }],
+        children: [],
+      });
+      mdLines.push(line);
+    }
+    mdLines.push(''); // 跟进之间空行分隔
+  }
+  const markdown = mdLines.join('\n').replace(/\n+$/, '');
+  const blocknote = JSON.stringify(blocks);
   try {
-    await twentyGraphQL(
-      `mutation($id: UUID!, $data: OpportunityUpdateInput!) {
-        updateOpportunity(id: $id, data: $data) { id latestFollowUp }
-      }`,
-      { id: opportunityId, data: { latestFollowUp: value } },
+    await client.query(
+      `UPDATE ${schema}.opportunity
+         SET "genJinJiLuBlocknote" = $2,
+             "genJinJiLuMarkdown" = $3,
+             "updatedAt" = now()
+       WHERE id = $1`,
+      [opportunityId, blocknote, markdown],
     );
   } catch (error) {
-    console.error('[follow-ups] backfill latestFollowUp failed:', error.message);
+    console.error('[follow-ups] backfill genJinJiLu failed:', error.message);
   }
 }
 
@@ -1393,6 +1419,12 @@ async function persistWebsiteMessage(body) {
 
 async function createWebsiteFormOpportunity(body, req) {
   const { opportunity, raw } = normalizeWebsiteFormPayload(body);
+
+  // 访客ID：CRM 自动生成（FK-<10位随机大写十六进制>），同时作为内部归类键 customerIdentityKey
+  const fangKeId = 'FK-' + crypto.randomBytes(5).toString('hex').toUpperCase();
+  const customerIdentityKey = fangKeId;
+
+  // 建线索（标准字段走 GraphQL；fangKeId/customerIdentityKey 为自定义列，建完用 DB 补齐）
   const result = await twentyGraphQL(
     'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
     { data: opportunity },
@@ -1400,6 +1432,78 @@ async function createWebsiteFormOpportunity(body, req) {
   );
   const created = result?.createOpportunity;
   if (!created?.id) throw new Error('createOpportunity returned empty id');
+  const opportunityId = created.id;
+
+  // 落库自定义字段 + 表单 name -> 客户联系人 Person（仅当表单提供了联系人姓名）
+  let personId = null;
+  const client = await pool.connect();
+  try {
+    const schema = await getWorkspaceSchema();
+    await client.query('BEGIN');
+
+    // 确保线索有 syncGroupCode，用于三表（线索/客户/项目）关联
+    let syncGroupCode = null;
+    const oppRes = await client.query(
+      `SELECT "syncGroupCode" FROM ${schema}.opportunity WHERE id = $1`,
+      [opportunityId],
+    );
+    syncGroupCode = oppRes.rows[0]?.syncGroupCode || null;
+    if (!syncGroupCode) {
+      const codeRes = await client.query(
+        `UPDATE ${schema}.opportunity SET "syncGroupCode" = conv.next_sync_group_code("createdAt"), "updatedAt" = now() WHERE id = $1 RETURNING "syncGroupCode"`,
+        [opportunityId],
+      );
+      syncGroupCode = codeRes.rows[0]?.syncGroupCode || null;
+    }
+
+    // 联系人：表单 name 建为客户联系人 Person，与线索共享 fangKeId/syncGroupCode
+    const contactName = raw.name;
+    if (contactName) {
+      try {
+        const pRes = await client.query(
+          `INSERT INTO ${schema}.person
+             ("nameFirstName", "nameLastName", "syncGroupCode", "fangKeId", "customerIdentityKey",
+              "sourceOpportunityId", "keHuLaiYuan", "emailsPrimaryEmail", "phonesPrimaryPhoneNumber")
+           VALUES ($1, '', $2, $3, $4, $5, $6, $7, $8)
+           RETURNING id`,
+          [
+            contactName,
+            syncGroupCode,
+            fangKeId,
+            customerIdentityKey,
+            opportunityId,
+            opportunity.keHuLaiYuan || null,
+            raw.email || null,
+            (opportunity.whatsapp && opportunity.whatsapp.primaryPhoneNumber) || null,
+          ],
+        );
+        personId = pRes.rows[0]?.id || null;
+      } catch (err) {
+        console.error('[website-form] create contact person failed:', err.message);
+      }
+    }
+
+    // 写访客ID/归类键；关联联系人（若已建 Person）
+    await client.query(
+      `UPDATE ${schema}.opportunity
+       SET "fangKeId" = $2,
+           "customerIdentityKey" = $3,
+           "pointOfContactId" = COALESCE("pointOfContactId", $4),
+           "linkedPersonId" = COALESCE("linkedPersonId", $4),
+           "updatedAt" = now()
+       WHERE id = $1`,
+      [opportunityId, fangKeId, customerIdentityKey, personId],
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[website-form] post-create enrichment failed:', err.message);
+    // 不阻断主流程：线索已建，访客ID 失败仅告警（后续可回补）
+  } finally {
+    client.release();
+  }
+
   await recordAuditEvent('website_form.created_opportunity', {
     channel: 'website_form',
     requestSummary: req ? {
@@ -1408,13 +1512,16 @@ async function createWebsiteFormOpportunity(body, req) {
       userAgent: req.headers['user-agent'] || '',
     } : undefined,
     payload: {
-      opportunityId: created.id,
+      opportunityId,
+      fangKeId,
+      customerIdentityKey,
+      personId,
       fields: Object.keys(raw).filter((key) => raw[key]),
       source: opportunity.keHuLaiYuan,
       stage: opportunity.stage,
     },
   });
-  return { opportunityId: created.id, name: created.name, source: opportunity.keHuLaiYuan, stage: opportunity.stage };
+  return { opportunityId, name: created.name, source: opportunity.keHuLaiYuan, stage: opportunity.stage, fangKeId, customerIdentityKey, personId };
 }
 
 app.post('/api/website/form', async (req, res) => {
@@ -1630,19 +1737,13 @@ app.get('/api/conversations', async (req, res) => {
     const scheduleActive = aiScheduleActiveExpression('cs');
     const viewer = await resolveConversationViewer(req);
     if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
-    const visibility = conversationVisibilityWhere(viewer);
-    // admin 的 visibility.sql 是常量 TRUE（不含 $1/$2），但下面 canReply/
-    // isAssignedToMe/hasTakenOverBefore 仍引用 $1，必须单独传 1 个参数；
-    // sales/manager 的 visibility.sql 本身含 $1(memberId)/$2(userId)，要传 2 个；
-    // boss 与匿名的这些表达式全是写死常量，不需要参数。
-    // 之前统一按 visibility.params 传，对 admin 传成了 []，导致 "no parameter $1"；
-    // 若直接照抄 sales 传两个参数，admin 的 SQL 只声明了 $1，又会变成
-    // "bind message supplies 2 parameters, but prepared statement requires 1"。
-    const listParams = viewer.isBoss
-      ? []
-      : viewer.role === 'admin'
-        ? [viewer.workspaceMemberId]
-        : [viewer.workspaceMemberId, viewer.userId];
+    const workspaceSchema = await getWorkspaceSchema();
+    const historyView = String(req.query?.view || req.query?.scope || '').trim() === 'history';
+    const visibility = conversationVisibilityWhere(viewer, 'c', 1, {
+      workspaceSchema,
+      allowPrivilegedAllChannels: historyView,
+    });
+    const listParams = visibility.params;
     const viewerRole = viewer.isBoss ? "'boss'" : `'${viewer.role || 'sales'}'`;
     // AI 模式（ai_enabled 为真）下：仅接管自己的会话可回复；AI 关闭时：非关闭会话销售均可直接回复，无需先接管。
     const aiEnabledExpr = `(COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'))`;
@@ -1656,6 +1757,19 @@ app.get('/api/conversations', async (req, res) => {
       WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
     )` : 'false';
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
+    CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
+      'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
+      'company', COALESCE(co.name, p."gongSiMingCheng", ''),
+      'companyId', COALESCE(o."companyId"::text, ''),
+      'phone', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', o."whatsappPrimaryPhoneCallingCode", o."whatsappPrimaryPhoneNumber")), ''), ct.phone, ''),
+      'email', COALESCE(o."youXiangPrimaryEmail", ct.email, ''),
+      'country', COALESCE(o."guoJiaDiQuAddressCountry", p."guoJiaDiQuAddressCountry", ''),
+      'source', COALESCE(o."keHuLaiYuan"::text, ''),
+      'companyType', COALESCE(o."gongSiLeiXing"::text, p."keHuLeiXing"::text, ''),
+      'stage', COALESCE(o.stage::text, ''),
+      'product', COALESCE(o."keHuXuQiuChanPin", p."keHuXuQiuChanPin", ''),
+      'note', COALESCE(o."guanWangBeiZhuMarkdown", o."genJinJiLuMarkdown", '')
+    ) END AS "crmLeadDraft",
     json_build_object(
       'enabled', COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'),
       'scheduleActive', ${scheduleActive},
@@ -1674,6 +1788,9 @@ app.get('/api/conversations', async (req, res) => {
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
+    LEFT JOIN ${workspaceSchema}.opportunity o ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
+    LEFT JOIN ${workspaceSchema}.person p ON p."deletedAt" IS NULL AND p.id = COALESCE(o."pointOfContactId", o."linkedPersonId")
+    LEFT JOIN ${workspaceSchema}.company co ON co."deletedAt" IS NULL AND co.id = o."companyId"
     WHERE ${visibility.sql}
     ORDER BY c.last_message_at DESC NULLS LAST`, listParams);
     res.json(result.rows);
@@ -1684,7 +1801,8 @@ app.get('/api/conversations', async (req, res) => {
 });
 
 app.get('/api/conversations/:id/messages', async (req, res) => {
-  const access = await requireConversationAccess(req, res);
+  const historyView = String(req.query?.view || req.query?.scope || '').trim() === 'history';
+  const access = await requireConversationAccess(req, res, { historyView });
   if (!access) return;
   const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
@@ -1786,7 +1904,8 @@ app.get('/api/attachments', async (req, res) => {
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
   const params = [subjectId];
-  const visibility = conversationVisibilityWhere(viewer, 'c', params.length + 1);
+  const workspaceSchema = await getWorkspaceSchema();
+  const visibility = conversationVisibilityWhere(viewer, 'c', params.length + 1, { workspaceSchema });
   params.push(...visibility.params);
   let result;
   try {
@@ -2301,6 +2420,16 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     if (!conversation) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'conversation not found' });
+    }
+    const workspaceSchema = await getWorkspaceSchema();
+    const visibility = conversationVisibilityWhere(viewer, 'c', 2, { workspaceSchema });
+    const visibleResult = await client.query(
+      `SELECT EXISTS(SELECT 1 FROM conv.conversations c WHERE c.id = $1 AND ${visibility.sql}) AS visible`,
+      [req.params.id, ...visibility.params],
+    );
+    if (!visibleResult.rows[0]?.visible) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: '当前账号无权操作该会话' });
     }
     if (action !== 'close' && (!conversation.aiEnabled || !conversation.inTakeoverWindow)) {
       await client.query('ROLLBACK');
@@ -3355,7 +3484,8 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
 
   const data = {
     name: nonBlankOrNull(fallbackName) || `${channel === 'whatsapp' ? 'WhatsApp' : '官网客服'}线索`,
-    stage: 'XIANSUO',
+    // 官网客服(website)来源自动建线索初始进度统一为「未处理线索」；WhatsApp 维持 XIANSUO 不变
+    stage: channel === 'website' ? 'WEI_CHU_LI_XIANSUO' : 'XIANSUO',
   };
   if (source) data.keHuLaiYuan = source;
   const rawPhone = String(phone || '').replace(/[\s()-]+/g, '');
@@ -3381,7 +3511,7 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
     await recordAuditEvent('conversation.auto_created_lead', {
       channel,
       conversationId,
-      payload: { opportunityId: opportunity.id, stage: 'XIANSUO', source },
+      payload: { opportunityId: opportunity.id, stage: data.stage, source },
     });
     return opportunity.id;
   } catch (error) {
@@ -3478,9 +3608,9 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];
   const isWebsiteFormSource = source === 'GUAN_WANG_BIAO_DAN';
   if (personId) data.pointOfContactId = personId;
-  if (b.stage && !isWebsiteFormSource) data.stage = normalizeOpportunityStage(b.stage);
+  if (b.stage) data.stage = normalizeOpportunityStage(b.stage);
   if (source) data.keHuLaiYuan = source;
-  if (isWebsiteFormSource) data.stage = 'XIANSUO';
+  if (!isUpdate && isWebsiteFormSource && !data.stage) data.stage = 'WEI_CHU_LI_XIANSUO';
   if (b.companyType) data.keHuLeiXing = String(b.companyType);
   if (b.product) data.keHuXuQiuChanPin = String(b.product);
   if (b.note) data.message = String(b.note);
@@ -4009,8 +4139,8 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
          "xuQiuChanPin" = COALESCE($6, "xuQiuChanPin"),
          "jinEAmountMicros" = COALESCE($7, "jinEAmountMicros"),
          "jinECurrencyCode" = COALESCE($8, "jinECurrencyCode"),
-         "zuiXinGenJinMarkdown" = COALESCE($9, "zuiXinGenJinMarkdown"),
-         "zuiXinGenJinBlocknote" = COALESCE($10, "zuiXinGenJinBlocknote"),
+         "genJinJiLuMarkdown" = COALESCE($9, "genJinJiLuMarkdown"),
+         "genJinJiLuBlocknote" = COALESCE($10, "genJinJiLuBlocknote"),
          "renWuJinDu" = CASE WHEN $11::text IS NULL THEN "renWuJinDu" ELSE $11::text::${schema}."_xiangMu_renWuJinDu_enum" END,
          "updatedAt" = now()
        WHERE target.id = $12
@@ -4051,8 +4181,8 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
        "xuQiuChanPin",
        "jinEAmountMicros",
        "jinECurrencyCode",
-       "zuiXinGenJinMarkdown",
-       "zuiXinGenJinBlocknote",
+       "genJinJiLuMarkdown",
+       "genJinJiLuBlocknote",
        "renWuJinDu",
        "syncGroupCode",
        "sourceOpportunityId",
@@ -4143,7 +4273,7 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
          "zhiWei",
          "amountAmountMicros",
          "amountCurrencyCode",
-         "zuiXinGenJinMarkdown" AS "message",
+         "genJinJiLuMarkdown" AS "message",
          stage
        FROM ${schema}.opportunity
        WHERE id = $1 AND "deletedAt" IS NULL
@@ -4541,6 +4671,18 @@ function htmlToText(html) {
     .replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// 把内存中的 buffer（如邮件附件）落盘到本地存储目录，返回可下载 URL（带原始文件名）。
+// 与 downloadWahaMediaToLocalFile 同一套存储与下载路由，供 /api/uploads/conversation-files 提供下载。
+async function saveBufferToLocalFile(buffer, filenameHint, mimetype) {
+  if (!buffer || !buffer.length) return null;
+  const ext = extensionFromName(filenameHint || '') || WAHA_MEDIA_MIME_EXT[String(mimetype || '').toLowerCase()] || '';
+  const storedName = `${Date.now()}-${crypto.randomUUID()}${ext}`;
+  await fs.promises.writeFile(path.join(UPLOAD_DIR, storedName), buffer);
+  const original = filenameHint ? normalizeUploadFilename(filenameHint) : '';
+  const suffix = original ? `?filename=${encodeURIComponent(original)}` : '';
+  return `/conv-api/uploads/conversation-files/${encodeURIComponent(storedName)}${suffix}`;
+}
+
 async function persistEmailMessage({ fromAddress, fromName, subject, body, attachments, messageId, sentAt }) {
   const addr = String(fromAddress || '').trim().toLowerCase();
   if (!addr) return false;
@@ -4601,6 +4743,9 @@ async function pollEmailsOnce() {
     host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_TLS,
     auth: { user: IMAP_USER, pass: IMAP_PASSWORD }, logger: false,
   });
+  client.on('error', (error) => {
+    console.error('[email] imap connection error:', error.message);
+  });
   try {
     await client.connect();
     const lock = await client.getMailboxLock(IMAP_MAILBOX);
@@ -4629,9 +4774,21 @@ async function pollEmailsOnce() {
         try {
           const parsed = await simpleParser(msg.source);
           const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
-          const attachments = (parsed.attachments || []).map(a => ({
-            filename: a.filename || '(未命名)', size: a.size || 0, contentType: a.contentType || '',
-          }));
+          const attachments = [];
+          for (const a of (parsed.attachments || [])) {
+            const filename = a.filename || '(未命名)';
+            const size = a.size || (a.content ? a.content.length : 0);
+            let url = null;
+            // 落盘附件内容以支持下载；超过上限则只保留元数据（不落盘、不可下载）。
+            if (a.content && a.content.length && a.content.length <= MAX_UPLOAD_BYTES) {
+              try {
+                url = await saveBufferToLocalFile(a.content, filename, a.contentType);
+              } catch (err) {
+                console.error('[email] save attachment failed:', filename, err.message);
+              }
+            }
+            attachments.push({ filename, size, contentType: a.contentType || '', url });
+          }
           const body = (parsed.text || '').trim() || htmlToText(parsed.html || '');
           const inserted = await persistEmailMessage({
             fromAddress: from.address, fromName: from.name,

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { withTwentyAuthHeaders } from '../utils/twentyAuth'
+import { waitForTwentyAccessToken, withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 // 两批消息是否等价：条数、末条 id 与送达时间一致即视为没有新内容。
 function sameMessageList(a = [], b = []) {
@@ -10,7 +10,7 @@ function sameMessageList(a = [], b = []) {
   return prev.id === next.id && Number(prev.sentAt) === Number(next.sentAt)
 }
 
-export function useConversations({ includeEmail = false } = {}) {
+export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const [conversations, setConversations] = useState([])
   const [activeChannel, setActiveChannel] = useState('all')
   const [activeStatus, setActiveStatus] = useState('all')
@@ -18,8 +18,11 @@ export function useConversations({ includeEmail = false } = {}) {
   const [selectedId, setSelectedId] = useState(null)
 
   async function loadConversations() {
+    await waitForTwentyAccessToken()
     // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
-    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, {
+    const params = new URLSearchParams({ _: String(Date.now()) })
+    if (view === 'history') params.set('view', 'history')
+    const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
       cache: 'no-store',
       headers: withTwentyAuthHeaders(),
     })
@@ -31,12 +34,18 @@ export function useConversations({ includeEmail = false } = {}) {
       messages: current.find(item => item.id === conv.id)?.messages ?? [],
       unread: 0,
     })))
-    setSelectedId(current => current || list[0]?.id || null)
+    setSelectedId(current => {
+      if (current && list.some(conv => conv.id === current)) return current
+      return list[0]?.id || null
+    })
   }
 
   async function loadMessages(convId) {
     if (!convId) return
-    const response = await fetch(`/conv-api/conversations/${convId}/messages?_=${Date.now()}`, {
+    await waitForTwentyAccessToken()
+    const params = new URLSearchParams({ _: String(Date.now()) })
+    if (view === 'history') params.set('view', 'history')
+    const response = await fetch(`/conv-api/conversations/${convId}/messages?${params.toString()}`, {
       cache: 'no-store',
       headers: withTwentyAuthHeaders(),
     })
@@ -58,7 +67,7 @@ export function useConversations({ includeEmail = false } = {}) {
     loadConversations().catch(error => console.error(error))
     const timer = setInterval(() => loadConversations().catch(() => {}), 10000)
     return () => clearInterval(timer)
-  }, [includeEmail])
+  }, [includeEmail, view])
 
   useEffect(() => {
     loadMessages(selectedId).catch(error => console.error(error))
@@ -67,7 +76,7 @@ export function useConversations({ includeEmail = false } = {}) {
     // 否则官网访客新消息和 AI 回复要等销售切走再切回来才显示。
     const timer = setInterval(() => loadMessages(selectedId).catch(() => {}), 5000)
     return () => clearInterval(timer)
-  }, [selectedId])
+  }, [selectedId, view])
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {
@@ -89,6 +98,7 @@ export function useConversations({ includeEmail = false } = {}) {
   const selected = conversations.find(c => c.id === selectedId) ?? null
 
   async function sendMessage(convId, content, file) {
+    await waitForTwentyAccessToken()
     const options = { method: 'POST' }
     if (file) {
       const form = new FormData()
@@ -113,6 +123,7 @@ export function useConversations({ includeEmail = false } = {}) {
 
   async function setTakeover(convId, action) {
     if (!convId) return
+    await waitForTwentyAccessToken()
     const response = await fetch(`/conv-api/conversations/${convId}/status`, {
       method: 'PATCH',
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -127,6 +138,7 @@ export function useConversations({ includeEmail = false } = {}) {
 
   async function closeConversation(convId) {
     if (!convId) return
+    await waitForTwentyAccessToken()
     const response = await fetch(`/conv-api/conversations/${convId}/status`, {
       method: 'PATCH',
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),

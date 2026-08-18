@@ -54,14 +54,24 @@ function EmailCard({ msg, fromLabel }) {
       </div>
       {attachments.length > 0 && (
         <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border-soft)', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-          {attachments.map((a, i) => (
-            <span key={i} style={{
+          {attachments.map((a, i) => {
+            const base = {
               display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5,
-              padding: '4px 10px', borderRadius: 6, background: 'var(--bg-active)', color: 'var(--text-secondary)',
-            }}>
-              <Paperclip size={12} /> {a.filename} <span style={{ color: 'var(--text-muted)' }}>{fmtSize(a.size)}</span>
-            </span>
-          ))}
+              padding: '4px 10px', borderRadius: 6, background: 'var(--bg-active)',
+            }
+            // 有 url 的可下载（新收邮件）；无 url 的是历史邮件，仅展示元数据、置灰不可点。
+            return a.url ? (
+              <a key={i} href={a.url} download title={`下载 ${a.filename}`}
+                style={{ ...base, color: 'var(--text-secondary)', textDecoration: 'none', cursor: 'pointer' }}>
+                <Paperclip size={12} /> {a.filename} <span style={{ color: 'var(--text-muted)' }}>{fmtSize(a.size)}</span>
+              </a>
+            ) : (
+              <span key={i} title="历史邮件附件暂不支持下载"
+                style={{ ...base, color: 'var(--text-secondary)', opacity: 0.72 }}>
+                <Paperclip size={12} /> {a.filename} <span style={{ color: 'var(--text-muted)' }}>{fmtSize(a.size)}</span>
+              </span>
+            )
+          })}
         </div>
       )}
     </div>
