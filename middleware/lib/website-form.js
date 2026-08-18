@@ -126,6 +126,32 @@ function mapLegacyOpportunityInput(data = {}) {
     }
   };
 
+  const companyName = firstString(
+    typeof next.company === 'string' ? next.company : '',
+    next.companyName,
+    next.company_name,
+    next.organization,
+    next.organisation,
+  );
+  if (companyName) {
+    next.name = companyName;
+    changed = true;
+  } else if (next.name !== undefined) {
+    assignIfMissing('lianXiRenXingMing', String(next.name || '').trim());
+    next.name = '';
+    changed = true;
+  }
+  if (typeof next.company === 'string') {
+    delete next.company;
+    changed = true;
+  }
+  for (const key of ['companyName', 'company_name', 'organization', 'organisation']) {
+    if (next[key] !== undefined) {
+      delete next[key];
+      changed = true;
+    }
+  }
+
   if (next.phone !== undefined && next.whatsapp === undefined) {
     const normalizedPhone = typeof next.phone === 'object'
       ? {
@@ -245,8 +271,9 @@ function normalizeWebsiteFormPayload(body = {}) {
   const stage = normalizeOpportunityStage(form.stage, 'WEI_CHU_LI_XIANSUO');
 
   const opportunity = {
-    // 标题不再用联系人 name（name 改为建客户联系人 Person，见 index.js createWebsiteFormOpportunity）
-    name: company || email || phone || '官网表单线索',
+    // Opportunity.name 是线索列表首列；按主数据口径只承载公司名称。
+    // 没有公司名时保持空，联系人/邮箱/手机号/来源分别写入各自字段，避免污染公司列。
+    name: company || '',
     keHuLaiYuan: source,
     stage,
   };

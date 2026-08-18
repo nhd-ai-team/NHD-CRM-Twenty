@@ -6,6 +6,7 @@ import {
   Menu, X, FileText,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
+import { InlineNameEditor } from './InlineNameEditor'
 
 function formatFileSize(size) {
   const n = Number(size || 0)
@@ -93,7 +94,35 @@ function AttachmentCard({ attachment, isCustomer, content }) {
   )
 }
 
-export function MessageBubble({ msg }) {
+// 需求二：出站消息送达状态。只有 WhatsApp 有真实回执（message.ack），
+// 其他渠道不显示虚假的「已读」，只保留发送时间。
+const DELIVERY_STATUS_LABEL = {
+  pending: { text: '发送中', icon: '○', color: 'var(--text-muted)' },
+  sent: { text: '已发送', icon: '✓', color: 'var(--text-muted)' },
+  delivered: { text: '已送达', icon: '✓✓', color: 'var(--text-muted)' },
+  read: { text: '已读', icon: '✓✓', color: 'var(--accent)' },
+  failed: { text: '发送失败', icon: '!', color: 'var(--red)' },
+}
+
+function DeliveryStatus({ msg, channel }) {
+  if (channel !== 'whatsapp') return null
+  if (msg.senderType !== 'agent' && msg.senderType !== 'ai') return null
+  const status = DELIVERY_STATUS_LABEL[msg.deliveryStatus]
+  if (!status) return null
+  const tooltip = [
+    msg.deliveryStatus === 'failed' ? msg.statusDetail : '',
+    msg.readAt ? `已读 ${format(new Date(msg.readAt), 'MM-dd HH:mm')}` : '',
+    msg.deliveredAt ? `送达 ${format(new Date(msg.deliveredAt), 'MM-dd HH:mm')}` : '',
+  ].filter(Boolean).join(' · ')
+  return (
+    <span title={tooltip || status.text} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: status.color }}>
+      <span style={{ fontSize: 10, letterSpacing: '-0.06em' }}>{status.icon}</span>
+      <span>{status.text}</span>
+    </span>
+  )
+}
+
+export function MessageBubble({ msg, channel }) {
   if (msg.contentType === 'system') return (
     <div style={{ textAlign: 'center', padding: '6px 0' }}>
       <span style={{
@@ -144,7 +173,13 @@ export function MessageBubble({ msg }) {
             <AttachmentCard key={`${attachment.url || attachment.title || index}-${index}`} attachment={attachment} isCustomer={isCustomer} content={textContent} />
           ))}
         </div>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{timeStr}</span>
+        <span style={{
+          fontSize: 10, color: 'var(--text-muted)', marginTop: 3,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+        }}>
+          {timeStr}
+          <DeliveryStatus msg={msg} channel={channel} />
+        </span>
       </div>
     </div>
   )
@@ -156,16 +191,14 @@ function ActionBar({ conv, onRequestAction }) {
   const aiControl = conv.aiControl || {}
   const permissions = conv.permissions || {}
   // AI 客服开启时才存在"接管/交还AI"概念；AI 关闭时会话即普通销售会话，无需（也无法）接管。
+  // 人工接管/释放不再受 AI 排班时段限制（排班只决定 AI 是否自动回复），避免非时段内官网整体瘫痪。
   const aiMode = !!aiControl.enabled
-  const aiReady = aiMode && !!aiControl.inTakeoverWindow
-  const canTakeover = !isClosed && !isTakeover && aiReady && permissions.canTakeover !== false
-  const canAiHost = !isClosed && isTakeover && aiReady && permissions.canReply !== false
+  const canTakeover = !isClosed && !isTakeover && aiMode && permissions.canTakeover !== false
+  const canAiHost = !isClosed && isTakeover && aiMode && permissions.canReply !== false
   const disabledReason = permissions.viewerRole === 'boss'
     ? 'Boss 当前仅有查看权限'
     : !aiControl.enabled
-    ? 'AI客服未激活，暂不可人工接管'
-    : !aiControl.inTakeoverWindow
-      ? '当前不在AI客服托管时间内'
+      ? 'AI客服未激活，暂不可人工接管'
       : ''
 
   // AI 关闭：直接隐藏接管/托管按钮（无需接管即可收发）；已关闭：不渲染，避免底部残留空白栏。
@@ -217,7 +250,7 @@ function btnStyle(variant, disabled = false) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar }) {
+export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggleSidebar }) {
   const [input, setInput] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
@@ -328,6 +361,9 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
   const confirmBody = pendingAction === 'takeover'
     ? '确认后销售可以在工作台回复客户，AI客服将暂停托管此会话。'
     : '确认后此会话将重新交给AI客服托管，销售需要再次人工接管后才能回复。'
+  // 需求三：会话详情（客户资料上下文）展示推断地域；官网渠道带真实 IP，WhatsApp/邮件不显示伪造 IP
+  const contactInfo = conv.contact || {}
+  const geoParts = [contactInfo.country, contactInfo.region, contactInfo.city, contactInfo.timezone].filter(Boolean)
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%' }}>
@@ -340,17 +376,31 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
         <ChannelIcon channel={conv.channel} size={18} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
-              {conv.contact.name}
-            </span>
+            {/* 需求一：顶部名称内联编辑；maxWidth 固定，编辑态不挤压手机号/状态徽标 */}
+            <InlineNameEditor
+              name={conv.contact?.name || ''}
+              nameSource={conv.contact?.nameSource}
+              channelName={conv.contact?.channelName}
+              onSave={onRename ? (value => onRename(conv.id, value)) : undefined}
+              canEdit={Boolean(onRename) && conv.permissions?.viewerRole !== 'boss'}
+              fontSize={14}
+              fontWeight={700}
+              maxWidth={240}
+            />
             {conv.contact.phone && (
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{conv.contact.phone}</span>
             )}
             <StatusBadge status={conv.status} />
           </div>
-          {conv.contact.company && (
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{conv.contact.company}</div>
-          )}
+            {conv.contact.company && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{conv.contact.company}</div>
+            )}
+            {geoParts.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                📍 {geoParts.join(' · ')}{contactInfo.ip ? ` · IP ${contactInfo.ip}` : ''}
+                {contactInfo.geoSource ? ` · 来源 ${contactInfo.geoSource}` : ''}
+              </div>
+            )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
           {/* 窄屏汉堡：唤出会话列表 */}
@@ -365,7 +415,7 @@ export function ChatPanel({ conv, onSend, onTakeover, layout, onToggleSidebar })
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
         {conv.messages.map((msg, i) => (
-          <MessageBubble key={msg.id ?? i} msg={msg} />
+          <MessageBubble key={msg.id ?? i} msg={msg} channel={conv.channel} />
         ))}
         <div ref={bottomRef} />
       </div>

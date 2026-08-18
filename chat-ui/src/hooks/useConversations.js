@@ -151,6 +151,33 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     await loadConversations()
   }
 
+  // 需求一：对话名称人工编辑。name 传空字符串 = 清除人工名并恢复渠道原始名。
+  async function renameConversation(convId, name) {
+    if (!convId) return null
+    await waitForTwentyAccessToken()
+    const response = await fetch(`/conv-api/conversations/${convId}/name`, {
+      method: 'PATCH',
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ name: String(name ?? '') }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error([data.error, data.detail].filter(Boolean).join('：') || '名称保存失败')
+    }
+    // 先本地生效（不等 10s 列表轮询），再拉一次后端对齐真实字段。
+    setConversations(current => current.map(conv => conv.id !== convId ? conv : {
+      ...conv,
+      contact: {
+        ...conv.contact,
+        name: data.name || '',
+        nameSource: data.source || 'channel',
+        channelName: data.channelName ?? conv.contact?.channelName ?? '',
+      },
+    }))
+    loadConversations().catch(() => {})
+    return data
+  }
+
   function markRead(convId) {
     setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, unread: 0 }))
   }
@@ -165,7 +192,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, closeConversation,
+    sendMessage, setTakeover, closeConversation, renameConversation,
     reload: loadConversations,
   }
 }

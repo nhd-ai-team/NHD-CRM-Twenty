@@ -2476,6 +2476,61 @@
     try { window.__NHD_ERRORS__.push({ name: 'installAuthCapture', msg: String(e), at: Date.now() }); } catch (_) {}
   }
 
+  // ── 线索字段显示兜底：服务端 metadata 已改为「公司名称」，但 Twenty 前端可能长期持有旧缓存。
+  // 这里只处理可见文案，不改数据；并隐藏右侧记录页的 Company 关系卡片，避免和公司名称主列重复。
+  (function () {
+    if (window.__NHD_LEAD_COMPANY_UI_FIX__) return;
+    window.__NHD_LEAD_COMPANY_UI_FIX__ = true;
+
+    function textOf(node) {
+      return (node && node.textContent ? node.textContent : '').trim();
+    }
+
+    function replaceVisitorIdLabels(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var nodes = scope.querySelectorAll('span, div, button, th, label, p');
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (textOf(node) === '访客ID') node.textContent = '公司名称';
+      }
+    }
+
+    function hideCompanyRelationCards(root) {
+      var scope = root && root.querySelectorAll ? root : document;
+      var nodes = scope.querySelectorAll('span, div, button, label, p');
+      for (var i = 0; i < nodes.length; i++) {
+        var node = nodes[i];
+        if (textOf(node) !== 'Company') continue;
+        var card = node.closest('[data-testid], [role="button"], section, article, div');
+        for (var depth = 0; card && depth < 6; depth++) {
+          var cardText = textOf(card);
+          if (cardText === 'Company' || /^Company\s*$/.test(cardText)) {
+            card.style.display = 'none';
+            card.setAttribute('data-nhd-hidden-company-relation', '1');
+            break;
+          }
+          card = card.parentElement;
+        }
+      }
+    }
+
+    function applyLeadCompanyUiFix() {
+      replaceVisitorIdLabels(document);
+      hideCompanyRelationCards(document);
+    }
+
+    applyLeadCompanyUiFix();
+    setInterval(applyLeadCompanyUiFix, 1000);
+    try {
+      new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          replaceVisitorIdLabels(mutations[i].target);
+          hideCompanyRelationCards(mutations[i].target);
+        }
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    } catch (_) {}
+  })();
+
 
   // ── 兜底：退出设置时整页重载主页，强制 chat-nav.js 重新执行（修复菜单消失/绑定页残留）──
       (function () {

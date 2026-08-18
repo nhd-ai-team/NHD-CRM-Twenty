@@ -126,21 +126,25 @@ test('buildAiSettingResponses keeps stable channel defaults without endpoint-onl
   ]);
 });
 
-test('conversationVisibilityWhere keeps admin/boss global and sales scoped', () => {
+test('conversationVisibilityWhere keeps privileged users scoped on personal WhatsApp channel', () => {
   assert.deepEqual(conversationVisibilityWhere(null), { sql: 'FALSE', params: [] });
-  const adminVisibility = conversationVisibilityWhere({ role: 'admin', workspaceMemberId: 'admin-member', userId: 'admin-user' });
+  const adminVisibility = conversationVisibilityWhere({
+    role: 'admin',
+    workspaceMemberId: 'admin-member',
+    userId: 'admin-user',
+  });
   assert.match(adminVisibility.sql, /c\.channel <> 'whatsapp'/);
   assert.match(adminVisibility.sql, /conv\.channel_accounts/);
   assert.deepEqual(adminVisibility.params, ['admin-member', 'admin-user']);
 
-  const bossHistoryVisibility = conversationVisibilityWhere(
-    { role: 'boss', workspaceMemberId: 'boss-member', userId: 'boss-user' },
-    'c',
-    1,
-    { allowPrivilegedAllChannels: true },
-  );
-  assert.match(bossHistoryVisibility.sql, /TRUE/);
-  assert.deepEqual(bossHistoryVisibility.params, ['boss-member', 'boss-user']);
+  const bossVisibility = conversationVisibilityWhere({
+    role: 'boss',
+    workspaceMemberId: 'boss-member',
+    userId: 'boss-user',
+  });
+  assert.match(bossVisibility.sql, /c\.channel <> 'whatsapp'/);
+  assert.match(bossVisibility.sql, /conv\.channel_accounts/);
+  assert.deepEqual(bossVisibility.params, ['boss-member', 'boss-user']);
 
   const visibility = conversationVisibilityWhere({
     role: 'sales',
@@ -190,6 +194,22 @@ test('normalizeWebsiteFormPayload maps website form fields to current Twenty opp
   assert.doesNotThrow(() => JSON.parse(guanWangBeiZhu.blocknote));
 });
 
+test('normalizeWebsiteFormPayload leaves lead title empty when company is missing', () => {
+  const normalized = normalizeWebsiteFormPayload({
+    type: 'form_submission',
+    full_name: 'Ada',
+    email: 'ada@example.com',
+    mobile: '+86 177 1005 1913',
+    source: '官网表单',
+  });
+
+  assert.equal(normalized.opportunity.name, '');
+  assert.equal(normalized.raw.name, 'Ada');
+  assert.equal(normalized.raw.company, '');
+  assert.equal(normalized.opportunity.youXiang.primaryEmail, 'ada@example.com');
+  assert.equal(normalized.opportunity.whatsapp.primaryPhoneNumber, '+8617710051913');
+});
+
 test('website form helpers keep unknown optional enums from blocking ingestion', () => {
   assert.equal(normalizeSource('官网留言'), 'GUAN_WANG_BIAO_DAN');
   assert.equal(normalizeCustomerType('未知类型'), null);
@@ -216,7 +236,8 @@ test('mapLegacyCreateOpportunityGraphQLPayload keeps old /graphql website form a
   assert.equal(mapped.changed, true);
   const { guanWangBeiZhu: legacyNote, ...legacyRest } = mapped.payload.variables.data;
   assert.deepEqual(legacyRest, {
-    name: 'Legacy Web Form',
+    name: '',
+    lianXiRenXingMing: 'Legacy Web Form',
     keHuLaiYuan: 'GUAN_WANG_BIAO_DAN',
     whatsapp: {
       primaryPhoneNumber: '+8617710051913',
@@ -227,4 +248,22 @@ test('mapLegacyCreateOpportunityGraphQLPayload keeps old /graphql website form a
   });
   assert.equal(legacyNote.markdown, '旧官网表单备注');
   assert.doesNotThrow(() => JSON.parse(legacyNote.blocknote));
+});
+
+test('mapLegacyCreateOpportunityGraphQLPayload maps legacy company text to lead title', () => {
+  const mapped = mapLegacyCreateOpportunityGraphQLPayload({
+    query: 'mutation($data: OpportunityCreateInput!){ createOpportunity(data:$data){ id } }',
+    variables: {
+      data: {
+        name: 'Ada',
+        company_name: 'NHD Test Co',
+        email: 'ada@example.com',
+      },
+    },
+  });
+
+  assert.equal(mapped.changed, true);
+  assert.equal(mapped.payload.variables.data.name, 'NHD Test Co');
+  assert.equal(mapped.payload.variables.data.company_name, undefined);
+  assert.equal(mapped.payload.variables.data.youXiang.primaryEmail, 'ada@example.com');
 });

@@ -109,7 +109,7 @@ export function ConvertToLeadDrawer({ conv, onClose }) {
         ) : (
           <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
             <FormField label="姓名"><input value={form.name} onChange={set('name')} style={inputStyle} placeholder="客户姓名" /></FormField>
-            <FormField label="公司"><input value={form.company} onChange={set('company')} style={inputStyle} placeholder="公司名称（暂不关联，转入后在线索内维护）" /></FormField>
+            <FormField label="公司"><input value={form.company} onChange={set('company')} style={inputStyle} placeholder="公司名称；保存后会匹配或创建公司主数据" /></FormField>
             <Row>
               <FormField label="WhatsApp"><input value={form.phone} onChange={set('phone')} style={inputStyle} /></FormField>
               <FormField label="邮箱"><input value={form.email} onChange={set('email')} style={inputStyle} placeholder="多个邮箱可用空格/逗号分隔" /></FormField>

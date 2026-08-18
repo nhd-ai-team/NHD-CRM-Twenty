@@ -812,6 +812,20 @@ async function twentyGraphQL(query, variables = {}, token = TWENTY_API_KEY) {
 app.post('/api/graphql-compat', async (req, res) => {
   const mapped = mapLegacyCreateOpportunityGraphQLPayload(req.body);
   try {
+    const originalData = req.body?.variables?.data;
+    const mappedData = mapped.payload?.variables?.data;
+    const legacyCompanyName = typeof originalData?.company === 'string'
+      ? originalData.company.trim()
+      : String(originalData?.companyName || originalData?.company_name || originalData?.organization || originalData?.organisation || '').trim();
+    if (mapped.changed && mappedData && legacyCompanyName && !mappedData.companyId) {
+      try {
+        const existingCompany = await findCompanyByExactName(legacyCompanyName, TWENTY_API_KEY);
+        const company = existingCompany || await createCompanyByName(legacyCompanyName, TWENTY_API_KEY, null);
+        if (company?.id) mappedData.companyId = company.id;
+      } catch (error) {
+        console.error('[graphql-compat] company link failed:', error.message);
+      }
+    }
     const headers = { 'Content-Type': 'application/json' };
     const authorization = String(req.headers.authorization || '');
     const cookie = String(req.headers.cookie || '');
@@ -909,6 +923,8 @@ async function ensureSchema() {
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_takeover_until TIMESTAMPTZ;
+    -- 官网接管超时自动释放：接管时写入计时起点，释放/关闭时清空。
+    ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS taken_over_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS conv.outbound_requests (
       idempotency_key UUID PRIMARY KEY,
       channel TEXT NOT NULL,
@@ -1032,6 +1048,56 @@ async function ensureSchema() {
     ON conv.channel_accounts(channel, provider, external_account_id)
     WHERE external_account_id IS NOT NULL AND status <> 'unbound';
   `);
+  // ===== 需求一（2026-08-18）对话名称统一编辑与持久化 =====
+  // channel_display_name = 渠道原始名（webhook 每次同步，可回滚用）；
+  // display_name         = 最终显示名（人工改过就是人工名）；
+  // display_name_source  = 'manual' 时渠道 webhook 不得覆盖 display_name。
+  await pool.query(`
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS channel_display_name TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS display_name_source TEXT NOT NULL DEFAULT 'channel';
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS display_name_updated_at TIMESTAMPTZ;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS display_name_updated_by TEXT;
+    DO $do$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'contacts_display_name_source_check') THEN
+        ALTER TABLE conv.contacts ADD CONSTRAINT contacts_display_name_source_check
+          CHECK (display_name_source IN ('channel', 'manual'));
+      END IF;
+    END
+    $do$;
+    -- 历史初始化：只在渠道原始名为空时回填，绝不覆盖已存在的人工名。
+    UPDATE conv.contacts SET channel_display_name = display_name
+      WHERE channel_display_name IS NULL AND display_name IS NOT NULL AND display_name <> '';
+  `);
+  // ===== 需求二（2026-08-18）WhatsApp 消息送达/已读回执 =====
+  // delivery_status 取值：pending / sent / delivered / read / failed（只升级不回退，failed 为终态）。
+  // 历史消息按 'sent' 兜底：真实发生过的事实，且前端只对 agent/ai 的 WhatsApp 消息展示状态。
+  await pool.query(`
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'sent';
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS delivery_status_code INTEGER;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS delivery_status_at TIMESTAMPTZ;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS failed_at TIMESTAMPTZ;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS status_detail TEXT;
+    -- ack 靠 external_msg_id 反查消息，必须有索引（该列本身是 UNIQUE，已隐含索引）
+    CREATE INDEX IF NOT EXISTS messages_delivery_status_idx
+      ON conv.messages(conversation_id, delivery_status);
+  `);
+  // ===== 需求三（2026-08-18）官网访客 IP 地域与时区 =====
+  // ip_address 仅作访问审计资料，不写入 Twenty 客户字段；geo_* 为推断数据，允许为空，必须记录 geo_source。
+  await pool.query(`
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS ip_address INET;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_country_code TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_country_name TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_region TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_city TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_timezone TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_latitude NUMERIC(9,6);
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_longitude NUMERIC(9,6);
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_source TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_updated_at TIMESTAMPTZ;
+  `);
   }
 
 function phoneFromJid(jid = '') { return jid.replace(/@.*/, '').replace(/\D/g, ''); }
@@ -1123,8 +1189,9 @@ async function loadAiPolicy(conversationId) {
 
 async function recordAiMessage(conversationId, content, externalId, options = {}) {
   await pool.query(
-    `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
-     VALUES ($1, $2, 'ai', $3, $4, $5, $6, now())
+    `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at,
+       delivery_status, delivery_status_at)
+     VALUES ($1, $2, 'ai', $3, $4, $5, $6, now(), $7, now())
      ON CONFLICT(external_msg_id) DO NOTHING`,
     [
       externalId || null,
@@ -1133,6 +1200,8 @@ async function recordAiMessage(conversationId, content, externalId, options = {}
       options.contentType || 'text',
       options.mediaUrl || null,
       options.attachments ? JSON.stringify(options.attachments) : null,
+      // AI 自动回复调用渠道 API 成功后才落库，因此初始状态是 sent，后续由 message.ack 升级。
+      options.deliveryStatus || 'sent',
     ],
   );
   await pool.query(
@@ -1276,17 +1345,24 @@ async function persistWhatsAppMessage(payload, session) {
   const phone = await resolvePhone(counterpartyJid, inboundSession);
   // 归一化会话键：同一客户的 @lid 与 @c.us 统一为真实号 <phone>@c.us，避免拆成多个会话。
   const chatKey = phone ? `${phone}@c.us` : counterpartyJid;
-  const displayName = (!fromMe && (data.notifyName || data._data?.notifyName)) || phone || counterpartyJid;
+  // 渠道原始名：只有客户入站事件的 notifyName 才是客户真名；
+  // 出站回声（fromMe）里的 notifyName 是本机账号自己，不能当客户名写入。
+  const channelName = (!fromMe && String(data.notifyName || data._data?.notifyName || '').trim()) || null;
+  const displayName = channelName || phone || counterpartyJid;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, phone, owner_id)
-      VALUES ('whatsapp', $1, $2, $3, $4) ON CONFLICT(channel, external_id)
-      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name),
+    // 需求一：渠道名写 channel_display_name；display_name 仅在非人工命名时才跟随渠道名同步。
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name, phone, owner_id)
+      VALUES ('whatsapp', $1, $2, $2, $3, $4) ON CONFLICT(channel, external_id)
+      DO UPDATE SET channel_display_name = COALESCE($5::text, conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
+        display_name = CASE WHEN conv.contacts.display_name_source = 'manual'
+            THEN conv.contacts.display_name
+            ELSE COALESCE($5::text, conv.contacts.display_name, EXCLUDED.display_name) END,
         phone = COALESCE(EXCLUDED.phone, conv.contacts.phone),
         owner_id = COALESCE(conv.contacts.owner_id, EXCLUDED.owner_id),
         updated_at = now() RETURNING *`,
-      [chatKey, displayName, phone ? `+${phone}` : null, ownerUserId]);
+      [chatKey, displayName, phone ? `+${phone}` : null, ownerUserId, channelName]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id, owner_id, channel_owner_id, waha_session)
       VALUES ('whatsapp', $1, $2, $3, $3, $4) ON CONFLICT(channel, external_chat_id)
@@ -1335,13 +1411,88 @@ async function persistWhatsAppMessage(payload, session) {
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
+// ── 需求二：WhatsApp 送达/已读回执 ───────────────────────────────────────────
+// 状态等级用于防止 webhook 乱序把高状态覆盖回低状态；failed 是终态，不参与升级比较。
+const DELIVERY_STATUS_RANK = { pending: 0, sent: 1, delivered: 2, read: 3 };
+
+// WAHA ack → CRM 状态。ackName 优先（语义明确），缺失时退回数字 code。
+// 依据 https://waha.devlike.pro/docs/how-to/events/
+function mapWahaAckStatus(ackName, ackCode) {
+  const name = String(ackName || '').trim().toUpperCase();
+  if (name === 'ERROR') return 'failed';
+  if (name === 'PENDING') return 'pending';
+  if (name === 'SERVER') return 'sent';
+  if (name === 'DEVICE') return 'delivered';
+  if (name === 'READ' || name === 'PLAYED') return 'read';
+  if (!Number.isFinite(Number(ackCode))) return null;
+  const code = Number(ackCode);
+  if (code === -1) return 'failed';
+  if (code === 0) return 'pending';
+  if (code === 1) return 'sent';
+  if (code === 2) return 'delivered';
+  if (code === 3 || code === 4) return 'read';
+  return null;
+}
+
+// 只更新已存在的出站消息（agent/ai）；找不到就记日志，绝不新建空消息。
+async function persistWhatsAppMessageAck(payload, session) {
+  const data = payload.payload || payload;
+  const externalMessageId = String(data.id?._serialized || data.id || '').trim();
+  const ackName = String(data.ackName || '').toUpperCase();
+  const ackCode = Number.isFinite(Number(data.ack)) ? Number(data.ack) : null;
+  if (!externalMessageId) return { ignored: true, reason: 'missing_message_id' };
+
+  // session 必须是已绑定的 WhatsApp 账号，避免未知来源伪造回执。
+  const binding = await getActiveWhatsAppBindingBySession(session);
+  if (!binding) {
+    console.warn('[whatsapp-ack] reject ack for unknown/unbound session:', session);
+    return { ignored: true, reason: 'unbound_session' };
+  }
+
+  const nextStatus = mapWahaAckStatus(ackName, ackCode);
+  if (!nextStatus) return { ignored: true, reason: 'unsupported_ack' };
+
+  const nextRank = DELIVERY_STATUS_RANK[nextStatus];
+  // 单条 SQL 完成「查找 + 状态等级比较 + 幂等更新」，避免并发 ack 互相覆盖。
+  const updated = await pool.query(
+    `UPDATE conv.messages SET
+       delivery_status = $2,
+       delivery_status_code = $3,
+       delivery_status_at = now(),
+       delivered_at = CASE WHEN $2 IN ('delivered', 'read') THEN COALESCE(delivered_at, now()) ELSE delivered_at END,
+       read_at = CASE WHEN $2 = 'read' THEN COALESCE(read_at, now()) ELSE read_at END,
+       failed_at = CASE WHEN $2 = 'failed' THEN COALESCE(failed_at, now()) ELSE failed_at END,
+       status_detail = CASE WHEN $2 = 'failed' THEN COALESCE($4, status_detail) ELSE status_detail END
+     WHERE external_msg_id = $1
+       AND sender_type IN ('agent', 'ai')
+       AND delivery_status <> 'failed'
+       AND ($2 = 'failed' OR COALESCE($5::int, -1) > COALESCE((CASE delivery_status
+             WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 END), -1))
+     RETURNING id, conversation_id, delivery_status`,
+    [externalMessageId, nextStatus, ackCode, ackName ? `WAHA ack ${ackName}` : null,
+      Number.isFinite(nextRank) ? nextRank : null],
+  );
+  if (!updated.rowCount) {
+    // 可能是：ack 早于消息落库 / 客户入站消息的 ack / 重复或倒退的 ack —— 都不是错误，只记录便于排查。
+    console.warn('[whatsapp-ack] no outbound message upgraded:', externalMessageId, ackName || ackCode, 'session=', session);
+    return { ignored: true, reason: 'no_upgradable_message' };
+  }
+  return { updated: true, messageId: updated.rows[0].id, status: updated.rows[0].delivery_status };
+}
+
 async function receiveWhatsAppWebhook(req, res) {
   res.status(200).json({ received: true });
-  // WAHA 投递 `message`（入站+出站）/ `message.any`；只处理文本类消息事件。
   const event = req.body.event || req.params.event?.replace(/-/g, '.');
-  if (event !== 'message' && event !== 'message.any') return;
   // WAHA 在 webhook body 中携带 session（WAHA session 名），用于归属到对应销售。
   const session = String(req.body?.session || WAHA_SESSION);
+  // 需求二：ack 必须单独处理，绝不能当普通文本消息落库。
+  if (event === 'message.ack') {
+    persistWhatsAppMessageAck(req.body, session)
+      .catch(error => console.error('[whatsapp-ack] webhook failed:', error.message));
+    return;
+  }
+  // WAHA 投递 `message`（入站+出站）/ `message.any`；只处理文本类消息事件。
+  if (event !== 'message' && event !== 'message.any') return;
   persistWhatsAppMessage(req.body, session).catch(error => console.error('[whatsapp] webhook failed:', error.message));
 }
 app.post('/api/whatsapp/webhook', receiveWhatsAppWebhook);
@@ -1353,7 +1504,107 @@ app.post('/api/whatsapp/webhook/:event', receiveWhatsAppWebhook);
 // agent 是销售在 CRM 回复后由 ai-service 广播回来的回声，CRM 已自行落库，避免重复入库。
 const WEBSITE_SENDER_MAP = { visitor: 'customer', customer: 'customer', ai: 'ai', agent: 'agent' };
 
-async function persistWebsiteMessage(body) {
+// ===== 需求三（2026-08-18）官网访客 IP 地域与时区 =====
+// 真实客户端 IP 只允许从可信边界取，绝不信任请求体里的 clientIp（浏览器可伪造）。
+// 优先级：Cloudflare 边缘头 -> 可信 Nginx 反代头 -> middleware socket 直连地址。
+function extractClientIp(req) {
+  if (!req) return null;
+  const headers = req.headers || {};
+  const candidates = [];
+  if (headers['cf-connecting-ip']) candidates.push(String(headers['cf-connecting-ip']).trim());
+  if (headers['x-real-ip']) candidates.push(String(headers['x-real-ip']).trim());
+  if (headers['x-forwarded-for']) {
+    for (const part of String(headers['x-forwarded-for']).split(',')) {
+      const ip = part.trim();
+      if (ip) candidates.push(ip);
+    }
+  }
+  if (req.socket && req.socket.remoteAddress) candidates.push(req.socket.remoteAddress);
+  for (const raw of candidates) {
+    const ip = raw.replace(/^::ffff:/, '').trim();
+    if (ip && ip !== '::1' && ip.toLowerCase() !== 'localhost') return ip;
+  }
+  return null;
+}
+
+// 是否可公开解析地域的公网 IP：拒绝私网/回环/链路本地/容器网段，避免把服务器或内网地址当客户位置。
+function isPublicIp(ip) {
+  if (!ip || typeof ip !== 'string') return false;
+  let v = ip.trim();
+  if (v === '::1' || v.toLowerCase() === 'localhost') return false;
+  if (v.startsWith('::ffff:')) v = v.slice(7);
+  if (v.includes(':')) {
+    // 非映射 IPv6：ULA(fc00::/7) 与链路本地(fe80::/10) 视为不可公开解析
+    const p = v.toLowerCase();
+    if (p.startsWith('fc') || p.startsWith('fd') || p.startsWith('fe8') || p.startsWith('fe9') ||
+        p.startsWith('fea') || p.startsWith('feb')) return false;
+    return true;
+  }
+  const m = v.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const o = m.slice(1).map(Number);
+  if (o.some((n) => n > 255 || Number.isNaN(n))) return false;
+  const [a, b] = o;
+  if (a === 0) return false;                               // 0.0.0.0/8
+  if (a === 10) return false;                              // 私网 10/8
+  if (a === 127) return false;                             // 回环
+  if (a === 169 && b === 254) return false;                // 链路本地 169.254/16
+  if (a === 100 && b >= 64 && b <= 127) return false;      // CGNAT 100.64/10
+  if (a === 172 && b >= 16 && b <= 31) return false;       // 私网 172.16/12
+  if (a === 192 && b === 168) return false;                // 私网 192.168/16
+  if (a === 198 && (b === 18 || b === 19)) return false;   // 测试网 198.18/15
+  return true;
+}
+
+// IP→Geo 缓存（含 null 结果），避免每条消息都打外部服务。TTL 24h。
+const _geoCache = new Map();
+const GEO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// 解析 IP 地域。私网/回环/空 -> null（绝不调用外部服务，也不伪造城市）。
+// 仅当配置了已批准的外部服务（GEOIP_PROVIDER_URL）才联网解析；否则返回 null，前端显示「未知」。
+// 任何失败都返回 null，不阻断官网消息入库。
+async function resolveGeoByIp(ip) {
+  const clean = (ip || '').toString().replace(/^::ffff:/, '').trim();
+  if (!isPublicIp(clean)) return null;
+  const now = Date.now();
+  const cached = _geoCache.get(clean);
+  if (cached && now - cached.t < GEO_CACHE_TTL_MS) return cached.v;
+  let result = null;
+  const providerUrl = process.env.GEOIP_PROVIDER_URL;
+  if (providerUrl) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 800);
+    try {
+      const sep = providerUrl.includes('?') ? '&' : '?';
+      const resp = await fetch(`${providerUrl}${sep}ip=${encodeURIComponent(clean)}`, {
+        signal: controller.signal, headers: { accept: 'application/json' },
+      });
+      if (resp.ok) {
+        const data = await resp.json().catch(() => null);
+        if (data) {
+          result = {
+            countryCode: data.countryCode || data.country_code || data.country?.iso_code || null,
+            countryName: data.countryName || data.country_name || data.country || null,
+            region: data.region || data.regionName || null,
+            city: data.city || null,
+            timezone: data.timezone || data.time_zone || null,
+            latitude: data.latitude ?? data.lat ?? null,
+            longitude: data.longitude ?? data.lon ?? data.lng ?? null,
+            source: process.env.GEOIP_PROVIDER_NAME || 'external',
+          };
+        }
+      }
+    } catch (err) {
+      console.error('[geo] resolve failed, skip:', err.message);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  _geoCache.set(clean, { v: result, t: now });
+  return result;
+}
+
+async function persistWebsiteMessage(body, clientIp) {
   const visitorId = String(body.visitorId || body.sessionId || '').trim();
   // external_chat_id 优先用 ai-service 的 conversationId，供 CRM 出站回推到同一会话。
   const sessionId = String(body.conversationId || body.sessionId || visitorId).trim();
@@ -1364,20 +1615,48 @@ async function persistWebsiteMessage(body) {
   if (!sessionId || !content) return;
   // 销售回复的回声不重复入库（CRM 出站时已 recordAgentMessage）。
   if (senderType === 'agent') return;
-  const displayName = String(body.displayName || '').trim() || `网站访客 ${visitorId.slice(-6) || sessionId.slice(-6)}`;
+  // 渠道原始名：官网表单/widget 传来的真实姓名才算渠道名；没有就用「网站访客 xxxxxx」兜底。
+  const channelName = String(body.displayName || '').trim() || null;
+  const displayName = channelName || `网站访客 ${visitorId.slice(-6) || sessionId.slice(-6)}`;
   // 官网访客发的附件：ai-service 那边已经把 widget 上传的文件转成同一套
   // {url,title,fileType,contentType,sizeBytes} 结构透传过来了，跟坐席发附件复用同一套归一化。
   const attachments = normalizeOutboundAttachments(body.attachments);
   const primaryAttachment = attachments[0] || null;
   const contentType = primaryAttachment ? fileMessageType({ mimetype: primaryAttachment.contentType || '' }) : 'text';
   const mediaUrl = primaryAttachment ? primaryAttachment.url : null;
+  // 需求三：解析官网访客真实 IP 地域（私网/回环直接返回 null，不阻断入库）。
+  const geo = (await resolveGeoByIp(clientIp)) || null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name)
-      VALUES ('website', $1, $2) ON CONFLICT(channel, external_id)
-      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name), updated_at = now() RETURNING *`,
-      [visitorId || sessionId, displayName]);
+    const contactResult = await client.query(`INSERT INTO conv.contacts(
+        channel, external_id, display_name, channel_display_name,
+        ip_address, geo_country_code, geo_country_name, geo_region, geo_city,
+        geo_timezone, geo_latitude, geo_longitude, geo_source, geo_updated_at)
+      VALUES ('website', $1, $2, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+        CASE WHEN $12::text IS NOT NULL THEN now() ELSE NULL END)
+      ON CONFLICT(channel, external_id)
+      DO UPDATE SET
+        channel_display_name = COALESCE($3::text, conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
+        display_name = CASE WHEN conv.contacts.display_name_source = 'manual'
+            THEN conv.contacts.display_name
+            ELSE COALESCE($3::text, conv.contacts.display_name, EXCLUDED.display_name) END,
+        -- IP/Geo：仅在新值非空时覆盖（IP 通常稳定不回退；地理解析可能为空则保留旧值）
+        ip_address = COALESCE($4::inet, conv.contacts.ip_address),
+        geo_country_code = COALESCE($5, conv.contacts.geo_country_code),
+        geo_country_name = COALESCE($6, conv.contacts.geo_country_name),
+        geo_region = COALESCE($7, conv.contacts.geo_region),
+        geo_city = COALESCE($8, conv.contacts.geo_city),
+        geo_timezone = COALESCE($9, conv.contacts.geo_timezone),
+        geo_latitude = COALESCE($10, conv.contacts.geo_latitude),
+        geo_longitude = COALESCE($11, conv.contacts.geo_longitude),
+        geo_source = COALESCE($12::text, conv.contacts.geo_source),
+        geo_updated_at = CASE WHEN $12::text IS NOT NULL THEN now() ELSE conv.contacts.geo_updated_at END,
+        updated_at = now() RETURNING *`,
+      [visitorId || sessionId, displayName, channelName,
+       clientIp || null,
+       geo?.countryCode ?? null, geo?.countryName ?? null, geo?.region ?? null, geo?.city ?? null,
+       geo?.timezone ?? null, geo?.latitude ?? null, geo?.longitude ?? null, geo?.source ?? null]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
       VALUES ('website', $1, $2) ON CONFLICT(channel, external_chat_id)
@@ -1417,14 +1696,31 @@ async function persistWebsiteMessage(body) {
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
 }
 
+// 生成线索id：XS-<YYYYMMDDHHMMSS>（年月日时分秒）。同一秒内极端并发时加 2 位随机后缀防重。
+function generateLeadId() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  let id = 'XS-' + ts;
+  // 同一秒内的并发去重兜底：后缀 2 位 base36
+  if (generateLeadId._seen && generateLeadId._seen.has(ts)) {
+    id += '-' + crypto.randomBytes(1).toString('base64').replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase();
+  }
+  generateLeadId._seen = generateLeadId._seen || new Set();
+  generateLeadId._seen.add(ts);
+  // 仅保留最近 60 秒的标记，避免内存无限增长
+  if (generateLeadId._seen.size > 120) generateLeadId._seen = new Set([ts]);
+  return id;
+}
+
 async function createWebsiteFormOpportunity(body, req) {
   const { opportunity, raw } = normalizeWebsiteFormPayload(body);
 
-  // 访客ID：CRM 自动生成（FK-<10位随机大写十六进制>），同时作为内部归类键 customerIdentityKey
-  const fangKeId = 'FK-' + crypto.randomBytes(5).toString('hex').toUpperCase();
-  const customerIdentityKey = fangKeId;
+  // 线索id：CRM 自动生成（XS-<年月日时分秒>，如 XS-20260817185541），同时作为内部归类键 customerIdentityKey
+  const leadNo = generateLeadId();
+  const customerIdentityKey = leadNo;
 
-  // 建线索（标准字段走 GraphQL；fangKeId/customerIdentityKey 为自定义列，建完用 DB 补齐）
+  // 建线索（标准字段走 GraphQL；leadNo/customerIdentityKey 为自定义列，建完用 DB 补齐）
   const result = await twentyGraphQL(
     'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
     { data: opportunity },
@@ -1434,8 +1730,8 @@ async function createWebsiteFormOpportunity(body, req) {
   if (!created?.id) throw new Error('createOpportunity returned empty id');
   const opportunityId = created.id;
 
-  // 落库自定义字段 + 表单 name -> 客户联系人 Person（仅当表单提供了联系人姓名）
-  let personId = null;
+  // 落库自定义字段 + 表单 name -> opportunity「联系人姓名」暂存列（不提前建 Person）
+  let personId = null; // 预留：转客户时由 upsertPersonFromOpportunity 生成 Person 并回填
   const client = await pool.connect();
   try {
     const schema = await getWorkspaceSchema();
@@ -1456,50 +1752,40 @@ async function createWebsiteFormOpportunity(body, req) {
       syncGroupCode = codeRes.rows[0]?.syncGroupCode || null;
     }
 
-    // 联系人：表单 name 建为客户联系人 Person，与线索共享 fangKeId/syncGroupCode
-    const contactName = raw.name;
-    if (contactName) {
+    // 公司：表单带了公司名时，建/关联 Company（去重：findCompanyByExactName 按名匹配，无则新建），统一收口进公司表
+    let companyId = null;
+    const companyName = raw.company;
+    if (companyName) {
       try {
-        const pRes = await client.query(
-          `INSERT INTO ${schema}.person
-             ("nameFirstName", "nameLastName", "syncGroupCode", "fangKeId", "customerIdentityKey",
-              "sourceOpportunityId", "keHuLaiYuan", "emailsPrimaryEmail", "phonesPrimaryPhoneNumber")
-           VALUES ($1, '', $2, $3, $4, $5, $6, $7, $8)
-           RETURNING id`,
-          [
-            contactName,
-            syncGroupCode,
-            fangKeId,
-            customerIdentityKey,
-            opportunityId,
-            opportunity.keHuLaiYuan || null,
-            raw.email || null,
-            (opportunity.whatsapp && opportunity.whatsapp.primaryPhoneNumber) || null,
-          ],
-        );
-        personId = pRes.rows[0]?.id || null;
+        const existing = await findCompanyByExactName(companyName, TWENTY_API_KEY);
+        const company = existing || await createCompanyByName(companyName, TWENTY_API_KEY, null);
+        companyId = company?.id || null;
       } catch (err) {
-        console.error('[website-form] create contact person failed:', err.message);
+        console.error('[website-form] create/link company failed:', err.message);
       }
     }
 
-    // 写访客ID/归类键；关联联系人（若已建 Person）
+    // 联系人姓名：表单 name 收口到 opportunity 的「联系人姓名」暂存列，不提前建 Person。
+    // Person（客户主数据）在"转客户"时由 upsertPersonFromOpportunity 读取该列生成，并回填 pointOfContactId。
+    const contactName = raw.name;
+
+    // 写线索id/归类键/联系人姓名；关联公司（若已建/关联）。intake 阶段不创建 Person、不写 pointOfContactId。
     await client.query(
       `UPDATE ${schema}.opportunity
-       SET "fangKeId" = $2,
+       SET "leadNo" = $2,
            "customerIdentityKey" = $3,
-           "pointOfContactId" = COALESCE("pointOfContactId", $4),
-           "linkedPersonId" = COALESCE("linkedPersonId", $4),
+           "lianXiRenXingMing" = COALESCE($4, "lianXiRenXingMing"),
+           "companyId" = COALESCE("companyId", $5),
            "updatedAt" = now()
        WHERE id = $1`,
-      [opportunityId, fangKeId, customerIdentityKey, personId],
+      [opportunityId, leadNo, customerIdentityKey, contactName || null, companyId],
     );
 
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('[website-form] post-create enrichment failed:', err.message);
-    // 不阻断主流程：线索已建，访客ID 失败仅告警（后续可回补）
+    // 不阻断主流程：线索已建，线索id 失败仅告警（后续可回补）
   } finally {
     client.release();
   }
@@ -1513,15 +1799,15 @@ async function createWebsiteFormOpportunity(body, req) {
     } : undefined,
     payload: {
       opportunityId,
-      fangKeId,
+      leadNo,
       customerIdentityKey,
-      personId,
+      contactName: raw.name || null,
       fields: Object.keys(raw).filter((key) => raw[key]),
       source: opportunity.keHuLaiYuan,
       stage: opportunity.stage,
     },
   });
-  return { opportunityId, name: created.name, source: opportunity.keHuLaiYuan, stage: opportunity.stage, fangKeId, customerIdentityKey, personId };
+  return { opportunityId, name: created.name, source: opportunity.keHuLaiYuan, stage: opportunity.stage, leadNo, customerIdentityKey, personId };
 }
 
 app.post('/api/website/form', async (req, res) => {
@@ -1546,7 +1832,7 @@ app.post('/api/website/webhook', async (req, res) => {
       const created = await createWebsiteFormOpportunity(req.body, req);
       return res.status(201).json({ received: true, ...created });
     }
-    await persistWebsiteMessage(req.body);
+    await persistWebsiteMessage(req.body, extractClientIp(req));
     res.status(200).json({ received: true });
   } catch (error) {
     console.error('[website] ingest failed:', error.message);
@@ -1597,9 +1883,10 @@ async function persistInstagramMessage(senderId, messageEvent) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name)
-      VALUES ('instagram', $1, $2) ON CONFLICT(channel, external_id)
-      DO UPDATE SET updated_at = now() RETURNING *`, [senderId, `Instagram ${senderId.slice(-6)}`]);
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name)
+      VALUES ('instagram', $1, $2, $2) ON CONFLICT(channel, external_id)
+      DO UPDATE SET channel_display_name = COALESCE(conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
+        updated_at = now() RETURNING *`, [senderId, `Instagram ${senderId.slice(-6)}`]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
       VALUES ('instagram', $1, $2) ON CONFLICT(channel, external_chat_id)
@@ -1682,9 +1969,10 @@ async function persistFacebookMessage(messagingEvent) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name)
-      VALUES ('facebook', $1, $2) ON CONFLICT(channel, external_id)
-      DO UPDATE SET updated_at = now() RETURNING *`, [counterpartyId, `Facebook ${counterpartyId.slice(-6)}`]);
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name)
+      VALUES ('facebook', $1, $2, $2) ON CONFLICT(channel, external_id)
+      DO UPDATE SET channel_display_name = COALESCE(conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
+        updated_at = now() RETURNING *`, [counterpartyId, `Facebook ${counterpartyId.slice(-6)}`]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
       VALUES ('facebook', $1, $2) ON CONFLICT(channel, external_chat_id)
@@ -1756,7 +2044,7 @@ app.get('/api/conversations', async (req, res) => {
       SELECT 1 FROM conv.conversation_participants cp
       WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
     )` : 'false';
-    const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft",
+    const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
       'company', COALESCE(co.name, p."gongSiMingCheng", ''),
@@ -1774,7 +2062,7 @@ app.get('/api/conversations', async (req, res) => {
       'enabled', COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'),
       'scheduleActive', ${scheduleActive},
       'inTakeoverWindow', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive}),
-      'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND ${scheduleActive} AND c.status NOT IN ('takeover', 'closed'))
+      'canTakeover', (COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website') AND (c.ai_takeover_until IS NULL OR c.ai_takeover_until > now()) AND c.status NOT IN ('takeover', 'closed'))
     ) AS "aiControl",
     json_build_object(
       'viewerRole', ${viewerRole},
@@ -1784,7 +2072,19 @@ app.get('/api/conversations', async (req, res) => {
       'isAssignedToMe', ${assignedToMeExpression},
       'hasTakenOverBefore', ${takenBeforeExpression}
     ) AS permissions,
-    json_build_object('id', ct.id, 'name', ct.display_name, 'phone', ct.phone, 'email', ct.email, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
+    json_build_object('id', ct.id,
+      -- 需求一：最终显示名由后端算好（人工名优先 → 渠道原始名 → 手机号/邮箱/外部 ID 兜底），前端不再自行拼接
+      'name', COALESCE(NULLIF(ct.display_name, ''), NULLIF(ct.channel_display_name, ''), NULLIF(ct.phone, ''), NULLIF(ct.email, ''), ct.external_id, ''),
+      'nameSource', COALESCE(ct.display_name_source, 'channel'),
+      'channelName', COALESCE(ct.channel_display_name, ''),
+      'phone', ct.phone, 'email', ct.email, 'twentyPersonId', ct.twenty_person_id, 'twentyOpportunityId', ct.twenty_opportunity_id,
+      -- 需求三：官网访客地域（IP 仅审计用，列表不展示完整 IP；WhatsApp 等不填这些字段 -> 空串）
+      'country', COALESCE(ct.geo_country_name, ct.geo_country_code, ''),
+      'region', COALESCE(ct.geo_region, ''),
+      'city', COALESCE(ct.geo_city, ''),
+      'timezone', COALESCE(ct.geo_timezone, ''),
+      'ip', COALESCE(ct.ip_address::text, ''),
+      'geoSource', COALESCE(ct.geo_source, ''),
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
@@ -1804,7 +2104,11 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const historyView = String(req.query?.view || req.query?.scope || '').trim() === 'history';
   const access = await requireConversationAccess(req, res, { historyView });
   if (!access) return;
-  const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt" FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
+  const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt",
+      -- 需求二：出站消息送达状态（pending/sent/delivered/read/failed）
+      delivery_status AS "deliveryStatus", delivery_status_at AS "deliveryStatusAt",
+      delivered_at AS "deliveredAt", read_at AS "readAt", failed_at AS "failedAt", status_detail AS "statusDetail"
+    FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
   res.json(result.rows);
 });
 
@@ -2300,9 +2604,10 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
       );
       reused = existing.rowCount > 0;
       const contactResult = await client.query(
-        `INSERT INTO conv.contacts(channel, external_id, display_name, phone)
-         VALUES ('whatsapp', $1, $2, $3)
+        `INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name, phone)
+         VALUES ('whatsapp', $1, $2, $2, $3)
          ON CONFLICT(channel, external_id) DO UPDATE SET
+           channel_display_name = COALESCE(conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
            phone = COALESCE(conv.contacts.phone, EXCLUDED.phone), updated_at = now()
          RETURNING id, display_name, phone`,
         [chatId, `+${phone}`, `+${phone}`],
@@ -2431,9 +2736,11 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       await client.query('ROLLBACK');
       return res.status(403).json({ error: '当前账号无权操作该会话' });
     }
-    if (action !== 'close' && (!conversation.aiEnabled || !conversation.inTakeoverWindow)) {
+    // 人工接管/释放不再受 AI 排班时段限制：排班只决定 AI 是否自动回复，不该卡住人。
+    // 仅当会话本身未开启 AI 托管模式（aiEnabled=false，如普通非官网会话）时才拦截。
+    if (action !== 'close' && !conversation.aiEnabled) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'AI客服未激活或不在托管时间内' });
+      return res.status(409).json({ error: 'AI客服未激活，暂不可人工接管' });
     }
     if (action === 'takeover' && conversation.status === 'takeover' && conversation.agent_id !== viewer.workspaceMemberId) {
       await client.query('ROLLBACK');
@@ -2463,8 +2770,10 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       );
     }
     const nextAgentId = action === 'takeover' ? viewer.workspaceMemberId : null;
+    // 接管写入计时起点；释放/关闭清空计时，避免重复触发自动释放。
+    const nextTakenOverAt = action === 'takeover' ? 'now()' : 'NULL';
     await client.query(
-      `UPDATE conv.conversations SET status = $2, agent_id = $3, updated_at = now() WHERE id = $1`,
+      `UPDATE conv.conversations SET status = $2, agent_id = $3, taken_over_at = ${nextTakenOverAt}, updated_at = now() WHERE id = $1`,
       [req.params.id, nextStatus, nextAgentId],
     );
     await client.query(
@@ -2485,6 +2794,84 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     await client.query('ROLLBACK').catch(() => {});
     console.error('[conversation-status] failed:', error.message);
     res.status(502).json({ error: 'status switch failed', detail: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── 需求一：对话名称人工编辑（全渠道通用）───────────────────────────────────
+// 名称落在 conv.contacts.display_name 并把来源标记为 manual，之后渠道 webhook 不再覆盖；
+// 传空名称 = 恢复渠道原始名（channel_display_name → 手机号 → 邮箱 → 外部 ID 兜底）。
+const CONTACT_NAME_MAX_LENGTH = 120;
+
+app.patch('/api/conversations/:id/name', requireSameSite, async (req, res) => {
+  if (req.body?.name != null && typeof req.body.name !== 'string') {
+    return res.status(400).json({ error: '名称格式无效' });
+  }
+  const rawName = String(req.body?.name ?? '').trim();
+  if (rawName.length > CONTACT_NAME_MAX_LENGTH) {
+    return res.status(400).json({ error: `名称不能超过 ${CONTACT_NAME_MAX_LENGTH} 个字符` });
+  }
+  // 登录 + 会话可见性 + 写权限（boss 只读）三重校验，全部复用既有逻辑。
+  const access = await requireWriteConversationAccess(req, res);
+  if (!access) return;
+  const { authenticated, conversation } = access;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // 只改「该会话关联的那一个 contact」：用 conversation_id 精确定位，
+    // 避免跨渠道相同 external_id 或空 conversation_id 误伤其他客户。
+    const currentResult = await client.query(
+      `SELECT ct.id, ct.display_name, ct.channel_display_name, ct.display_name_source,
+              ct.phone, ct.email, ct.external_id
+         FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
+        WHERE c.id = $1 FOR UPDATE OF ct`,
+      [req.params.id],
+    );
+    const contact = currentResult.rows[0];
+    if (!contact) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '该会话没有关联客户，无法改名' });
+    }
+    const channelFallback = [contact.channel_display_name, contact.phone, contact.email, contact.external_id]
+      .map(value => String(value || '').trim())
+      .find(Boolean) || '';
+    const nextName = rawName || channelFallback;
+    const nextSource = rawName ? 'manual' : 'channel';
+    const updated = await client.query(
+      `UPDATE conv.contacts SET display_name = $2, display_name_source = $3,
+              display_name_updated_at = now(), display_name_updated_by = $4, updated_at = now()
+        WHERE id = $1
+        RETURNING id, display_name, display_name_source, channel_display_name`,
+      [contact.id, nextName, nextSource, authenticated.actor.id],
+    );
+    await client.query('COMMIT');
+    const row = updated.rows[0];
+    recordAuditEvent('conversation.name_changed', {
+      channel: conversation.channel,
+      conversationId: req.params.id,
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      requestSummary: auditRequestSummary(req),
+      payload: {
+        contactId: contact.id,
+        fromName: contact.display_name || '',
+        toName: row.display_name || '',
+        fromSource: contact.display_name_source,
+        toSource: row.display_name_source,
+        channelName: row.channel_display_name || '',
+      },
+    });
+    res.json({
+      conversationId: req.params.id,
+      contactId: row.id,
+      name: row.display_name || '',
+      source: row.display_name_source,
+      channelName: row.channel_display_name || '',
+    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[conversation-name] rename failed:', error.message);
+    res.status(502).json({ error: '名称保存失败', detail: error.message });
   } finally {
     client.release();
   }
@@ -2651,6 +3038,9 @@ function isWahaSessionNotFound(error) {
   return error?.status === 404 || String(error?.detail?.message || error?.message || '').toLowerCase().includes('session not found');
 }
 
+// 需求二：webhook 事件必须包含 message.ack，否则拿不到送达/已读回执。
+const WAHA_WEBHOOK_EVENTS = ['message', 'message.ack', 'session.status'];
+
 async function createWahaSession(sessionName = WAHA_SESSION) {
   const response = await fetchWaha('/api/sessions/start', {
     method: 'POST',
@@ -2661,7 +3051,7 @@ async function createWahaSession(sessionName = WAHA_SESSION) {
         webhooks: [
           {
             url: WAHA_WEBHOOK_URL,
-            events: ['message', 'session.status'],
+            events: WAHA_WEBHOOK_EVENTS,
           },
         ],
       },
@@ -3473,7 +3863,7 @@ async function stripUnavailableOpportunityFields(data, skipped = []) {
   }
 }
 
-async function ensureOpportunityForInboundConversation({ conversationId, contactId, channel, fallbackName, phone }) {
+async function ensureOpportunityForInboundConversation({ conversationId, contactId, channel, phone }) {
   if (!conversationId || !contactId || !['whatsapp', 'website'].includes(channel)) return null;
   const source = SOURCE_BY_CHANNEL[channel];
   const existing = await pool.query(
@@ -3483,14 +3873,17 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
   if (existing.rows[0]?.twenty_opportunity_id) return existing.rows[0].twenty_opportunity_id;
 
   const data = {
-    name: nonBlankOrNull(fallbackName) || `${channel === 'whatsapp' ? 'WhatsApp' : '官网客服'}线索`,
-    // 官网客服(website)来源自动建线索初始进度统一为「未处理线索」；WhatsApp 维持 XIANSUO 不变
-    stage: channel === 'website' ? 'WEI_CHU_LI_XIANSUO' : 'XIANSUO',
+    // Opportunity.name 对应线索列表首列「公司名称」。自动建线索阶段通常没有公司主数据，
+    // 因此保持为空；渠道名、手机号、访客名只留在 conv/contact 或联系人字段，不写入公司列。
+    name: '',
+    // 初始进度：仅「官网表单(GUAN_WANG_BIAO_DAN)」来源为「未处理线索」；
+    // 其他渠道（官网客服 GUAN_WANG_KE_FU / WhatsApp 等）统一为「线索(XIANSUO)」。
+    stage: source === 'GUAN_WANG_BIAO_DAN' ? 'WEI_CHU_LI_XIANSUO' : 'XIANSUO',
   };
   if (source) data.keHuLaiYuan = source;
   const rawPhone = String(phone || '').replace(/[\s()-]+/g, '');
   if (rawPhone && /^\+?\d{5,15}$/.test(rawPhone)) {
-    data.phone = rawPhone.startsWith('+')
+    data.whatsapp = rawPhone.startsWith('+')
       ? { primaryPhoneNumber: rawPhone }
       : { primaryPhoneNumber: rawPhone, primaryPhoneCallingCode: '+86', primaryPhoneCountryCode: 'CN' };
   }
@@ -3504,6 +3897,14 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
     );
     const opportunity = result?.createOpportunity;
     if (!opportunity?.id) throw new Error('createOpportunity returned empty id');
+    // 显式生成线索ID（与表单路径一致），同时作为三表关联键 customerIdentityKey；
+    // 即便 DB 触发器已兜底，这里也写入 JS 生成值，使审计日志可携带稳定线索ID。
+    const leadNo = generateLeadId();
+    const schema = await getWorkspaceSchema();
+    await pool.query(
+      `UPDATE ${schema}.opportunity SET "leadNo" = $2, "customerIdentityKey" = $3, "updatedAt" = now() WHERE id = $1`,
+      [opportunity.id, leadNo, leadNo],
+    );
     await pool.query(
       'UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1 AND twenty_opportunity_id IS NULL',
       [contactId, opportunity.id],
@@ -3511,7 +3912,7 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
     await recordAuditEvent('conversation.auto_created_lead', {
       channel,
       conversationId,
-      payload: { opportunityId: opportunity.id, stage: data.stage, source },
+      payload: { opportunityId: opportunity.id, leadNo, stage: data.stage, source },
     });
     return opportunity.id;
   } catch (error) {
@@ -3568,46 +3969,24 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const isUpdate = !!row.twenty_opportunity_id;
   const oppId = row.twenty_opportunity_id;
 
-  // 关键联系人(Person)：已有则更新姓名，没有且填了姓名则新建；姓名为空则不动。
-  let personId = null;
-  let createdPersonId = null; // 仅本次新建的，失败时回滚
-  if (isUpdate) {
-    try {
-      const ex = await twentyGraphQL('query($id: UUID!){ opportunity(filter: { id: { eq: $id } }){ pointOfContact{ id } } }', { id: oppId }, twentyToken);
-      personId = ex?.opportunity?.pointOfContact?.id || null;
-    } catch (error) { console.error('[convert-to-lead] load pointOfContact failed:', error.message); }
-  }
-  if (name) {
-    try {
-      if (personId) {
-        await twentyGraphQL('mutation($id: UUID!, $d: PersonUpdateInput!){ updatePerson(id: $id, data: $d){ id } }',
-          { id: personId, d: { name: { firstName: name, lastName: '' } } }, twentyToken);
-        await applyRecordAudit('person', personId, auditActor, 'update');
-      } else {
-        const pr = await twentyGraphQL('mutation($d: PersonCreateInput!){ createPerson(data: $d){ id } }',
-          { d: { name: { firstName: name, lastName: '' } } }, twentyToken);
-        personId = pr?.createPerson?.id || null;
-        createdPersonId = personId;
-        await applyRecordAudit('person', personId, auditActor, 'create');
-      }
-    } catch (error) { console.error('[convert-to-lead] person write failed:', error.message); }
-  }
+  // 联系人姓名：转线索阶段只把姓名收口到 opportunity 的「联系人姓名」暂存列，不立即建 Person。
+  // Person（客户主数据）统一在"转客户"时由 upsertPersonFromOpportunity 生成，并回填 pointOfContactId。
 
-  // 线索名用公司/姓名；都为空时用会话联系人或 WhatsApp 号兜底，允许销售后续补填。
-  const fallbackLeadName = row.contact_phone || row.contact_name || `${row.channel || '渠道'}线索`;
-  const data = { name: company || name || fallbackLeadName };
+  // Opportunity.name 对应线索列表首列「公司名称」；联系人姓名写入 lianXiRenXingMing，
+  // 不再用姓名、会话名或 WhatsApp 号兜底，避免公司列混入非公司数据。
+  const data = { name: company || '' };
   let companyId = String(b.companyId || '').trim();
   if (!companyId && company) {
     try {
-      const existingCompany = await findCompanyByExactName(company, twentyToken);
-      const resolvedCompany = existingCompany || await createCompanyByName(company, twentyToken, auditActor);
+      const existingCompany = await findCompanyByExactName(company, TWENTY_API_KEY);
+      const resolvedCompany = existingCompany || await createCompanyByName(company, TWENTY_API_KEY, auditActor);
       companyId = resolvedCompany?.id || '';
     } catch (error) { console.error('[convert-to-lead] company write failed:', error.message); }
   }
   if (companyId) data.companyId = companyId;
   const source = b.source || SOURCE_BY_CHANNEL[row.channel];
   const isWebsiteFormSource = source === 'GUAN_WANG_BIAO_DAN';
-  if (personId) data.pointOfContactId = personId;
+  // 注：pointOfContactId 不在转线索阶段写入；联系人(Person)在"转客户"时生成并回填。
   if (b.stage) data.stage = normalizeOpportunityStage(b.stage);
   if (source) data.keHuLaiYuan = source;
   if (!isUpdate && isWebsiteFormSource && !data.stage) data.stage = 'WEI_CHU_LI_XIANSUO';
@@ -3620,7 +3999,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const rawPhone = String(b.phone || '').replace(/[\s()-]+/g, '');
   if (rawPhone) {
     if (/^\+?\d{5,15}$/.test(rawPhone)) {
-      data.phone = rawPhone.startsWith('+')
+      data.whatsapp = rawPhone.startsWith('+')
         ? { primaryPhoneNumber: rawPhone }
         : { primaryPhoneNumber: rawPhone, primaryPhoneCallingCode: '+86', primaryPhoneCountryCode: 'CN' };
     } else skipped.push('phone');
@@ -3638,8 +4017,8 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   await stripUnavailableOpportunityFields(data, skipped);
 
   const writeOpp = (d) => (isUpdate
-    ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }, twentyToken).then((r) => r?.updateOpportunity)
-    : twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d }, twentyToken).then((r) => r?.createOpportunity));
+    ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }, TWENTY_API_KEY).then((r) => r?.updateOpportunity)
+    : twentyGraphQL('mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }', { data: d }, TWENTY_API_KEY).then((r) => r?.createOpportunity));
 
   try {
     let opp;
@@ -3649,13 +4028,31 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
       // 兜底：若 Twenty 仍因电话/邮箱格式拒绝，剥离该字段重试一次。
       const msg = (e.message || '').toLowerCase();
       if (msg.includes('phone') || msg.includes('email')) {
-        if (msg.includes('phone')) { delete data.phone; skipped.push('phone'); }
+        if (msg.includes('phone')) { delete data.whatsapp; skipped.push('phone'); }
         if (msg.includes('email')) { delete data[OPPORTUNITY_EMAIL_FIELD]; skipped.push('email'); }
         opp = await writeOpp(data);
       } else throw e;
     }
     if (!opp?.id) return res.status(502).json({ error: isUpdate ? 'updateOpportunity failed' : 'createOpportunity failed' });
     await applyRecordAudit('opportunity', opp.id, auditActor, isUpdate ? 'update' : 'create');
+    // 把对话工作台填写的联系人姓名收口到 opportunity「联系人姓名」暂存列（转客户时生成 Person 主数据）
+    if (name) {
+      try {
+        const schema = await getWorkspaceSchema();
+        await pool.query(`UPDATE ${schema}.opportunity SET "lianXiRenXingMing" = $2, "updatedAt" = now() WHERE id = $1`, [opp.id, name]);
+      } catch (err) { console.error('[convert-to-lead] write contact name failed:', err.message); }
+    }
+    // 新转线索时显式生成线索ID（与表单/自动建线索路径一致），并作为三表关联键；
+    // 即便 DB 触发器已兜底，也写入 JS 生成值，使审计日志可携带稳定线索ID。
+    let leadNo = null;
+    if (!isUpdate) {
+      leadNo = generateLeadId();
+      const schema = await getWorkspaceSchema();
+      await pool.query(
+        `UPDATE ${schema}.opportunity SET "leadNo" = $2, "customerIdentityKey" = $3, "updatedAt" = now() WHERE id = $1`,
+        [opp.id, leadNo, leadNo],
+      );
+    }
     if (!isUpdate && row.contact_id) {
       await pool.query('UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1', [row.contact_id, opp.id]);
     }
@@ -3664,12 +4061,10 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
       conversationId: req.params.id,
       actor: { userId: writeAccess.authenticated.userId, workspaceMemberId: writeAccess.authenticated.actor.id, name: writeAccess.authenticated.actor.name },
       requestSummary: auditRequestSummary(req),
-      payload: { opportunityId: opp.id, skipped: [...new Set(skipped)], updated: isUpdate },
+      payload: { opportunityId: opp.id, leadNo, skipped: [...new Set(skipped)], updated: isUpdate },
     });
     res.status(isUpdate ? 200 : 201).json({ opportunityId: opp.id, name: opp.name, skipped: [...new Set(skipped)], updated: isUpdate });
   } catch (error) {
-    // 写商机失败：仅回滚本次「新建」的孤儿 Person（更新既有 Person 不回滚）。
-    if (createdPersonId) twentyGraphQL('mutation($id: UUID!){ deletePerson(id: $id){ id } }', { id: createdPersonId }, twentyToken).catch(() => {});
     console.error('[convert-to-lead] failed:', error.message);
     res.status(502).json({ error: 'convert failed', detail: error.message });
   }
@@ -3756,7 +4151,9 @@ async function findExistingPersonForOpportunity(client, schema, opportunity) {
 
 async function upsertPersonFromOpportunity(client, schema, opportunity) {
   const existing = await findExistingPersonForOpportunity(client, schema, opportunity);
-  const name = nonBlankOrNull(opportunity.name);
+  // 客户(Person)姓名优先取线索「联系人姓名」暂存列（官网表单/对话工作台收口的联系人姓名），
+  // 回退到线索标题（兼容无联系人姓名的旧线索）。
+  const name = nonBlankOrNull(opportunity.lianXiRenXingMing) || nonBlankOrNull(opportunity.name);
   const email = firstValidEmail(opportunity.youXiang, opportunity.emailPrimaryEmail);
   const customerType = SHARED_CUSTOMER_TYPES.has(String(opportunity.keHuLeiXing || ''))
     ? String(opportunity.keHuLeiXing)
@@ -3767,6 +4164,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
       `UPDATE ${schema}.person AS target
        SET
          "syncGroupCode" = COALESCE("syncGroupCode", $2),
+         "leadNo" = COALESCE("leadNo", $16),
          "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1),
          "linkedProjectId" = COALESCE("linkedProjectId", $3),
          "nameFirstName" = COALESCE($4, "nameFirstName"),
@@ -3808,6 +4206,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
         customerType,
         nonBlankOrNull(opportunity.zhiWei),
         existing.id,
+        nonBlankOrNull(opportunity.leadNo),
       ],
     );
     return { id: result.rows[0]?.id || existing.id, created: false };
@@ -3830,7 +4229,8 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
        "jobTitle",
        "syncGroupCode",
        "sourceOpportunityId",
-       "linkedProjectId"
+       "linkedProjectId",
+       "leadNo"
      ) VALUES (
        $1,
        '',
@@ -3846,7 +4246,8 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
        $11,
        $12,
        $13,
-       $14
+       $14,
+       $15
      )
      RETURNING id`,
     [
@@ -3864,6 +4265,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
       opportunity.syncGroupCode,
       opportunity.id,
       opportunity.linkedProjectId || null,
+      nonBlankOrNull(opportunity.leadNo),
     ],
   );
   return { id: result.rows[0]?.id, created: true };
@@ -3990,12 +4392,14 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
       `SELECT
          id,
          name,
-         "companyId",
-         "pointOfContactId",
-         "syncGroupCode",
-         "linkedPersonId",
-         "linkedProjectId",
-         "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
+        "lianXiRenXingMing",
+        "companyId",
+        "pointOfContactId",
+        "syncGroupCode",
+        "linkedPersonId",
+        "linkedProjectId",
+        "leadNo",
+        "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
          "whatsappPrimaryPhoneCountryCode" AS "phonePrimaryPhoneCountryCode",
          "whatsappPrimaryPhoneCallingCode" AS "phonePrimaryPhoneCallingCode",
          "youXiangPrimaryEmail" AS "emailPrimaryEmail",
@@ -4134,6 +4538,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
          "syncGroupCode" = COALESCE("syncGroupCode", $2),
          "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1),
          "linkedPersonId" = COALESCE("linkedPersonId", $3),
+         "leadNo" = COALESCE("leadNo", $13),
          name = COALESCE($4, name),
          "guoJiaDiQuAddressCountry" = COALESCE($5, "guoJiaDiQuAddressCountry"),
          "xuQiuChanPin" = COALESCE($6, "xuQiuChanPin"),
@@ -4158,6 +4563,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
         null,
         taskValue,
         existing.id,
+        nonBlankOrNull(opportunity.leadNo),
       ],
     );
     return { id: result.rows[0]?.id || existing.id, created: false };
@@ -4186,7 +4592,8 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
        "renWuJinDu",
        "syncGroupCode",
        "sourceOpportunityId",
-       "linkedPersonId"
+       "linkedPersonId",
+       "leadNo"
      ) VALUES (
        $1,
        $2,
@@ -4208,7 +4615,8 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
        CASE WHEN $11::text IS NULL THEN NULL ELSE $11::text::${schema}."_xiangMu_renWuJinDu_enum" END,
        $12,
        $13,
-       $14
+       $14,
+       $15
      )
      RETURNING id`,
     [
@@ -4226,6 +4634,7 @@ async function upsertProjectFromOpportunity(client, schema, opportunity, personI
       opportunity.syncGroupCode,
       opportunity.id,
       personId || opportunity.linkedPersonId || opportunity.pointOfContactId || null,
+      nonBlankOrNull(opportunity.leadNo),
     ],
   );
   return { id: result.rows[0]?.id, created: true };
@@ -4259,6 +4668,7 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
          "companyId",
          "pointOfContactId",
          "syncGroupCode",
+         "leadNo",
          "linkedPersonId",
          "linkedProjectId",
          "whatsappPrimaryPhoneNumber" AS "phonePrimaryPhoneNumber",
@@ -4374,8 +4784,12 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
 // 记录销售在 CRM 内发出的消息。用渠道返回的消息 id 落库，与 message.any webhook 回传的
 // 同一条出站消息（fromMe=true，external_msg_id 同为该 id）去重，避免重复。
 async function recordAgentMessage(conversationId, content, externalId, options = {}) {
-  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
-    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+  // 需求二：出站消息落库即带状态。渠道 API 返回成功 = sent；调用失败 = failed（带错误摘要）。
+  const deliveryStatus = options.deliveryStatus || 'sent';
+  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at,
+      delivery_status, delivery_status_at, failed_at, status_detail)
+    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now(), $7, now(),
+      CASE WHEN $7 = 'failed' THEN now() ELSE NULL END, $8) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
     [
       externalId || null,
       conversationId,
@@ -4383,6 +4797,8 @@ async function recordAgentMessage(conversationId, content, externalId, options =
       options.contentType || 'text',
       options.mediaUrl || null,
       options.attachments ? JSON.stringify(options.attachments) : null,
+      deliveryStatus,
+      options.statusDetail ? String(options.statusDetail).slice(0, 500) : null,
     ]);
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
   return inserted.rows[0]?.id || null;
@@ -4414,6 +4830,55 @@ async function releaseWebsiteAiTakeover(externalChatId) {
     body: JSON.stringify({}),
   });
   if (!response.ok) throw new Error(await response.text());
+}
+
+// ── 官网接管超时自动释放 ──────────────────────────────────────────────────────
+// 场景：销售接管后忘记释放，会话被长期占用（AI 无法接管、他人也不能接）。
+// 规则：官网渠道、状态为 takeover、且连续 TAKEOVER_IDLE_MINUTES 分钟无人工(agent)消息，则自动释放。
+// 范围仅官网（WhatsApp 为一人一号、对接不同客户，不存在长期占用客户资源问题）。
+// 效果：status→open、agent_id→NULL、taken_over_at→NULL，并写入系统消息（不提及恢复 AI 托管，
+//       因为官网可能未激活 AI 托管功能）；系统消息输出与审计均可审计，不影响业务数据。
+const TAKEOVER_IDLE_MINUTES = Math.max(1, Number(process.env.TAKEOVER_IDLE_MINUTES || 120));
+
+async function releaseIdleTakeovers() {
+  if (!TAKEOVER_IDLE_MINUTES) return;
+  try {
+    const result = await pool.query(
+      `UPDATE conv.conversations c
+       SET status = 'open', agent_id = NULL, taken_over_at = NULL, updated_at = now()
+       WHERE c.channel = 'website'
+         AND c.status = 'takeover'
+         AND c.taken_over_at IS NOT NULL
+         AND c.taken_over_at < now() - ($1::int * INTERVAL '1 minute')
+         AND NOT EXISTS (
+           SELECT 1 FROM conv.messages m
+           WHERE m.conversation_id = c.id AND m.sender_type = 'agent'
+             AND m.sent_at > now() - ($1::int * INTERVAL '1 minute')
+         )
+       RETURNING c.id, c.agent_id, c.external_chat_id`,
+      [TAKEOVER_IDLE_MINUTES],
+    );
+    for (const row of result.rows) {
+      await pool.query(
+        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+         VALUES ($1, $2, 'system', $3, 'system', now())`,
+        [`system:${row.id}:${Date.now()}:auto-release`, row.id,
+         `会话因超过${TAKEOVER_IDLE_MINUTES}分钟无人工处理已自动释放`],
+      );
+      // 官网若有 AI 服务且已配置，尝试通知释放（未激活/未配置时自动 no-op，不影响本流程）。
+      try { await releaseWebsiteAiTakeover(row.external_chat_id); } catch (e) { /* 忽略 */ }
+      recordAuditEvent('conversation.auto_released', {
+        channel: 'website',
+        conversationId: row.id,
+        payload: { reason: 'idle_timeout', idleMinutes: TAKEOVER_IDLE_MINUTES, releasedAgentId: row.agent_id },
+      });
+    }
+    if (result.rows.length) {
+      console.log(`[auto-release] released ${result.rows.length} idle takeover conversation(s) after ${TAKEOVER_IDLE_MINUTES}min`);
+    }
+  } catch (error) {
+    console.error('[auto-release] scan failed:', error.message);
+  }
 }
 
 async function sendWhatsAppAttachmentFromUrl(chatId, attachment, session = WAHA_SESSION) {
@@ -4518,6 +4983,22 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         });
         return res.status(202).json(sent);
       } catch (error) {
+        // 需求二：附件与文本共用同一状态模型，失败同样落 failed 并留痕。
+        const failedId = await recordAgentMessage(req.params.id, displayContent, null, {
+          contentType: messageType,
+          mediaUrl,
+          attachments: [attachment],
+          deliveryStatus: 'failed',
+          statusDetail: `WAHA sendFile: ${error.message}`,
+        });
+        await recordAuditEvent('message.send_failed', {
+          channel: conversation.channel,
+          conversationId: req.params.id,
+          messageId: failedId,
+          actor: access.viewer,
+          requestSummary: auditRequestSummary(req),
+          payload: { contentType: messageType, hasAttachment: true, attachmentTitle: title, detail: String(error.message).slice(0, 300) },
+        });
         return res.status(502).json({ error: 'WhatsApp file send failed', detail: error.message });
       }
     }
@@ -4550,7 +5031,23 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
 
   if (conversation.channel === 'whatsapp') {
     const response = await fetch(`${WAHA_API_URL}/api/sendText`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY }, body: JSON.stringify({ session: conversation.waha_session || WAHA_SESSION, chatId: conversation.external_chat_id, text: content }) });
-    if (!response.ok) return res.status(502).json({ error: 'WhatsApp send failed', detail: await response.text() });
+    if (!response.ok) {
+      // 需求二：发送失败也要留痕并显示「失败」，绝不能静默丢弃或显示为已发送。
+      const detail = await response.text();
+      const failedId = await recordAgentMessage(req.params.id, content, null, {
+        deliveryStatus: 'failed',
+        statusDetail: `WAHA sendText ${response.status}: ${detail}`,
+      });
+      await recordAuditEvent('message.send_failed', {
+        channel: conversation.channel,
+        conversationId: req.params.id,
+        messageId: failedId,
+        actor: access.viewer,
+        requestSummary: auditRequestSummary(req),
+        payload: { contentType: 'text', httpStatus: response.status, detail: String(detail).slice(0, 300) },
+      });
+      return res.status(502).json({ error: 'WhatsApp send failed', detail });
+    }
     const sent = await response.json();
     const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized);
     await recordAuditEvent('message.sent', {
@@ -4692,9 +5189,12 @@ async function persistEmailMessage({ fromAddress, fromName, subject, body, attac
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, email)
-      VALUES ('email', $1, $2, $1) ON CONFLICT(channel, external_id)
-      DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, conv.contacts.display_name),
+    const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name, email)
+      VALUES ('email', $1, $2, $2, $1) ON CONFLICT(channel, external_id)
+      DO UPDATE SET channel_display_name = COALESCE(EXCLUDED.channel_display_name, conv.contacts.channel_display_name),
+        display_name = CASE WHEN conv.contacts.display_name_source = 'manual'
+            THEN conv.contacts.display_name
+            ELSE COALESCE(EXCLUDED.display_name, conv.contacts.display_name) END,
         email = COALESCE(EXCLUDED.email, conv.contacts.email), updated_at = now() RETURNING *`,
       [addr, displayName]);
     const contact = contactResult.rows[0];
@@ -4824,6 +5324,12 @@ async function startServer() {
   await ensureSchema();
   app.listen(PORT, () => console.log(`[middleware] listening on ${PORT}`));
   startEmailPoller();
+  // 官网接管超时自动释放：每分钟扫描一次；启动即先跑一轮，回收历史遗留的占用会话。
+  if (TAKEOVER_IDLE_MINUTES > 0) {
+    releaseIdleTakeovers();
+    setInterval(releaseIdleTakeovers, 60 * 1000);
+    console.log(`[auto-release] website idle takeover auto-release enabled (idle > ${TAKEOVER_IDLE_MINUTES}min)`);
+  }
 }
 
 if (require.main === module) {

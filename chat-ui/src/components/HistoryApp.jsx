@@ -52,7 +52,7 @@ export function HistoryApp() {
         ) : (
           <div style={{ flex: 1, overflowY: 'auto', padding: '18px 22px', minHeight: 0 }}>
             {selected.messages?.length ? (
-              selected.messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
+              selected.messages.map((msg) => <MessageBubble key={msg.id} msg={msg} channel={selected.channel} />)
             ) : (
               <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>暂无聊天记录</div>
             )}

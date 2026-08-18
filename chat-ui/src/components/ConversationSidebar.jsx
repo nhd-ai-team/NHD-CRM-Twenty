@@ -3,11 +3,13 @@ import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { STATUS_FILTERS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
+import { InlineNameEditor } from './InlineNameEditor'
 
 function Avatar({ contact, size = 36 }) {
-  const initials = contact.name.replace(/[^a-zA-Z一-龥]/g, '').slice(0, 2).toUpperCase() || '?'
+  const name = String(contact?.name || '')
+  const initials = name.replace(/[^a-zA-Z一-龥]/g, '').slice(0, 2).toUpperCase() || '?'
   const colors = ['#7c3aed','#0891b2','#16a34a','#dc2626','#ea580c','#0284c7']
-  const color = colors[(contact.name.charCodeAt(0) || 0) % colors.length]
+  const color = colors[(name.charCodeAt(0) || 0) % colors.length]
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', background: color,
@@ -33,8 +35,10 @@ function FiledTag({ status }) {
   return null
 }
 
-function ConvCard({ conv, isSelected, onSelect }) {
+function ConvCard({ conv, isSelected, onSelect, onRename }) {
   const timeStr = formatDistanceToNow(conv.lastMessageAt, { locale: zhCN, addSuffix: false })
+  // 需求三：列表只显示推断地域（不含完整 IP），缺失时明确标示「未知地区」
+  const geoParts = [conv.contact?.country, conv.contact?.region, conv.contact?.city, conv.contact?.timezone].filter(Boolean)
   return (
     <div
       onClick={onSelect}
@@ -61,9 +65,17 @@ function ConvCard({ conv, isSelected, onSelect }) {
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-            <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }}>
-              {conv.contact.name}
-            </span>
+            {/* 需求一：名称旁内联编辑入口；固定 maxWidth 保证编辑态不撑开卡片宽度 */}
+            <InlineNameEditor
+              name={conv.contact?.name || ''}
+              nameSource={conv.contact?.nameSource}
+              channelName={conv.contact?.channelName}
+              onSave={onRename ? (value => onRename(conv.id, value)) : undefined}
+              canEdit={Boolean(onRename)}
+              fontSize={13}
+              fontWeight={600}
+              maxWidth={150}
+            />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{timeStr}</span>
               {conv.unread > 0 && (
@@ -85,10 +97,12 @@ function ConvCard({ conv, isSelected, onSelect }) {
             <FiledTag status={conv.contact.filedStatus} />
           </div>
 
-          {conv.contact.country && (
+          {geoParts.length > 0 ? (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              📍 {conv.contact.country}{conv.contact.timezone ? ` · ${conv.contact.timezone}` : ''}
+              📍 {geoParts.join(' · ')}
             </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>📍 未知地区</div>
           )}
         </div>
       </div>
@@ -96,7 +110,7 @@ function ConvCard({ conv, isSelected, onSelect }) {
   )
 }
 
-export function ConversationSidebar({ conversations, selectedId, onSelect, onNewWhatsApp, activeStatus, setActiveStatus, search, setSearch, showNewWhatsApp = true }) {
+export function ConversationSidebar({ conversations, selectedId, onSelect, onNewWhatsApp, activeStatus, setActiveStatus, search, setSearch, showNewWhatsApp = true, onRename }) {
   return (
     <div style={{
       width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
@@ -160,6 +174,7 @@ export function ConversationSidebar({ conversations, selectedId, onSelect, onNew
               conv={conv}
               isSelected={conv.id === selectedId}
               onSelect={() => onSelect(conv.id)}
+              onRename={onRename}
             />
           ))
         )}
