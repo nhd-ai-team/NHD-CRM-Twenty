@@ -91,6 +91,12 @@ cat /tmp/ai-settings-batch-noauth.txt
 - 容器内 `buildAiSettingResponses` 校验输出 `ai-settings-lib-ok`，确认 middleware 运行态加载的是最新 `lib/ai-settings.js`。
 - 未登录调用 `/conv-api/ai-settings/batch` 返回 `401`。
 
+注入层稳定性回归（2026-08-19 起必须手测）：
+
+- 打开 `/objects/opportunities`、`/objects/people`、`/settings/profile`、`/settings/profile#channels`，连续切换 10 次，不出现 Twenty 错误边界「抱歉，出了点问题」。
+- 大表格页滚动、打开/关闭右侧抽屉、切换设置页左侧菜单时，左侧主菜单和设置菜单不应消失。
+- 如果再次出现错误边界，优先排查 `nginx/inject/src/80-boot.js`：禁止在 MutationObserver 同步回调里直接调用会修改 DOM 的逻辑。
+
 ## 四、当前工程边界与核心文档同步
 
 - email 当前按公共邮箱处理，暂不做个人渠道权限收紧。

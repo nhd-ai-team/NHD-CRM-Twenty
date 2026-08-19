@@ -3001,13 +3001,17 @@
   // 触发机制全部就绪后再做其它初始化；这样即便后续步骤抛错，自动注入链也不受影响。
   // scheduleTick: 时间节流（最多每 200ms 真正跑一次）+ 尾调用兜底。
   // MutationObserver 高频触发时只安排一次延迟执行，不会每变化都同步跑 tick（旧版卡死根因）。
+  // 关键（2026-08-19 线索页崩溃根因）：tick 必须**始终异步**执行（setTimeout 0 排队到任务队列），
+  // 严禁在 MutationObserver 回调的同步栈里跑——observer 回调在 React commit 间隙触发，若同步执行
+  // 里面的 ensure*（insertBefore/style/textContent/setAttribute 改 React 节点）会打断 React 协调器
+  // → 错误边界「抱歉，出了点问题」。所有 ensure* 改 DOM 必须在 React commit 完成后的任务里执行。
   function scheduleTick() {
     if (tickInProgress) return;
     var now = Date.now();
     var elapsed = now - lastTickAt;
     if (elapsed >= TICK_THROTTLE_MS) {
       lastTickAt = now;
-      tick();
+      setTimeout(function () { tick(); }, 0); // 异步：不在 observer 同步栈内改 DOM
     } else if (!tickScheduled) {
       tickScheduled = true;
       setTimeout(function () {
@@ -3092,7 +3096,7 @@
 
     applyLeadCompanyUiFix();
     // 根因修复：去掉 setInterval 每秒全文档扫描（大表格页卡死主因之一）。
-    // 改为「路由切换时全量兜底」+「新增/文本变化子树按需扫描」，且仅机会页生效。
+    // 改为「路由切换时全量兜底」+「DOM 变化异步防抖扫描」，且仅机会页生效。
     var _lcLastPath = window.location.pathname;
     function _lcOnRoute() {
       if (window.location.pathname !== _lcLastPath) {
@@ -3102,6 +3106,12 @@
     }
     window.addEventListener('popstate', _lcOnRoute);
     window.addEventListener('hashchange', _lcOnRoute);
+    // 防抖：MutationObserver 回调在 React commit 期间触发，若同步改 DOM（textContent/style/attribute）
+    // 会打断 React 19 的协调器 → 触发错误边界「抱歉，出了点问题」（2026-08-19 线索页崩溃根因）。
+    // 改为收集变化子树后延时 120ms 再异步扫描（与 React 渲染错开），仅机会页生效。
+    var _lcTimer = 0;
+    var _lcPending = false;
+    var _lcTargets = [];
     try {
       new MutationObserver(function (mutations) {
         if (!isOpportunityPage()) return;
@@ -3109,9 +3119,20 @@
           var t = mutations[i].target;
           if (mutations[i].type === 'characterData') t = t.parentElement; // 文本节点 → 父元素
           if (!t || !t.querySelectorAll) continue;
-          replaceVisitorIdLabels(t);
-          hideCompanyRelationCards(t);
+          if (_lcTargets.indexOf(t) === -1) _lcTargets.push(t);
         }
+        if (!_lcTargets.length) return;
+        if (_lcPending) return;
+        _lcPending = true;
+        clearTimeout(_lcTimer);
+        _lcTimer = setTimeout(function () {
+          _lcPending = false;
+          var list = _lcTargets; _lcTargets = [];
+          for (var k = 0; k < list.length; k++) {
+            replaceVisitorIdLabels(list[k]);
+            hideCompanyRelationCards(list[k]);
+          }
+        }, 120);
       }).observe(document.body, { childList: true, subtree: true, characterData: true });
     } catch (_) {}
   })();
