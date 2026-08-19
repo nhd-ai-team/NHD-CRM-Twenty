@@ -1,10 +1,34 @@
+// ===== chat-nav 模块: 00-head — 入口 + 版本 + 路由解析工具(parseRoute/canonicalObject) + 常量 =====
 (function () {
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  window.__NHD_VERSION__ = '20260813-nav-fix-v8';
+  window.__NHD_VERSION__ = '20260819-root-refactor-v1';
 
-  var CHAT_SRC   = '/chat/?v=20260813-chat-ui-auth-fix';
+  // ── 单一事实源：Twenty 路由解析 ─────────────────────────────────────────────
+  // 历史上「单数 /object/ vs 复数 /objects/」的正则散落 5 处，漏改就复发「按钮不显示」。
+  // 这里统一解析：兼容 v2 单数 /object/ 与 v1 复数 /objects/ 前缀，返回 { kind, slug, id }。
+  //   kind: 'list'   = /object(s)/<slug>（列表页）
+  //         'detail' = /object(s)/<slug>/<36位uuid>（详情页）
+  //         null     = 无关路径（/settings、/chat 等）
+  function parseRoute() {
+    var m = window.location.pathname.match(/^\/objects?\/([A-Za-z0-9_]+)(?:\/([0-9a-fA-F-]{36}))?\/?$/);
+    if (!m) return null;
+    return { kind: m[2] ? 'detail' : 'list', slug: m[1], id: m[2] || null };
+  }
+  // 对象 slug 归一：复数/单数都归到规范名，供跨路由匹配（duiHuaLiShis→duiHuaLiShi 等）。
+  var OBJECT_SLUGS = {
+    opportunities: 'opportunity', opportunity: 'opportunity',
+    people: 'person', person: 'person', contacts: 'person',
+    _xiangMus: 'xiangMu', _xiangMu: 'xiangMu', xiangMus: 'xiangMu',
+    duiHuaLiShis: 'duiHuaLiShi', duiHuaLiShi: 'duiHuaLiShi',
+    companies: 'company', company: 'company'
+  };
+  function canonicalObject(slug) {
+    return OBJECT_SLUGS[slug] || slug;
+  }
+
+  var CHAT_SRC   = '/chat/?v=20260818-chat-ui-histdrill';
   var LABEL      = '对话工作台';
   var NAV_ID     = '__chat_nav_item__';
   var MAIL_LABEL = '邮箱';
@@ -47,7 +71,7 @@
   var DATABASE_SVG = '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>';
   var USERS_SVG = '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>';
   var KEY_SVG = '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>';
-
+// ===== chat-nav 模块: 10-auth — 鉴权抓取 + token/cookie + iframe/视图切换 + 会话id获取 =====
   function rememberAuthToken(token) {
     if (token && token.split('.').length === 3) AUTH_TOKEN = token;
   }
@@ -322,11 +346,12 @@
     });
   }
 
-  function getViewSrc(view) {
+  function getViewSrc(view, conversationId) {
     var token = getTwentyAccessToken();
     var hash = token ? '#twentyAccessToken=' + encodeURIComponent(token) : '';
     if (view === 'mail') hash += (hash ? '&' : '#') + 'view=mail';
     if (view === 'history') hash += (hash ? '&' : '#') + 'view=history';
+    if (conversationId) hash += (hash ? '&' : '#') + 'conversationId=' + encodeURIComponent(conversationId);
     return CHAT_SRC + hash;
   }
 
@@ -357,7 +382,7 @@
     return IFRAME_ID + '_' + (view || 'chat');
   }
 
-  function getOrCreateIframe(view) {
+  function getOrCreateIframe(view, conversationId) {
     view = view || 'chat';
     var existing = document.getElementById(getIframeId(view));
     if (existing) return existing;
@@ -365,7 +390,7 @@
     var iframe = document.createElement('iframe');
     iframe.id = getIframeId(view);
     iframe.setAttribute('data-chat-view', view);
-    iframe.src = getViewSrc(view);
+    iframe.src = getViewSrc(view, conversationId);
     iframe.style.cssText = [
       'position:fixed',
       'top:0',
@@ -417,16 +442,25 @@
     iframe.style.height = window.innerHeight + 'px';
   }
 
-  function showView(view) {
+  function showView(view, conversationId) {
     sessionStorage.setItem(ACTIVE_KEY, view);
     // 离开设置态时立即清理所有 fixed 覆盖层（渠道/RBAC 面板），
     // 不等 tick()/tryInsert() 的周期性延迟，避免面板残留在 chat/mail 视图上。
     removeChannelsSettingsPage();
     removeRbacSettingsPage();
+    // 打开全屏视图（对话工作台/邮箱/history）时同步移除「查看对话内容」按钮：
+    // showView 只改 iframe 的 style/src，不产生 childList mutation，MutationObserver 不会驱动
+    // tick 立即执行；若不在这里同步移除，按钮会残留浮在 iframe 之上（z-index 200 > 100）。
+    // 按钮的重新注入由 ensureHistoryDrillButton 在离开视图回到 duiHuaLiShi 上下文时恢复。
+    var _drillBtn = document.getElementById('__history_drill_btn__');
+    if (_drillBtn) _drillBtn.remove();
     Array.from(document.querySelectorAll('iframe[data-chat-view]')).forEach(function (item) {
       item.style.display = 'none';
     });
-    var iframe = getOrCreateIframe(view);
+    var iframe = getOrCreateIframe(view, conversationId);
+    // 若目标 src（含 conversationId 钻取参数）与当前不一致，刷新 iframe 以带上新参数。
+    var desiredSrc = getViewSrc(view, conversationId);
+    if (iframe.getAttribute('src') !== desiredSrc) iframe.src = desiredSrc;
     applyIframeSize(iframe);
     iframe.style.display = 'block';
     postAuthTokenToIframe(iframe);
@@ -486,6 +520,353 @@
     });
   }
 
+  // ── 沟通状态表单：记录详情页「查看对话内容」按钮（钻取 HistoryApp 气泡）──────
+
+  // 从「沟通状态」记录详情读回对应的会话外部 ID（conv.conversations.id）。
+  // 注意：本版本 Twenty 的 duiHuaLiShi 单条查询/按 id 过滤均不被允许（"Argument not allowed: id"），
+  // 故改为拉取轻量 id→conversationId 映射（list 查询可用），再按当前记录 id 定位。
+  function fetchDuiHuaLiShiConversationId(recordId) {
+    return new Promise(function (resolve, reject) {
+      var token = getTwentyAccessToken();
+      if (!token) return reject(new Error('no token'));
+      fetch('/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({
+          query: 'query { duiHuaLiShis(first: 1000) { edges { node { id conversationId } } } }',
+        }),
+      }).then(function (r) { return r.json(); }).then(function (data) {
+        var edges = (data && data.data && data.data.duiHuaLiShis && data.data.duiHuaLiShis.edges) || [];
+        for (var i = 0; i < edges.length; i++) {
+          var node = edges[i] && edges[i].node;
+          if (node && node.id === recordId) {
+            if (node.conversationId) return resolve(node.conversationId);
+            return reject(new Error('no conversationId'));
+          }
+        }
+        reject(new Error('record not found'));
+      }).catch(reject);
+    });
+  }
+// ===== chat-nav 模块: 20-drill — 右侧抽屉检测(findRightDrawer) + 沟通状态钻取按钮 =====
+  // 在「沟通状态」记录详情注入悬浮按钮，点击钻取到该会话的对话气泡。
+  // 兼容两种打开方式：① 整页路由 /objects/duiHuaLiShi[s]/<uuid>；
+  // ② Twenty 默认右侧抽屉(URL 不变)：定位右侧 fixed 抽屉容器，从其内部
+  //    「在完整页面打开」锚点(/objects/duiHuaLiShi/<uuid>)取 record id。
+  function getZIndex(el) {
+    var z = 0;
+    while (el && el !== document.body) {
+      var v = parseInt(getComputedStyle(el).zIndex, 10);
+      if (!isNaN(v) && v > z) z = v;
+      el = el.parentElement;
+    }
+    return z;
+  }
+
+  // 定位 Twenty 右侧抽屉容器：fixed/absolute + 贴右 + 占大半屏高。
+  // 关键：class 选择器只用高信号、低基数候选（drawer/modal/overlay/sheet），
+  // 严禁用 page/record/detail/panel/show 等超宽泛匹配——它们会命中几乎所有容器，
+  // 导致每 tick 对成百上千节点调 getComputedStyle 而卡死页面（尤其切换到大表格页时）。
+  // 缓存：同一路由 300ms 内复用上次结果，避免每 tick 被多个 ensure* 重复全量扫 DOM。
+  var _drawerCache = { key: '', at: 0, val: null };
+  function findRightDrawer() {
+    var key = window.location.pathname + window.location.search;
+    var now = Date.now();
+    if (_drawerCache.key === key && (now - _drawerCache.at) < 300) return _drawerCache.val;
+    _drawerCache.key = key; _drawerCache.at = now; _drawerCache.val = findRightDrawerScan();
+    return _drawerCache.val;
+  }
+  function findRightDrawerScan() {
+    var sel = '[role="dialog"],[aria-modal="true"],[class*="drawer"],[class*="Drawer"],[class*="RightDrawer"],[class*="overlay"],[class*="Overlay"],[class*="modal"],[class*="Modal"],[class*="sheet"],[class*="Sheet"]';
+    var els = document.querySelectorAll(sel);
+    var best = null, bestZ = -1, scanned = 0;
+    var MAX_SCAN = 80; // 安全上限：即使意外大量匹配也绝不卡死
+    for (var i = 0; i < els.length; i++) {
+      if (scanned >= MAX_SCAN) break;
+      scanned++;
+      var el = els[i];
+      var cs = getComputedStyle(el);
+      if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+      var r = el.getBoundingClientRect();
+      if (r.width < 220 || r.height < window.innerHeight * 0.5) continue;
+      var z = parseInt(cs.zIndex, 10) || 0;
+      if (z > bestZ) { bestZ = z; best = el; }
+    }
+    // 轻量几何兜底：仅扫描 body 直接子节点及其一层后代（React portal 抽屉通常挂在 body 下）。
+    // 严禁全文档扫描（对大表格会触发海量 getComputedStyle 导致页面卡死）。
+    if (!best) {
+      var cand = [];
+      var bc = document.body.children;
+      for (var c = 0; c < bc.length; c++) {
+        cand.push(bc[c]);
+        var cc = bc[c].children;
+        for (var d = 0; d < cc.length; d++) cand.push(cc[d]);
+      }
+      for (var k = 0; k < cand.length; k++) {
+        var e = cand[k];
+        var ec = getComputedStyle(e);
+        if (ec.position !== 'fixed' && ec.position !== 'absolute') continue;
+        var er = e.getBoundingClientRect();
+        if (er.width < 220 || er.width > window.innerWidth * 0.95) continue;
+        if (er.height < window.innerHeight * 0.5) continue;
+        if (er.top > 8) continue;
+        if (window.innerWidth - er.right > 8) continue; // 必须贴右
+        var ez = parseInt(ec.zIndex, 10) || 0;
+        if (ez > bestZ) { bestZ = ez; best = e; }
+      }
+    }
+    return best;
+  }
+
+  // 返回 { id, via } 或 { id: null, debug }
+  function findDuiHuaLiShiRecordId() {
+    // S1: 整页路由（统一走 parseRoute，兼容单数/复数 object 与 slug）
+    var r = parseRoute();
+    if (r && r.kind === 'detail' && canonicalObject(r.slug) === 'duiHuaLiShi') return { id: r.id, via: 'url' };
+    // S2: 仅当右侧抽屉打开时，才在抽屉内找 duiHuaLiShi 详情自链接锚点。
+    //     无抽屉（即列表/概览页）直接返回，不扫全文档，避免误触发 + 卡顿。
+    var drawer = findRightDrawer();
+    if (!drawer) return { id: null, debug: { via: 'no-drawer' } };
+    var anchors = drawer.querySelectorAll('a[href*="/object/duiHuaLiShi"], a[href*="/objects/duiHuaLiShi"]');
+    for (var i = 0; i < anchors.length; i++) {
+      var a = anchors[i];
+      if (a.getClientRects().length === 0) continue; // 不可见跳过
+      var m = (a.getAttribute('href') || '').match(/\/objects?\/duiHuaLiShi[s]?\/([0-9a-fA-F-]{36})/);
+      if (m) return { id: m[1], via: 'anchor' };
+    }
+    // S3 兜底已移除（2026-08-19 残留 bug 根因）：
+    // 「抽屉内任意 /object 锚点」会误命中其他对象（person/线索/客户/项目），
+    // 导致离开 duiHuaLiShi 上下文后按钮残留（在对话工作台/资料抽屉场景必现）。
+    // 真实 duiHuaLiShi 抽屉详情场景下 S2 的「在完整页面打开」自链接必然存在，够用。
+    return { id: null, debug: { via: 'drawer-no-anchor', drawerClass: (drawer.className && drawer.className.toString().slice(0, 160)) || '(none)', drawerTag: drawer.tagName } };
+  }
+
+  // 诊断探针：在控制台运行 __NHD_DRILL_PROBE__() 可打印抽屉检测详情，便于排障
+  function installDrillProbe() {
+    if (window.__NHD_DRILL_PROBE__) return;
+    window.__NHD_DRILL_PROBE__ = function () {
+      var drawer = findRightDrawer();
+      var out = {
+        path: location.pathname,
+        urlMatch: (location.pathname.match(/\/objects?\/duiHuaLiShi[s]?\/([0-9a-fA-F-]{36})/) || [])[1] || null,
+        drawerFound: !!drawer,
+        drawerTag: drawer ? drawer.tagName : null,
+        drawerClass: drawer ? (drawer.className && drawer.className.toString().slice(0, 200)) : null,
+        drawerRect: drawer ? (function (r) { return { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top), right: Math.round(r.right) }; })(drawer.getBoundingClientRect()) : null,
+        dhAnchors: (function () {
+          var list = document.querySelectorAll('a[href*="/object/duiHuaLiShi"], a[href*="/objects/duiHuaLiShi"]');
+          var r = [];
+          for (var i = 0; i < Math.min(list.length, 8); i++) r.push(list[i].getAttribute('href'));
+          return r;
+        })(),
+        anyObjectAnchors: (function () {
+          var list = document.querySelectorAll('a[href*="/object/"], a[href*="/objects/"]');
+          var r = [];
+          for (var i = 0; i < Math.min(list.length, 12); i++) {
+            var h = list[i].getAttribute('href') || '';
+            var m = h.match(/\/objects?\/([A-Za-z0-9_]+)\/([0-9a-fA-F-]{36})/);
+            if (m) r.push(m[1] + '/' + m[2].slice(0, 8));
+          }
+          return r;
+        })(),
+        drillState: window.__NHD_DRILL__ || null,
+      };
+      try { console.log('[NHD drill probe]', JSON.stringify(out, null, 2)); } catch (_) {}
+      return out;
+    };
+  }
+
+  function ensureHistoryDrillButton() {
+    try {
+      installDrillProbe();
+      // 全屏 iframe 视图（对话工作台 / 邮件 / 历史气泡）激活时，按钮必须移除：
+      // showView() 不改变 URL——若进入 iframe 前停在 duiHuaLiShi 详情页，S1 整页路由会一直命中，
+      // 导致「查看对话内容」按钮残留并浮在 iframe 之上（z-index 200 > iframe 100）。
+      // 用 isChatVisible()（10-auth 定义，同一 IIFE）判断 iframe 是否可见，避免误判抽屉。
+      if (isChatVisible()) {
+        var btn0 = document.getElementById('__history_drill_btn__');
+        if (btn0) btn0.remove();
+        window.__NHD_DRILL__ = { path: location.pathname, id: null, note: 'chat/mail iframe active' };
+        return;
+      }
+      var res = findDuiHuaLiShiRecordId();
+      var recordId = res.id;
+      var btn = document.getElementById('__history_drill_btn__');
+      if (!recordId) {
+        if (btn) btn.remove();
+        window.__NHD_DRILL__ = { path: location.pathname, id: null, note: 'no record context', debug: res.debug };
+        return;
+      }
+      if (btn) {
+        if (btn.dataset.rid !== recordId) btn.dataset.rid = recordId;
+        return;
+      }
+      btn = document.createElement('button');
+      btn.id = '__history_drill_btn__';
+      btn.dataset.rid = recordId;
+      btn.textContent = '查看对话内容';
+      btn.style.cssText = [
+        'position:fixed', 'right:20px', 'bottom:20px', 'z-index:200',
+        'padding:9px 16px', 'border:none', 'border-radius:8px',
+        'background:var(--twenty-color-purple-50,#9333ea)', 'color:#fff',
+        'font-size:13px', 'font-weight:600', 'cursor:pointer',
+        'box-shadow:0 2px 10px rgba(0,0,0,.25)',
+      ].join(';');
+      btn.addEventListener('click', function () {
+        var rid = btn.dataset.rid;
+        btn.disabled = true; var prev = btn.textContent; btn.textContent = '加载中…';
+        fetchDuiHuaLiShiConversationId(rid).then(function (cid) {
+          // 不跳全屏 iframe：就地弹窗，把会话消息以文本形式直接呈现（用户可快速定位）。
+          openConversationTextModal(cid, null);
+        }).catch(function () {
+          openConversationTextModal(null, '未找到该记录的关联会话');
+        }).finally(function () {
+          btn.disabled = false; btn.textContent = prev;
+        });
+      });
+      document.body.appendChild(btn);
+      window.__NHD_DRILL__ = { path: location.pathname, id: recordId, via: res.via, note: 'button injected' };
+    } catch (e) {}
+  }
+
+  // ── 沟通明细内联文本弹窗 ────────────────────────────────────────────────
+  // 用户诉求：看沟通明细不应整页跳转到聊天视图（切页后上下文丢失、难以快速定位），
+  // 应就地以「文本形式」直接呈现会话消息。点击「查看对话内容」→ 本弹窗拉取
+  // /conv-api/conversations/:id/messages 渲染消息列表（发送方+时间+内容+附件/媒体），
+  // 顶部关键词过滤可即时定位；底部保留「在完整对话页打开」作为可选入口。
+  var CONV_TEXT_MODAL_ID = '__conv_text_modal__';
+
+  function closeConversationTextModal() {
+    var m = document.getElementById(CONV_TEXT_MODAL_ID);
+    if (m) m.remove();
+  }
+
+  // 单条消息渲染：发送方标签(按 senderType 着色) + 时间 + 正文(pre-wrap) + 附件/媒体链接。
+  function renderConversationMessageHtml(msg) {
+    var senderLabel = '未知', senderColor = '#52525b';
+    if (msg.senderType === 'customer') { senderLabel = '客户'; senderColor = '#0369a1'; }
+    else if (msg.senderType === 'agent') { senderLabel = '我方'; senderColor = '#7c3aed'; }
+    else if (msg.senderType === 'ai') { senderLabel = 'AI'; senderColor = '#059669'; }
+    var timeText = formatFollowUpTimeLocal(msg.sentAt);
+    var parts = [];
+    // 媒体（WhatsApp/IG 入站图片视频等）
+    if (msg.mediaUrl) {
+      parts.push('<a href="' + escapeHtml(msg.mediaUrl) + '" target="_blank" rel="noopener" ' +
+        'style="display:inline-block;margin-top:6px;font-size:12px;color:#0369a1;text-decoration:none;font-weight:600">' +
+        attachIcon(String(msg.contentType || 'file').replace(/^image\//, 'jpg')) + ' 查看媒体文件 ↗</a>');
+    }
+    // 附件（官网/邮件出站等，JSONB 数组）
+    var atts = Array.isArray(msg.attachments) ? msg.attachments : [];
+    for (var i = 0; i < atts.length; i++) {
+      var att = atts[i] || {};
+      var url = String(att.url || att.href || '').trim();
+      if (!url) continue;
+      var title = att.title || att.fileName || att.filename || '附件';
+      var size = formatAttachSize(att.sizeBytes || att.size || 0);
+      parts.push('<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener" ' +
+        'style="display:inline-block;margin-top:6px;font-size:12px;color:#0369a1;text-decoration:none;font-weight:600">' +
+        attachIcon(String(att.fileType || att.contentType || 'file').replace(/^image\//, 'jpg')) + ' ' +
+        escapeHtml(title) + (size ? ' · ' + size : '') + ' ↗</a>');
+    }
+    var body = String(msg.content || '').trim();
+    return '<div style="padding:10px 0;border-bottom:1px solid #f0f0f1">' +
+      '<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#a1a1aa">' +
+        '<span style="font-weight:700;color:' + senderColor + '">' + senderLabel + '</span>' +
+        '<span>' + escapeHtml(timeText) + '</span>' +
+      '</div>' +
+      (body ? '<div style="margin-top:4px;font-size:13px;line-height:1.65;color:#18181b;white-space:pre-wrap;word-break:break-word">' + escapeHtml(body) + '</div>' : '') +
+      (parts.length ? parts.join('') : '') +
+    '</div>';
+  }
+
+  function renderConversationTextBody(container, messages, keyword) {
+    var kw = String(keyword || '').trim().toLowerCase();
+    var list = messages;
+    if (kw) {
+      list = [];
+      for (var i = 0; i < messages.length; i++) {
+        var hay = String(messages[i].content || '') + ' ' + (messages[i].senderType || '') + ' ';
+        if (hay.toLowerCase().indexOf(kw) >= 0) list.push(messages[i]);
+      }
+    }
+    if (!list.length) {
+      container.innerHTML = '<div style="padding:28px 0;text-align:center;color:#a1a1aa;font-size:12.5px">' +
+        (kw ? '没有匹配「' + escapeHtml(kw) + '」的消息' : '该会话暂无消息') + '</div>';
+      return;
+    }
+    container.innerHTML = list.map(renderConversationMessageHtml).join('');
+  }
+
+  function openConversationTextModal(conversationId, errorMsg) {
+    closeConversationTextModal();
+    var overlay = document.createElement('div');
+    overlay.id = CONV_TEXT_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(680px,100%);max-height:min(78vh,720px);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;display:flex;flex-direction:column;';
+    card.innerHTML =
+      '<div style="padding:14px 18px 8px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">沟通明细</div>' +
+        '<button data-convtext-close style="border:none;background:transparent;cursor:pointer;color:#a1a1aa;font-size:18px;line-height:1">×</button>' +
+      '</div>' +
+      '<div style="padding:0 18px 10px">' +
+        '<input data-convtext-filter type="text" placeholder="输入关键词过滤消息…" ' +
+        'style="width:100%;box-sizing:border-box;padding:7px 10px;border:1px solid #e4e4e7;border-radius:6px;font-size:12.5px;color:#18181b;outline:none;background:#fafafa" />' +
+      '</div>' +
+      '<div data-convtext-body style="padding:0 18px 8px;overflow:auto;flex:1">' +
+        '<div style="padding:28px 0;text-align:center;color:#a1a1aa;font-size:12.5px">加载中…</div>' +
+      '</div>' +
+      '<div style="padding:8px 18px 14px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#a1a1aa;border-top:1px solid #f4f4f5">' +
+        '<span>按时间正序展示本会话消息；仅展示你有权限查看的内容。</span>' +
+        '<a data-convtext-full href="#" style="color:#7c3aed;text-decoration:none;font-weight:600">在完整对话页打开 ↗</a>' +
+      '</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeConversationTextModal(); });
+    card.querySelector('[data-convtext-close]').addEventListener('click', closeConversationTextModal);
+    document.body.appendChild(overlay);
+
+    var body = card.querySelector('[data-convtext-body]');
+    var filterEl = card.querySelector('[data-convtext-filter]');
+    var fullLink = card.querySelector('[data-convtext-full]');
+    var cached = null;
+
+    // 底部可选入口：保留原「整页聊天视图」能力，但不再是默认行为。
+    fullLink.addEventListener('click', function (e) {
+      e.preventDefault();
+      closeConversationTextModal();
+      showView('history', conversationId || '');
+    });
+
+    function applyFilter() {
+      if (cached) renderConversationTextBody(body, cached, filterEl.value);
+    }
+    filterEl.addEventListener('input', applyFilter);
+
+    if (errorMsg) {
+      body.innerHTML = '<div style="padding:28px 0;text-align:center;color:#e1262b;font-size:12.5px">' + escapeHtml(errorMsg) + '</div>';
+      return;
+    }
+    if (!conversationId) {
+      body.innerHTML = '<div style="padding:28px 0;text-align:center;color:#e1262b;font-size:12.5px">缺少会话 ID，无法加载消息</div>';
+      return;
+    }
+
+    window.fetch('/conv-api/conversations/' + encodeURIComponent(conversationId) + '/messages?_=' + Date.now(), {
+      credentials: 'same-origin',
+      headers: getTwentyAuthHeaders(),
+    }).then(function (response) {
+      return response.json().catch(function () { return []; }).then(function (data) {
+        if (!response.ok) throw new Error((data && (data.error || data.detail)) || '加载消息失败');
+        return data;
+      });
+    }).then(function (items) {
+      cached = Array.isArray(items) ? items : [];
+      renderConversationTextBody(body, cached, filterEl.value);
+    }).catch(function (error) {
+      body.innerHTML = '<div style="padding:28px 0;text-align:center;color:#e1262b;font-size:12.5px">' + escapeHtml(error.message || '加载失败') + '</div>';
+    });
+  }
+// ===== chat-nav 模块: 30-nav — 左侧导航注入 + 设置页导航项(隐藏原生/构建自建) =====
   // ── intercept other nav clicks to hide chat ────────────────────────────────
 
   function setupNavInterception() {
@@ -495,12 +876,8 @@
       var a = e.target.closest('a[href]');
       if (!a) return;
       var href = a.getAttribute('href') || '';
-      // Is this a Twenty internal nav link (not our chat link)?
-      if (/^\/objects\/duiHuaLiShis(\/|$|\?)/.test(href || '') || /^\/objects\/duiHuaLiShi(\/|$|\?)/.test(href || '')) {
-        e.preventDefault();
-        showView('history');
-        return;
-      }
+      // 「对话历史」(duiHuaLiShi) 走 Twenty 原生表格/看板概览，不再强制气泡视图；
+      // 单条记录详情页由 ensureHistoryDrillButton 注入「查看对话内容」按钮钻取气泡。
       if (a.id !== NAV_ID &&
           a.id !== SETTINGS_NAV_ID &&
           !href.startsWith('/chat') &&
@@ -957,7 +1334,7 @@
       listEl.appendChild(wrapper);
     });
   }
-
+// ===== chat-nav 模块: 40-settings — 渠道/WhatsApp 绑定页 + 权限(RBAC)设置页 + 账户设置卡片 =====
   function statusLabel(status) {
     if (status === 'WORKING') return '已连接';
     if (status === 'SCAN_QR_CODE') return '等待扫码';
@@ -1615,7 +1992,7 @@
       }));
     }
   }
-
+// ===== chat-nav 模块: 50-nav-entry — tryInsert：导航注入主入口 =====
   function tryInsert() {
     try { var _s = window.__NHD_STATE__; if (_s) { _s.lastTryInsertAt = Date.now(); _s.lastSettings = isSettingsPage(); } } catch (_) {}
     hideDisabledNativeNavItems();
@@ -1717,14 +2094,15 @@
       if (iframe.style.display !== 'none') applyIframeSize(iframe);
     });
   });
-
+// ===== chat-nav 模块: 60-convert — 线索转客户/转项目按钮 =====
   // ── 线索转客户：线索列表顶部「转客户」按钮（放在 +New opportunity 左侧）──────────
   var CONVERT_BTN_ID = '__lead_convert_top_btn__';
   var CONVERT_PROJECT_BTN_ID = '__lead_convert_project_top_btn__';
   var CONVERT_MODAL_ID = '__lead_convert_modal__';
 
   function isOpportunityListPage() {
-    return window.location.pathname.indexOf('/objects/opportunities') === 0;
+    var r = parseRoute();
+    return !!r && r.kind === 'list' && canonicalObject(r.slug) === 'opportunity';
   }
 
   // 读取当前被勾选的线索行。Twenty 表格行为 [data-selectable-id] 的 div（非 tr），
@@ -1993,12 +2371,13 @@
   // 由后端 GET /conv-api/follow-ups?subjectType=opportunity 保证：admin/boss 看全部，
   // 销售仅见自己所写。不侵入 Twenty 原生字段的 DOM（结构会随 Twenty 升级变化），
   // 用独立悬浮按钮+弹窗展示，跟本文件里「转客户」按钮、官网归类弹窗是同一套模式。
+// ===== chat-nav 模块: 70-record-actions — 跟进记录 + 协办人 + 附件 + 成员重置密码 =====
   var FOLLOWUP_BTN_ID = '__followup_entry_btn__';
   var FOLLOWUP_MODAL_ID = '__followup_modal__';
 
   function opportunityRecordId() {
-    var match = window.location.pathname.match(/^\/objects\/opportunities\/([0-9a-fA-F-]{36})(?:\/|$)/);
-    return match ? match[1] : '';
+    var r = parseRoute();
+    return (r && r.kind === 'detail' && canonicalObject(r.slug) === 'opportunity') ? r.id : '';
   }
 
   function closeFollowUpModal() {
@@ -2094,6 +2473,166 @@
     ].join(';');
     btn.addEventListener('click', function () {
       openFollowUpModal(btn.getAttribute('data-opp-id'));
+    });
+    document.body.appendChild(btn);
+  }
+
+  // ── 线索/客户联系人/项目 详情页：协办人悬浮入口 + 弹窗 ─────────────────────────
+  // 协作人字段 xieBanRenId（单值 RELATION→成员）。仅主负责人(ownerId)或管理员可设置；
+  // 协作人可看关联记录的对话、可接管/回复（后端 conversationVisibilityWhere 已纳入）。
+  // 后端 GET /api/crm/:objectType/:id/collaborators 返回 collaboratorId + canEdit。
+  var COLLAB_BTN_ID = '__collab_entry_btn__';
+  var COLLAB_MODAL_ID = '__collab_modal__';
+
+  // 抽屉感知：从右侧抽屉内找「当前记录」的自链接锚点（href=/objects/<type>/<uuid>）。
+  // 与钻取按钮同款 findRightDrawer 逻辑；支持 opportunity/person/xiangMu 三类。
+  function findCollaboratorRecordFromDrawer() {
+    var drawer = findRightDrawer();
+    if (!drawer) return null;
+    var anchors = drawer.querySelectorAll('a[href*="/object/"], a[href*="/objects/"]');
+    for (var i = 0; i < anchors.length; i++) {
+      var href = anchors[i].getAttribute('href') || '';
+      var m = href.match(/\/objects?\/(opportunities|people|_xiangMus)\/([0-9a-fA-F-]{36})/);
+      if (!m) continue;
+      var objectType = m[1] === 'opportunities' ? 'opportunity' : (m[1] === 'people' ? 'person' : 'xiangMu');
+      return { objectType: objectType, id: m[2], via: 'drawer', drawerClass: (drawer.className && drawer.className.toString().slice(0, 80)) || '(none)' };
+    }
+    return { id: null, debug: { via: 'drawer-no-anchor', drawerClass: (drawer.className && drawer.className.toString().slice(0, 120)) || '(none)' } };
+  }
+
+  function collaboratorRecordContext() {
+    var r = parseRoute();
+    if (r && r.kind === 'detail') {
+      var c = canonicalObject(r.slug);
+      if (c === 'opportunity' || c === 'person' || c === 'xiangMu') {
+        return { objectType: c, id: r.id, via: 'url' };
+      }
+    }
+    // S2：右侧抽屉（URL 不变、无 show-page 锚点）——兼容 Twenty 默认点开记录方式
+    var drawerRes = findCollaboratorRecordFromDrawer();
+    if (drawerRes && drawerRes.id) return drawerRes;
+    return null;
+  }
+
+  function closeCollabModal() {
+    var m = document.getElementById(COLLAB_MODAL_ID);
+    if (m) m.remove();
+  }
+
+  function openCollabModal(ctx) {
+    closeCollabModal();
+    var overlay = document.createElement('div');
+    overlay.id = COLLAB_MODAL_ID;
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+    var card = document.createElement('div');
+    card.style.cssText = 'width:min(480px,100%);max-height:min(560px,90vh);border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;display:flex;flex-direction:column;';
+    card.innerHTML =
+      '<div style="padding:16px 18px 10px;display:flex;align-items:center;justify-content:space-between">' +
+        '<div style="font-size:15px;font-weight:700;color:#111">协办人</div>' +
+        '<button data-collab-close style="border:none;background:transparent;cursor:pointer;color:#a1a1aa;font-size:18px;line-height:1">×</button>' +
+      '</div>' +
+      '<div data-collab-body style="padding:0 18px 8px;overflow:auto;flex:1">' +
+        '<div style="padding:24px 0;text-align:center;color:#a1a1aa;font-size:12.5px">加载中…</div>' +
+      '</div>';
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) closeCollabModal(); });
+    card.querySelector('[data-collab-close]').addEventListener('click', closeCollabModal);
+    document.body.appendChild(overlay);
+
+    var body = card.querySelector('[data-collab-body]');
+    Promise.all([
+      window.fetch('/conv-api/crm/' + ctx.objectType + '/' + ctx.id + '/collaborators', { credentials: 'same-origin', headers: getTwentyAuthHeaders() }).then(function (r) { return r.json(); }),
+      window.fetch('/conv-api/crm/members', { credentials: 'same-origin', headers: getTwentyAuthHeaders() }).then(function (r) { return r.json(); }),
+    ]).then(function (results) {
+      var collab = results[0] || {};
+      var membersResp = results[1] || {};
+      if (!collab.ok) throw new Error(collab.error || '加载协办人失败');
+      var members = Array.isArray(membersResp.members) ? membersResp.members : [];
+      var nameMap = {};
+      members.forEach(function (mm) { nameMap[mm.workspaceMemberId] = mm.name; });
+      var currentName = collab.collaboratorId ? (nameMap[collab.collaboratorId] || '已设置成员') : '未设置';
+
+      var html = '<div style="padding:14px 0">' +
+        '<div style="font-size:12px;color:#71717a">当前协办人</div>' +
+        '<div style="margin-top:4px;font-size:14px;font-weight:600;color:#18181b">' + escapeHtml(currentName) + '</div>' +
+        '</div>';
+
+      if (collab.canEdit) {
+        var opts = '<option value="">— 清除协办人 —</option>' + members.map(function (mm) {
+          var sel = mm.workspaceMemberId === collab.collaboratorId ? ' selected' : '';
+          return '<option value="' + escapeHtml(mm.workspaceMemberId) + '"' + sel + '>' + escapeHtml(mm.name) + '</option>';
+        }).join('');
+        html += '<div style="padding:10px 0 4px;border-top:1px solid #f0f0f1">' +
+          '<select data-collab-select style="width:100%;height:36px;border:1px solid #d4d4d8;border-radius:6px;padding:0 8px;font-size:13px;background:#fff">' + opts + '</select>' +
+          '</div>' +
+          '<div style="padding:8px 0 4px;display:flex;gap:8px">' +
+            '<button data-collab-save style="flex:1;height:34px;border-radius:6px;border:1px solid #16a34a;background:#16a34a;color:#fff;font-size:13px;font-weight:700;cursor:pointer">保存</button>' +
+          '</div>' +
+          '<div style="padding:4px 0 10px;font-size:11px;color:#a1a1aa">协办人可查看该记录的对话历史、可接管并回复；仅主负责人或管理员可设置。</div>';
+      } else {
+        html += '<div style="padding:10px 0 4px;font-size:11px;color:#a1a1aa;border-top:1px solid #f0f0f1">仅主负责人或管理员可设置协办人。</div>';
+      }
+      body.innerHTML = html;
+
+      if (collab.canEdit) {
+        var select = body.querySelector('[data-collab-select]');
+        var saveBtn = body.querySelector('[data-collab-save]');
+        saveBtn.addEventListener('click', function () {
+          var val = select.value || '';
+          saveBtn.disabled = true; saveBtn.textContent = '保存中…';
+          window.fetch('/conv-api/crm/' + ctx.objectType + '/' + ctx.id + '/collaborators', {
+            method: 'PUT', credentials: 'same-origin',
+            headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ collaboratorId: val }),
+          }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) {
+              if (!res.ok || !res.data.ok) throw new Error((res.data && (res.data.error || res.data.detail)) || '保存失败');
+              openCollabModal(ctx);
+            })
+            .catch(function (err) {
+              saveBtn.disabled = false; saveBtn.textContent = '保存';
+              var errEl = document.createElement('div');
+              errEl.style.cssText = 'padding:6px 0;color:#e1262b;font-size:12px';
+              errEl.textContent = err.message || '保存失败';
+              body.appendChild(errEl);
+            });
+        });
+      }
+    }).catch(function (error) {
+      if (body) body.innerHTML = '<div style="padding:24px 0;text-align:center;color:#e1262b;font-size:12.5px">' + escapeHtml(error.message || '加载失败') + '</div>';
+    });
+  }
+
+  function ensureCollaboratorEntry() {
+    var ctx = collaboratorRecordContext();
+    var existing = document.getElementById(COLLAB_BTN_ID);
+    var dbg = document.getElementById('__collab_dbg__');
+    window.__NHD_COLLAB__ = { path: location.pathname, ctx: ctx, note: ctx ? 'button ready' : 'no record context' };
+    if (!ctx) {
+      if (existing) existing.remove();
+      if (dbg) dbg.remove();
+      return;
+    }
+    if (dbg) dbg.remove();
+    if (existing) {
+      existing.setAttribute('data-ctx', ctx.objectType + ':' + ctx.id);
+      return;
+    }
+    var btn = document.createElement('button');
+    btn.id = COLLAB_BTN_ID;
+    btn.type = 'button';
+    btn.setAttribute('data-ctx', ctx.objectType + ':' + ctx.id);
+    btn.textContent = '协办人';
+    btn.style.cssText = [
+      'position:fixed', 'left:24px', 'bottom:24px', 'z-index:9997',
+      'height:36px', 'padding:0 16px', 'border-radius:18px',
+      'border:1px solid #0ea5e9', 'background:#0ea5e9', 'color:#fff',
+      'font-size:12.5px', 'font-weight:700', 'font-family:inherit',
+      'cursor:pointer', 'box-shadow:0 6px 18px rgba(14,165,233,.32)',
+    ].join(';');
+    btn.addEventListener('click', function () {
+      var parts = (btn.getAttribute('data-ctx') || '').split(':');
+      if (parts.length === 2) openCollabModal({ objectType: parts[0], id: parts[1] });
     });
     document.body.appendChild(btn);
   }
@@ -2350,7 +2889,7 @@
     btn.style.marginRight = '8px';
     adminRow.insertBefore(btn, delBtn);
   }
-
+// ===== chat-nav 模块: 80-boot — 启动调度(FEATURES/tick/节流/观察器) + UI兜底 + 退出设置重载 =====
   // ── boot ──────────────────────────────────────────────────────────────────
 
   // 错误收集数组：任何环节抛错都能事后排查（旧版只在 try/catch 内 console.debug，
@@ -2365,16 +2904,31 @@
 
   var tickInProgress = false;
   var tickScheduled = false;
+  var lastTickAt = 0;
+  var TICK_THROTTLE_MS = 200; // 时间节流：tick 最多每 200ms 真正跑一次。
+  // 根因修复：旧版 MutationObserver 每次 DOM 变化都立即 tick()（无时间上限），
+  // React 页面 DOM 高频变化 → tick 一秒几十上百次 → 每个 ensure* 的 DOM 探测放大成卡死。
+
+  // 功能注册表：每个功能声明 id + 可选 when(路由谓词) + run。run 由 safeRun 逐个隔离，
+  // 单个功能抛错不影响同轮其它功能。新增/下线功能只需增删一行，不再散落在 tick 里。
+  var FEATURES = [
+    { id: 'nav',      run: tryInsert },
+    { id: 'convert',  run: ensureConvertTopButton },
+    { id: 'followup', run: ensureFollowUpEntry },
+    { id: 'attach',   run: ensureAttachEntry },
+    { id: 'drill',    run: ensureHistoryDrillButton },
+    { id: 'collab',   run: ensureCollaboratorEntry },
+    { id: 'resetpwd', when: function () { return window.location.pathname.indexOf('/settings/workspace-members') === 0; }, run: ensureMemberResetPwdButton }
+  ];
+
   function tick() {
     if (tickInProgress) return;
     tickInProgress = true;
     try {
-      safeRun('tryInsert', tryInsert);
-      safeRun('ensureConvertTopButton', ensureConvertTopButton);
-      safeRun('ensureFollowUpEntry', ensureFollowUpEntry);
-      safeRun('ensureAttachEntry', ensureAttachEntry);
-      if (window.location.pathname.indexOf('/settings/workspace-members') === 0) {
-        safeRun('ensureMemberResetPwdButton', ensureMemberResetPwdButton);
+      for (var i = 0; i < FEATURES.length; i++) {
+        var f = FEATURES[i];
+        if (f.when && !f.when()) continue;
+        safeRun(f.id, f.run);
       }
     } finally {
       tickInProgress = false;
@@ -2445,13 +2999,23 @@
   }
 
   // 触发机制全部就绪后再做其它初始化；这样即便后续步骤抛错，自动注入链也不受影响。
-  // scheduleTick: 立即跑一次 + 250ms 后再跑一次，兜住 React 异步重渲染导致的时序错位
-  // （tick 跑时菜单锚点尚未挂载，下一帧才出现 → 立即那次找不到锚点，延迟那次补回）。
+  // scheduleTick: 时间节流（最多每 200ms 真正跑一次）+ 尾调用兜底。
+  // MutationObserver 高频触发时只安排一次延迟执行，不会每变化都同步跑 tick（旧版卡死根因）。
   function scheduleTick() {
-    tick();
-    if (tickScheduled) return;
-    tickScheduled = true;
-    setTimeout(function () { tickScheduled = false; tick(); }, 250);
+    if (tickInProgress) return;
+    var now = Date.now();
+    var elapsed = now - lastTickAt;
+    if (elapsed >= TICK_THROTTLE_MS) {
+      lastTickAt = now;
+      tick();
+    } else if (!tickScheduled) {
+      tickScheduled = true;
+      setTimeout(function () {
+        tickScheduled = false;
+        lastTickAt = Date.now();
+        tick();
+      }, TICK_THROTTLE_MS - elapsed);
+    }
   }
 
   var observer = new MutationObserver(function () {
@@ -2514,18 +3078,39 @@
       }
     }
 
-    function applyLeadCompanyUiFix() {
-      replaceVisitorIdLabels(document);
-      hideCompanyRelationCards(document);
+    // 仅「机会(线索)」对象需要这个兜底（列表列头 + 详情字段 label + 详情 Company 卡片）。
+    function isOpportunityPage() {
+      var r = parseRoute();
+      return !!r && canonicalObject(r.slug) === 'opportunity';
+    }
+
+    function applyLeadCompanyUiFix(root) {
+      if (!isOpportunityPage()) return;
+      replaceVisitorIdLabels(root || document);
+      hideCompanyRelationCards(root || document);
     }
 
     applyLeadCompanyUiFix();
-    setInterval(applyLeadCompanyUiFix, 1000);
+    // 根因修复：去掉 setInterval 每秒全文档扫描（大表格页卡死主因之一）。
+    // 改为「路由切换时全量兜底」+「新增/文本变化子树按需扫描」，且仅机会页生效。
+    var _lcLastPath = window.location.pathname;
+    function _lcOnRoute() {
+      if (window.location.pathname !== _lcLastPath) {
+        _lcLastPath = window.location.pathname;
+        applyLeadCompanyUiFix();
+      }
+    }
+    window.addEventListener('popstate', _lcOnRoute);
+    window.addEventListener('hashchange', _lcOnRoute);
     try {
       new MutationObserver(function (mutations) {
+        if (!isOpportunityPage()) return;
         for (var i = 0; i < mutations.length; i++) {
-          replaceVisitorIdLabels(mutations[i].target);
-          hideCompanyRelationCards(mutations[i].target);
+          var t = mutations[i].target;
+          if (mutations[i].type === 'characterData') t = t.parentElement; // 文本节点 → 父元素
+          if (!t || !t.querySelectorAll) continue;
+          replaceVisitorIdLabels(t);
+          hideCompanyRelationCards(t);
         }
       }).observe(document.body, { childList: true, subtree: true, characterData: true });
     } catch (_) {}

@@ -1,0 +1,47 @@
+[
+  {
+    "file": "00-head.js",
+    "start": 1,
+    "end": 73
+  },
+  {
+    "file": "10-auth.js",
+    "start": 74,
+    "end": 544
+  },
+  {
+    "file": "20-drill.js",
+    "start": 545,
+    "end": 716
+  },
+  {
+    "file": "30-nav.js",
+    "start": 717,
+    "end": 1184
+  },
+  {
+    "file": "40-settings.js",
+    "start": 1185,
+    "end": 1842
+  },
+  {
+    "file": "50-nav-entry.js",
+    "start": 1843,
+    "end": 1944
+  },
+  {
+    "file": "60-convert.js",
+    "start": 1945,
+    "end": 2220
+  },
+  {
+    "file": "70-record-actions.js",
+    "start": 2221,
+    "end": 2738
+  },
+  {
+    "file": "80-boot.js",
+    "start": 2739,
+    "end": 3001
+  }
+]

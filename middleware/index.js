@@ -437,16 +437,43 @@ async function resolveConversationViewer(req) {
   let scope = 'own';
   try {
     const roleResult = await pool.query(
-      `SELECT ur.role, rs.scope
-         FROM conv.user_roles ur
+      `SELECT ur.role AS conv_role, rs.scope AS conv_scope,
+              COALESCE(
+                string_agg(DISTINCT r2.label, ',') FILTER (WHERE r2.label IS NOT NULL),
+                ''
+              ) AS native_role_labels
+         FROM ${schema}."workspaceMember" wm
+         LEFT JOIN conv.user_roles ur ON ur.workspace_member_id = wm.id::text
          LEFT JOIN conv.role_scopes rs ON rs.role = ur.role
-        WHERE ur.workspace_member_id = $1
+         LEFT JOIN core."userWorkspace" uw2 ON uw2."userId" = wm."userId"
+         LEFT JOIN core."roleTarget" rt2 ON rt2."userWorkspaceId" = uw2."id"
+         LEFT JOIN core."role" r2 ON r2.id = rt2."roleId"
+        WHERE wm."userId" = $1 AND wm."deletedAt" IS NULL
+        GROUP BY ur.role, rs.scope
         LIMIT 1`,
-      [String(member.id)],
+      [userId],
     );
-    if (roleResult.rows[0]) {
-      role = roleResult.rows[0].role || 'sales';
-      scope = roleResult.rows[0].scope || 'own';
+    const row = roleResult.rows[0];
+    if (row) {
+      role = row.conv_role || 'sales';
+      scope = row.conv_scope || 'own';
+      // 原生角色自动联动（仅当 conv.user_roles 未显式赋予更高角色时生效）。
+      // 匹配必须按角色 label，绝不能按 canReadAllObjectRecords（本实例所有原生角色该标志均为 true，
+      // 按标志判断会把销售也升级成 boss，破坏「销售只看自己」隔离）。
+      // 总经理/销售主管/Admin 原生角色 → 分别联动 boss/boss/admin，均可在 history 视图看全部对话历史。
+      // 其中 总经理/销售主管 联动为 boss（scope=all，只读看全部），与「设置→账户→权限」手动配 boss 等价。
+      if (role === 'sales' || role === 'own') {
+        const labels = String(row.native_role_labels || '')
+          .split(',')
+          .map((s) => s.trim().toLowerCase());
+        if (labels.some((l) => l.includes('总经理')) || labels.some((l) => l.includes('销售主管'))) {
+          role = 'boss';
+          scope = 'all';
+        } else if (labels.some((l) => l === 'admin')) {
+          role = 'admin';
+          scope = 'all';
+        }
+      }
     }
   } catch (_err) {
     // 角色表尚未就绪时安全降级为 sales/own，不阻断现有功能
@@ -1377,6 +1404,8 @@ async function persistWhatsAppMessage(payload, session) {
       [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.timestamp ? Number(data.timestamp) * 1000 : Date.now(), ownerUserId]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
+    // 沟通状态表单：新会话首条消息即落 duiHuaLiShi 档案（幂等；仅上线后新会话）。
+    syncConversationToHistory(conversation.id, { createIfMissing: true }).catch(() => {});
     // 规则（2026-07-24）：消息只落对话工作台，不自动同步 People/Companies。
     // 规则（2026-08-06）：WhatsApp/官网客服客户首条入站自动创建 Opportunity，后续资料由销售在工作台右侧表单补全。
     if (inserted.rowCount && !fromMe) {
@@ -1409,6 +1438,98 @@ async function persistWhatsAppMessage(payload, session) {
       });
     }
   } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+}
+
+// ── 沟通状态表单：会话 → duiHuaLiShi 历史档案同步 ──────────────────────────────
+// 设计（docs/19）：1 会话 = 1 条 duiHuaLiShi 记录。原生表格/看板概览 + 点进钻取气泡看全文。
+// 仅同步「功能上线后」新建的会话（不回填历史，用户已确认）。
+const HISTORY_SYNC_EPOCH = '2026-08-18T16:30:00+08:00';
+
+function mapConvChannelToHistory(channel) {
+  switch (String(channel || '').toLowerCase()) {
+    case 'whatsapp': return 'WHATSAPP';
+    case 'website': return 'GUAN_WANG_KE_FU';
+    case 'instagram': return 'INS';
+    case 'facebook': return 'FACEBOOK';
+    case 'email': return 'EMAIL';
+    default: return null;
+  }
+}
+function mapConvStatusToHistory(status) {
+  switch (String(status || '').toLowerCase()) {
+    case 'takeover': return 'TAKEOVER';
+    case 'closed': return 'CLOSED';
+    case 'ai': return 'AI';
+    default: return 'OPEN';
+  }
+}
+
+async function findDuiHuaLiShiByConversationId(conversationId) {
+  const data = await twentyGraphQL(
+    `query($cid: String!) {
+      duiHuaLiShis(filter: { conversationId: { eq: $cid } }, first: 1) { edges { node { id } } }
+    }`,
+    { cid: conversationId },
+  );
+  return data?.duiHuaLiShis?.edges?.[0]?.node?.id || null;
+}
+
+// 从 conv.* 读取会话全量状态，组装成 duiHuaLiShi 字段（幂等 upsert 载荷）。
+async function buildHistoryPayload(conversationId) {
+  const res = await pool.query(
+    `SELECT c.id, c.channel, c.status, c.owner_id, c.last_message_at, c.last_message_preview,
+            ct.display_name, ct.phone,
+            (SELECT count(*) FROM conv.messages m WHERE m.conversation_id = c.id) AS message_count,
+            (SELECT bool_or(m.sender_type = 'agent') FROM conv.messages m WHERE m.conversation_id = c.id) AS has_human
+       FROM conv.conversations c
+       LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+      WHERE c.id = $1`,
+    [conversationId],
+  );
+  const c = res.rows[0];
+  if (!c) return null;
+  const title = (c.display_name && String(c.display_name).trim())
+    || (c.phone ? `+${c.phone}` : null)
+    || c.id;
+  return {
+    name: String(title).slice(0, 255),
+    channel: mapConvChannelToHistory(c.channel),
+    conversationStatus: mapConvStatusToHistory(c.status),
+    owner: c.owner_id || null,
+    lastMessageAt: c.last_message_at ? new Date(c.last_message_at).toISOString() : null,
+    lastMessagePreview: c.last_message_preview ? String(c.last_message_preview).slice(0, 1000) : null,
+    messageCount: Number(c.message_count) || 0,
+    hasHumanMessage: Boolean(c.has_human),
+    conversationId: c.id,
+  };
+}
+
+// 幂等同步：已存在则更新；不存在且 createIfMissing 为真且会话为「新会话」则创建。
+async function syncConversationToHistory(conversationId, { createIfMissing = false } = {}) {
+  try {
+    if (!conversationId || !TWENTY_API_KEY) return;
+    const payload = await buildHistoryPayload(conversationId);
+    if (!payload) return;
+    const existingId = await findDuiHuaLiShiByConversationId(conversationId);
+    if (existingId) {
+      await twentyGraphQL(
+        `mutation($id: UUID!, $d: DuiHuaLiShiUpdateInput!) { updateDuiHuaLiShi(id: $id, data: $d) { id } }`,
+        { id: existingId, d: payload },
+      );
+      return;
+    }
+    if (!createIfMissing) return;
+    // 仅同步上线后新建的会话，不回填历史。
+    const convRow = await pool.query(`SELECT created_at FROM conv.conversations WHERE id = $1`, [conversationId]);
+    const createdAt = convRow.rows[0]?.created_at;
+    if (createdAt && new Date(createdAt).getTime() < new Date(HISTORY_SYNC_EPOCH).getTime()) return;
+    await twentyGraphQL(
+      `mutation($d: DuiHuaLiShiCreateInput!) { createDuiHuaLiShi(data: $d) { id } }`,
+      { d: payload },
+    );
+  } catch (error) {
+    console.error('[history-sync] failed for', conversationId, ':', error.message);
+  }
 }
 
 // ── 需求二：WhatsApp 送达/已读回执 ───────────────────────────────────────────
@@ -1506,19 +1627,21 @@ const WEBSITE_SENDER_MAP = { visitor: 'customer', customer: 'customer', ai: 'ai'
 
 // ===== 需求三（2026-08-18）官网访客 IP 地域与时区 =====
 // 真实客户端 IP 只允许从可信边界取，绝不信任请求体里的 clientIp（浏览器可伪造）。
-// 优先级：Cloudflare 边缘头 -> 可信 Nginx 反代头 -> middleware socket 直连地址。
+// 优先级：Cloudflare 边缘头(CF-Connecting-IP) -> X-Forwarded-For 首段(最接近客户端) ->
+//          X-Real-IP(可信反代) -> middleware socket 直连地址。
+// 注意：X-Real-IP 可能被内网网关/端口映射写成容器 IP（如 172.18.0.11），必须排在 XFF 之后，
+//       否则真实公网 IP 会被内网 IP 顶掉，地域解析永远失败。
 function extractClientIp(req) {
   if (!req) return null;
   const headers = req.headers || {};
   const candidates = [];
   if (headers['cf-connecting-ip']) candidates.push(String(headers['cf-connecting-ip']).trim());
-  if (headers['x-real-ip']) candidates.push(String(headers['x-real-ip']).trim());
   if (headers['x-forwarded-for']) {
-    for (const part of String(headers['x-forwarded-for']).split(',')) {
-      const ip = part.trim();
-      if (ip) candidates.push(ip);
-    }
+    // 只取 XFF 首段：cloudflared/Docker 转发会追加中间跳板 IP（172.18.0.x），首段才是客户端公网 IP。
+    const first = String(headers['x-forwarded-for']).split(',')[0].trim();
+    if (first) candidates.push(first);
   }
+  if (headers['x-real-ip']) candidates.push(String(headers['x-real-ip']).trim());
   if (req.socket && req.socket.remoteAddress) candidates.push(req.socket.remoteAddress);
   for (const raw of candidates) {
     const ip = raw.replace(/^::ffff:/, '').trim();
@@ -1570,10 +1693,14 @@ async function resolveGeoByIp(ip) {
   const cached = _geoCache.get(clean);
   if (cached && now - cached.t < GEO_CACHE_TTL_MS) return cached.v;
   let result = null;
-  const providerUrl = process.env.GEOIP_PROVIDER_URL;
-  if (providerUrl) {
+  // 默认内置 ip-api.com 免费 HTTP 接口（24h 缓存；免费版 45 req/min，官网访客量远低于此）。
+  // 若需切换服务商，用 GEOIP_PROVIDER_URL / GEOIP_PROVIDER_NAME 环境变量覆盖。
+  const providerUrl = process.env.GEOIP_PROVIDER_URL || 'http://ip-api.com/json';
+  const providerName = process.env.GEOIP_PROVIDER_NAME || 'ip-api';
+  // 首次 800ms 超时在 macmini 网络下偏紧（实测偶发超 1s），放宽到 3s；失败再试一次。
+  for (let attempt = 0; attempt < 2 && !result; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 800);
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const sep = providerUrl.includes('?') ? '&' : '?';
       const resp = await fetch(`${providerUrl}${sep}ip=${encodeURIComponent(clean)}`, {
@@ -1590,12 +1717,12 @@ async function resolveGeoByIp(ip) {
             timezone: data.timezone || data.time_zone || null,
             latitude: data.latitude ?? data.lat ?? null,
             longitude: data.longitude ?? data.lon ?? data.lng ?? null,
-            source: process.env.GEOIP_PROVIDER_NAME || 'external',
+            source: providerName,
           };
         }
       }
     } catch (err) {
-      console.error('[geo] resolve failed, skip:', err.message);
+      if (attempt === 1) console.error('[geo] resolve failed, skip:', err.message);
     } finally {
       clearTimeout(timer);
     }
@@ -1633,7 +1760,7 @@ async function persistWebsiteMessage(body, clientIp) {
         channel, external_id, display_name, channel_display_name,
         ip_address, geo_country_code, geo_country_name, geo_region, geo_city,
         geo_timezone, geo_latitude, geo_longitude, geo_source, geo_updated_at)
-      VALUES ('website', $1, $2, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+      VALUES ('website', $1, $2, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12::text,
         CASE WHEN $12::text IS NOT NULL THEN now() ELSE NULL END)
       ON CONFLICT(channel, external_id)
       DO UPDATE SET
@@ -1668,7 +1795,18 @@ async function persistWebsiteMessage(body, clientIp) {
       VALUES ($1, $2, $3, $4, $5, $6, $7, now()) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
       [dedupeId, conversation.id, senderType, content, contentType, mediaUrl, attachments.length ? JSON.stringify(attachments) : null]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, content]);
+    // 官网渠道「已读」：访客发下一条消息 = 已看到之前的我方回复 → 把该会话所有出站消息（agent/ai）
+    // 标记为 read（read_at 首次写入后保持）。只升不回退；消息 API 会把 deliveryStatus 带给前端展示。
+    if (inserted.rowCount && senderType === 'customer') {
+      await client.query(
+        `UPDATE conv.messages SET delivery_status = 'read', read_at = COALESCE(read_at, now())
+          WHERE conversation_id = $1 AND sender_type IN ('agent', 'ai') AND delivery_status <> 'read'`,
+        [conversation.id],
+      );
+    }
     await client.query('COMMIT');
+    // 沟通状态表单：官网客服新会话落 duiHuaLiShi 档案（幂等；仅上线后新会话）。
+    syncConversationToHistory(conversation.id, { createIfMissing: true }).catch(() => {});
     if (inserted.rowCount && senderType === 'customer') {
       ensureOpportunityForInboundConversation({
         conversationId: conversation.id,
@@ -1732,9 +1870,30 @@ async function createWebsiteFormOpportunity(body, req) {
 
   // 落库自定义字段 + 表单 name -> opportunity「联系人姓名」暂存列（不提前建 Person）
   let personId = null; // 预留：转客户时由 upsertPersonFromOpportunity 生成 Person 并回填
+  const schema = await getWorkspaceSchema();
   const client = await pool.connect();
+
+  // ── 关键且独立：线索id + 归类键先落库 ─────────────────────────
+  // 单独一个事务，先于任何「建公司 / syncGroupCode」逻辑；即使后续非关键步骤
+  // 整段失败，已提交的线索id 也绝不会被回滚。
+  // （DB 触发器 opportunity_leadno_default_trg 在 INSERT 时已兜底写 leadNo，此为二级保险。）
   try {
-    const schema = await getWorkspaceSchema();
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE ${schema}.opportunity
+       SET "leadNo" = $2, "customerIdentityKey" = $3, "updatedAt" = now()
+       WHERE id = $1`,
+      [opportunityId, leadNo, customerIdentityKey],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[website-form] leadNo write failed (trigger still backs up):', err.message);
+  }
+
+  // ── 非关键 enrichment：syncGroupCode + 公司关联 + 联系人姓名 ──────────
+  // best-effort，失败仅告警，绝不连累上面的线索id。
+  try {
     await client.query('BEGIN');
 
     // 确保线索有 syncGroupCode，用于三表（线索/客户/项目）关联
@@ -1769,23 +1928,19 @@ async function createWebsiteFormOpportunity(body, req) {
     // Person（客户主数据）在"转客户"时由 upsertPersonFromOpportunity 读取该列生成，并回填 pointOfContactId。
     const contactName = raw.name;
 
-    // 写线索id/归类键/联系人姓名；关联公司（若已建/关联）。intake 阶段不创建 Person、不写 pointOfContactId。
     await client.query(
       `UPDATE ${schema}.opportunity
-       SET "leadNo" = $2,
-           "customerIdentityKey" = $3,
-           "lianXiRenXingMing" = COALESCE($4, "lianXiRenXingMing"),
+       SET "lianXiRenXingMing" = COALESCE($4, "lianXiRenXingMing"),
            "companyId" = COALESCE("companyId", $5),
            "updatedAt" = now()
        WHERE id = $1`,
-      [opportunityId, leadNo, customerIdentityKey, contactName || null, companyId],
+      [opportunityId, contactName || null, companyId],
     );
 
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    console.error('[website-form] post-create enrichment failed:', err.message);
-    // 不阻断主流程：线索已建，线索id 失败仅告警（后续可回补）
+    console.error('[website-form] post-create enrichment (non-critical) failed:', err.message);
   } finally {
     client.release();
   }
@@ -2635,6 +2790,8 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
         [conversation.id, content],
       );
       await client.query('COMMIT');
+      // 沟通状态表单：销售主动发起的会话也落 duiHuaLiShi 档案（幂等；仅上线后新会话）。
+      syncConversationToHistory(conversation.id, { createIfMissing: true }).catch(() => {});
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -2782,6 +2939,8 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       [`system:${req.params.id}:${Date.now()}:${action}`, req.params.id, systemText],
     );
     await client.query('COMMIT');
+    // 沟通状态表单：状态变更（接管/释放/关闭）增量更新档案的「会话状态」。
+    syncConversationToHistory(req.params.id, { createIfMissing: false }).catch(() => {});
     await recordAuditEvent('conversation.status_changed', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -3368,6 +3527,116 @@ app.delete('/api/rbac/roles/:workspaceMemberId', requireSameSite, async (req, re
   }
 });
 
+// ── 线索/客户联系人/项目 协办人（xieBanRenId）读写 ──────────────────────────────
+// 协办人 = 单值 RELATION→workspaceMember（字段 xieBanRenId）。仅主负责人(ownerId)或 admin 可设置。
+// 协办人可见性已在 lib/conversation-visibility.js 的 linkedCrmAssigneeSql 中纳入：
+// 协作人可看关联记录的对话、可接管/回复（继续沟通）。
+const COLLAB_OBJECTS = {
+  opportunity: { table: 'opportunity', idCol: 'id', collabCol: 'xieBanRenId', ownerCol: 'ownerId' },
+  person: { table: 'person', idCol: 'id', collabCol: 'xieBanRenId', ownerCol: 'ownerId' },
+  xiangMu: { table: '_xiangMu', idCol: 'id', collabCol: 'xieBanRenId', ownerCol: 'ownerId' },
+};
+
+async function loadCollabRecord(schema, objectType, recordId) {
+  const cfg = COLLAB_OBJECTS[objectType];
+  if (!cfg) return null;
+  const result = await pool.query(
+    `SELECT "${cfg.idCol}" AS id, "${cfg.ownerCol}" AS "ownerId", "${cfg.collabCol}" AS "collaboratorId"
+       FROM ${schema}.${cfg.table}
+      WHERE "${cfg.idCol}" = $1 AND "deletedAt" IS NULL
+      LIMIT 1`,
+    [recordId],
+  );
+  return result.rows[0] || null;
+}
+
+app.get('/api/crm/:objectType/:id/collaborators', async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const { objectType, id } = req.params;
+  if (!COLLAB_OBJECTS[objectType]) return res.status(400).json({ error: '不支持的对象类型' });
+  if (!/^[0-9a-fA-F-]{36}$/.test(id)) return res.status(400).json({ error: '记录 ID 格式无效' });
+  try {
+    const schema = await getWorkspaceSchema();
+    const row = await loadCollabRecord(schema, objectType, id);
+    if (!row) return res.status(404).json({ error: '记录不存在' });
+    const viewer = await resolveConversationViewer(req);
+    const isAdmin = viewer.role === 'admin' || viewer.role === 'boss';
+    const isOwner = viewer.workspaceMemberId === row.ownerId;
+    res.json({
+      ok: true,
+      objectType,
+      recordId: id,
+      ownerId: row.ownerId,
+      collaboratorId: row.collaboratorId || null,
+      canEdit: isAdmin || isOwner,
+      currentUserId: viewer.workspaceMemberId,
+    });
+  } catch (error) {
+    res.status(500).json({ error: '读取协办人失败', detail: error.message });
+  }
+});
+
+// 工作区成员列表（仅 id + 姓名），供协办人选择器使用；任意已登录成员可访问。
+app.get('/api/crm/members', async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  try {
+    const schema = await getWorkspaceSchema();
+    const result = await pool.query(
+      `SELECT id AS "workspaceMemberId",
+              NULLIF(TRIM(COALESCE("nameFirstName",'') || ' ' || COALESCE("nameLastName","")), '') AS name
+         FROM ${schema}."workspaceMember"
+        WHERE "deletedAt" IS NULL
+        ORDER BY name NULLS LAST`,
+    );
+    res.json({
+      ok: true,
+      members: result.rows.map((m) => ({ workspaceMemberId: m.workspaceMemberId, name: m.name || '未命名成员' })),
+    });
+  } catch (error) {
+    res.status(500).json({ error: '读取成员列表失败', detail: error.message });
+  }
+});
+
+app.put('/api/crm/:objectType/:id/collaborators', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const { objectType, id } = req.params;
+  if (!COLLAB_OBJECTS[objectType]) return res.status(400).json({ error: '不支持的对象类型' });
+  if (!/^[0-9a-fA-F-]{36}$/.test(id)) return res.status(400).json({ error: '记录 ID 格式无效' });
+  const { collaboratorId } = req.body || {};
+  if (collaboratorId && collaboratorId !== '') {
+    if (!/^[0-9a-fA-F-]{36}$/.test(collaboratorId)) return res.status(400).json({ error: '协办人 ID 格式无效' });
+  }
+  const collabValue = collaboratorId && collaboratorId !== '' ? collaboratorId : null;
+  try {
+    const schema = await getWorkspaceSchema();
+    const row = await loadCollabRecord(schema, objectType, id);
+    if (!row) return res.status(404).json({ error: '记录不存在' });
+    const viewer = await resolveConversationViewer(req);
+    const isAdmin = viewer.role === 'admin' || viewer.role === 'boss';
+    const isOwner = viewer.workspaceMemberId === row.ownerId;
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: '仅主负责人或管理员可设置协办人' });
+    }
+    const cfg = COLLAB_OBJECTS[objectType];
+    await pool.query(
+      `UPDATE ${schema}.${cfg.table}
+          SET "${cfg.collabCol}" = $1, "updatedAt" = now()
+        WHERE "${cfg.idCol}" = $2`,
+      [collabValue, id],
+    );
+    recordAuditEvent('crm.collaborator.updated', {
+      actor: { userId: authenticated.userId, workspaceMemberId: authenticated.actor.id, name: authenticated.actor.name },
+      payload: { objectType, recordId: id, collaboratorId: collabValue, by: isAdmin ? 'admin' : 'owner' },
+    });
+    res.json({ ok: true, objectType, recordId: id, ownerId: row.ownerId, collaboratorId: collabValue });
+  } catch (error) {
+    res.status(500).json({ error: '设置协办人失败', detail: error.message });
+  }
+});
+
 // 管理员为成员重置登录密码（Twenty 原生无 forgot/reset 能力，内部团队用管理员后台
 // 直接改密即可）。哈希算法与 Twenty 一致：bcrypt saltRounds=10、密码 ≥8 位
 // （对齐 twenty/server/src/core/auth/auth.util.ts 的 PASSWORD_REGEX /^.{8,}$/）；
@@ -3889,6 +4158,11 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
   }
   await stripUnavailableOpportunityFields(data, []);
 
+  // [DEBUG] 临时日志：定位 phone 字段错误来源，确认后删除
+  if (data.phone !== undefined) {
+    console.error('[auto-lead] DEBUG: data.phone is set!', JSON.stringify(data).substring(0, 500));
+  }
+
   try {
     const result = await twentyGraphQL(
       'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
@@ -3992,7 +4266,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (!isUpdate && isWebsiteFormSource && !data.stage) data.stage = 'WEI_CHU_LI_XIANSUO';
   if (b.companyType) data.keHuLeiXing = String(b.companyType);
   if (b.product) data.keHuXuQiuChanPin = String(b.product);
-  if (b.note) data.message = String(b.note);
+  if (b.note) { /* note 暂不写入机会（convert-to-lead 路程无 RICH_TEXT 入口，避免 message 字段不存在报错） */ }
 
   // 电话/邮箱 best-effort：明显无效直接跳过，避免一个脏字段阻断整单推送。
   const skipped = [];
@@ -4013,8 +4287,14 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (data.stage) data.stage = normalizeOpportunityStage(data.stage);
   if (!isWebsiteFormSource && (rawPhone || email) && (!data.stage || data.stage === 'XIANSUO')) data.stage = 'YOUXIAO_XIANSUO';
   const country = String(b.country || '').trim();
-  if (country) data.country = { addressCountry: country };
+  if (country) data.guoJiaDiQu = { addressCountry: country };
   await stripUnavailableOpportunityFields(data, skipped);
+
+  // [DEBUG] 临时日志：定位 phone/message/country 字段错误来源
+  const invalidFields = Object.keys(data).filter(k => ['phone','message','country'].includes(k));
+  if (invalidFields.length > 0) {
+    console.error('[convert-to-lead] DEBUG: invalid fields found:', invalidFields, JSON.stringify(data).substring(0, 500));
+  }
 
   const writeOpp = (d) => (isUpdate
     ? twentyGraphQL('mutation($id: UUID!, $data: OpportunityUpdateInput!){ updateOpportunity(id: $id, data: $data){ id name } }', { id: oppId, data: d }, TWENTY_API_KEY).then((r) => r?.updateOpportunity)
@@ -4859,6 +5139,8 @@ async function releaseIdleTakeovers() {
       [TAKEOVER_IDLE_MINUTES],
     );
     for (const row of result.rows) {
+      // 沟通状态表单：超时自动释放 → 档案「会话状态」回退为进行中。
+      syncConversationToHistory(row.id, { createIfMissing: false }).catch(() => {});
       await pool.query(
         `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
          VALUES ($1, $2, 'system', $3, 'system', now())`,

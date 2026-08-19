@@ -53,6 +53,22 @@ cd "/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm"
 
 注意：`nginx/twenty-portal.conf` 通过 bind mount 映射到容器。修改 `chat-nav.js?v=...` 版本号时，尽量保持版本字符串长度不变，避免容器内出现 `pread() returned only ... bytes` 的读取异常。
 
+注入层发布（2026-08-19 起，chat-nav.js 已模块化）：
+
+```bash
+cd "/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm/nginx/inject"
+# ① 改源码：只改 src/*.js（chat-nav.js 是构建产物，勿手改）
+# ② 构建 + 语法校验
+node build-chat-nav.js && node --check chat-nav.js
+# ③ jsdom 回归（本地有副本时）：699 宽侧栏 + 236 窄侧栏均 PASS
+# ④ 部署：scp chat-nav.js 到真源 → 升级 conf 版本号 → reload → 4 处 md5 校验
+scp chat-nav.js nhdailabcenter@192.168.118.105:"/Users/nhdailabcenter/Desktop/some agents/tools-claude/ai crm/nginx/inject/chat-nav.js"
+ssh nhdailabcenter@192.168.118.105 'export PATH=/opt/homebrew/bin:$PATH; docker exec twenty-twenty-portal-1 nginx -s reload'
+# ⑤ 校验 4 处 md5（本地 / macmini repo / 容器 / served）+ served 版本串
+```
+
+完整流程见 `twenty-inject-layer` 技能与 `docs/21`（2026-08-19 对齐记录）。
+
 ## 三、发布后验证
 
 ```bash
@@ -75,9 +91,10 @@ cat /tmp/ai-settings-batch-noauth.txt
 - 容器内 `buildAiSettingResponses` 校验输出 `ai-settings-lib-ok`，确认 middleware 运行态加载的是最新 `lib/ai-settings.js`。
 - 未登录调用 `/conv-api/ai-settings/batch` 返回 `401`。
 
-## 四、当前工程边界
+## 四、当前工程边界与核心文档同步
 
 - email 当前按公共邮箱处理，暂不做个人渠道权限收紧。
 - Instagram / Facebook 当前未配置，暂不纳入本轮接入验收。
-- `nginx/inject/chat-nav.js` 是运行态兼容层；Twenty 前端源码已存在 `/settings/accounts/channels` 原生页面。后续正式发布应优先走 Twenty 原生前端构建，逐步减少 Nginx DOM 注入。
+- `nginx/inject/chat-nav.js` 是运行态兼容层（2026-08-19 起为构建产物，源码在 `nginx/inject/src/*.js`）；Twenty 前端源码已存在 `/settings/accounts/channels` 原生页面。后续正式发布应优先走 Twenty 原生前端构建，逐步减少 Nginx DOM 注入。
 - AI 自动回复配置必须通过弹窗底部保存按钮提交；批量保存接口 `/conv-api/ai-settings/batch` 应保持事务语义，避免部分渠道保存成功、部分失败。
+- 每次发布到 main 前，至少同步检查以下核心文档：`README.md`、`DEV_PLAN.md`、`docs/02-当前进度与状态.md`、`docs/07-功能清单.md`、`docs/15-三维度字段统一与映射基线（2026-08-10）.md`、`docs/官网表单字段映射.md`、`docs/端到端业务场景测试用例.md`、`docs/22-当前实现功能与技术方案总览（2026-08-19）.md`。

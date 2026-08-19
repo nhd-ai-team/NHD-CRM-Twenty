@@ -4,6 +4,7 @@ import { zhCN } from 'date-fns/locale'
 import { STATUS_FILTERS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
+import { fmtTimezone } from '../utils/timezone'
 
 function Avatar({ contact, size = 36 }) {
   const name = String(contact?.name || '')
@@ -37,8 +38,8 @@ function FiledTag({ status }) {
 
 function ConvCard({ conv, isSelected, onSelect, onRename }) {
   const timeStr = formatDistanceToNow(conv.lastMessageAt, { locale: zhCN, addSuffix: false })
-  // 需求三：列表只显示推断地域（不含完整 IP），缺失时明确标示「未知地区」
-  const geoParts = [conv.contact?.country, conv.contact?.region, conv.contact?.city, conv.contact?.timezone].filter(Boolean)
+  // 需求三：列表显示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示），缺失时明确标示「未知地区」
+  const geoParts = [conv.contact?.country, conv.contact?.region, conv.contact?.city, fmtTimezone(conv.contact?.timezone)].filter(Boolean)
   return (
     <div
       onClick={onSelect}
@@ -97,13 +98,12 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
             <FiledTag status={conv.contact.filedStatus} />
           </div>
 
-          {geoParts.length > 0 ? (
+          {/* 地域行仅官网渠道展示（其他渠道无 IP 概念，显示「未知地区」是噪音）；官网无地域时明确标示 */}
+          {conv.channel === 'website' ? (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              📍 {geoParts.join(' · ')}
+              📍 {geoParts.length > 0 ? geoParts.join(' · ') : '未知地区'}
             </div>
-          ) : (
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>📍 未知地区</div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

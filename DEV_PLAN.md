@@ -40,6 +40,20 @@
 | 官网 Chatbot Widget | 🔲 待做 | 由其他同事负责 |
 | CRM 会话工作台 UI | 🟡 已接真实接口 | React+Vite，嵌入 Twenty 侧边栏，`/chat/` 路径；WhatsApp 联调后展示真实会话 |
 
+### 近期变更（2026-08-18，详见 docs/18）
+
+- 对话工作台三项需求（对话名称编辑 / 送达已读 / 访客地域）已落地。
+- 官网会话治理四项修复：接管「死锁」修复、接管超时自动释放（官网 120min）、线索 leadNo 必填兜底（DB 触发器）、线索初始 stage 按来源区分（仅官网表单=未处理线索）。
+- WhatsApp 账号名称映射：入站 `notifyName`→`channel_display_name`，出站回声不覆盖。
+
+### 近期变更（2026-08-19，详见 docs/21）
+
+- **注入层重构**：`nginx/inject/chat-nav.js`（3001 行单文件）拆为 `src/*.js` 9 模块 + `build-chat-nav.js` 构建脚本（改 src/ → 构建 → 部署，chat-nav.js 是构建产物勿手改）。
+- **卡死根因修复**：tick 200ms 时间节流 + 功能注册表 FEATURES + 路由 gate；`findRightDrawer` 选择器收窄 + 缓存；`applyLeadCompanyUiFix` 去全文档扫描（仅机会页按需扫）。
+- **统一路由解析**：`parseRoute()`/`canonicalObject()` 单一事实源，兼容单数/复数路由。
+- **沟通明细内联弹窗**：「沟通状态」详情「查看对话内容」不再跳全屏 iframe，就地弹窗渲染消息文本 + 关键词过滤；移除 S3 宽泛兜底修复按钮残留。
+- 版本戳 `window.__NHD_VERSION__` 同步为 `20260819-inline-chat-v2`。
+
 ---
 
 ## 技术决策记录

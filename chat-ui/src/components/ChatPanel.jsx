@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
+import { fmtTimezone } from '../utils/timezone'
 
 function formatFileSize(size) {
   const n = Number(size || 0)
@@ -94,8 +95,10 @@ function AttachmentCard({ attachment, isCustomer, content }) {
   )
 }
 
-// 需求二：出站消息送达状态。只有 WhatsApp 有真实回执（message.ack），
-// 其他渠道不显示虚假的「已读」，只保留发送时间。
+// 需求二：出站消息送达状态。
+// WhatsApp 有真实回执（message.ack → sent/delivered/read/failed）；
+// 官网渠道以「访客回复下一条消息 = 已读」近似（后端把之前 agent/ai 出站消息标记 read），
+// 因此 website 渠道仅展示 sent（已发送）/ read（已读）两档，不展示虚假的 delivered。
 const DELIVERY_STATUS_LABEL = {
   pending: { text: '发送中', icon: '○', color: 'var(--text-muted)' },
   sent: { text: '已发送', icon: '✓', color: 'var(--text-muted)' },
@@ -105,7 +108,7 @@ const DELIVERY_STATUS_LABEL = {
 }
 
 function DeliveryStatus({ msg, channel }) {
-  if (channel !== 'whatsapp') return null
+  if (channel !== 'whatsapp' && channel !== 'website') return null
   if (msg.senderType !== 'agent' && msg.senderType !== 'ai') return null
   const status = DELIVERY_STATUS_LABEL[msg.deliveryStatus]
   if (!status) return null
@@ -361,9 +364,9 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
   const confirmBody = pendingAction === 'takeover'
     ? '确认后销售可以在工作台回复客户，AI客服将暂停托管此会话。'
     : '确认后此会话将重新交给AI客服托管，销售需要再次人工接管后才能回复。'
-  // 需求三：会话详情（客户资料上下文）展示推断地域；官网渠道带真实 IP，WhatsApp/邮件不显示伪造 IP
+  // 需求三：会话详情（客户资料上下文）展示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示）；官网渠道带真实 IP，WhatsApp/邮件不显示伪造 IP
   const contactInfo = conv.contact || {}
-  const geoParts = [contactInfo.country, contactInfo.region, contactInfo.city, contactInfo.timezone].filter(Boolean)
+  const geoParts = [contactInfo.country, contactInfo.region, contactInfo.city, fmtTimezone(contactInfo.timezone)].filter(Boolean)
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%' }}>

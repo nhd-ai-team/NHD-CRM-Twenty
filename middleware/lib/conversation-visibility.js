@@ -66,10 +66,13 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
             AND (
               o."ownerId" = ${memberParam}::uuid
               OR o."xieBanRenId" = ${memberParam}::uuid
+              OR o."xieZuoRen2Id" = ${memberParam}::uuid
               OR p."ownerId" = ${memberParam}::uuid
               OR p."xieBanRenId" = ${memberParam}::uuid
+              OR p."xieZuoRen2Id" = ${memberParam}::uuid
               OR xm."ownerId" = ${memberParam}::uuid
               OR xm."xieBanRenId" = ${memberParam}::uuid
+              OR xm."xieZuoRen2Id" = ${memberParam}::uuid
             )
         )`
     : '';
