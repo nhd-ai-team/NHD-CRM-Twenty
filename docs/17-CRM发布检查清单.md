@@ -95,7 +95,7 @@ cat /tmp/ai-settings-batch-noauth.txt
 
 - 打开 `/objects/opportunities`、`/objects/people`、`/settings/profile`、`/settings/profile#channels`，连续切换 10 次，不出现 Twenty 错误边界「抱歉，出了点问题」。
 - 大表格页滚动、打开/关闭右侧抽屉、切换设置页左侧菜单时，左侧主菜单和设置菜单不应消失。
-- 如果再次出现错误边界，优先排查 `nginx/inject/src/80-boot.js`：禁止在 MutationObserver 同步回调里直接调用会修改 DOM 的逻辑。
+- 如果再次出现错误边界或空白页，先在浏览器控制台执行 `window.__NHD_ERRORS__` 查看最近错误；若有注入层堆栈，优先排查对应 `nginx/inject/src/*.js`，并继续遵守「禁止在 MutationObserver 同步回调里直接改 React DOM」。
 
 ## 四、当前工程边界与核心文档同步
 

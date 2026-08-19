@@ -3,7 +3,39 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  window.__NHD_VERSION__ = '20260819-root-refactor-v1';
+  window.__NHD_VERSION__ = '20260819-inline-chat-v6';
+
+  // ── 全局错误捕获（2026-08-19 线索页崩溃排查用）：把运行时错误/未处理 Promise 拒绝
+  //     记录到 window.__NHD_ERRORS__（含堆栈），控制台运行 window.__NHD_ERRORS__ 即可查看。
+  //     若 window.__NHD_ERRORS__ 为空但有崩溃，说明错误发生在 React 渲染内部（注入层之外）。 ──
+  window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
+  try {
+    window.addEventListener('error', function (ev) {
+      try {
+        var item = {
+          type: 'error',
+          msg: (ev && ev.message) || String(ev && ev.error) || 'unknown error',
+          file: ev && ev.filename, line: ev && ev.lineno, col: ev && ev.colno,
+          stack: ev && ev.error && ev.error.stack ? String(ev.error.stack).slice(0, 800) : '',
+          at: Date.now(), url: location.pathname + location.search,
+        };
+        window.__NHD_ERRORS__.push(item);
+        if (window.__NHD_ERRORS__.length > 80) window.__NHD_ERRORS__.shift();
+      } catch (_) {}
+    }, true);
+    window.addEventListener('unhandledrejection', function (ev) {
+      try {
+        var reason = ev && ev.reason;
+        window.__NHD_ERRORS__.push({
+          type: 'unhandledrejection',
+          msg: (reason && (reason.message || String(reason))) || 'unhandled rejection',
+          stack: reason && reason.stack ? String(reason.stack).slice(0, 800) : '',
+          at: Date.now(), url: location.pathname + location.search,
+        });
+        if (window.__NHD_ERRORS__.length > 80) window.__NHD_ERRORS__.shift();
+      } catch (_) {}
+    });
+  } catch (_) {}
 
   // ── 单一事实源：Twenty 路由解析 ─────────────────────────────────────────────
   // 历史上「单数 /object/ vs 复数 /objects/」的正则散落 5 处，漏改就复发「按钮不显示」。

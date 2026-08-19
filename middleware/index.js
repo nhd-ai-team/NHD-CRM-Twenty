@@ -1476,13 +1476,17 @@ async function findDuiHuaLiShiByConversationId(conversationId) {
 
 // 从 conv.* 读取会话全量状态，组装成 duiHuaLiShi 字段（幂等 upsert 载荷）。
 async function buildHistoryPayload(conversationId) {
+  const workspaceSchema = await getWorkspaceSchema();
   const res = await pool.query(
     `SELECT c.id, c.channel, c.status, c.owner_id, c.last_message_at, c.last_message_preview,
             ct.display_name, ct.phone,
+            wm.id AS "ownerMemberId",
             (SELECT count(*) FROM conv.messages m WHERE m.conversation_id = c.id) AS message_count,
             (SELECT bool_or(m.sender_type = 'agent') FROM conv.messages m WHERE m.conversation_id = c.id) AS has_human
        FROM conv.conversations c
        LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+       LEFT JOIN ${workspaceSchema}."workspaceMember" wm
+              ON wm."userId"::text = c.owner_id AND wm."deletedAt" IS NULL
       WHERE c.id = $1`,
     [conversationId],
   );
@@ -1495,7 +1499,9 @@ async function buildHistoryPayload(conversationId) {
     name: String(title).slice(0, 255),
     channel: mapConvChannelToHistory(c.channel),
     conversationStatus: mapConvStatusToHistory(c.status),
-    owner: c.owner_id || null,
+    // 2026-08-19：负责人字段升级为 RELATION→workspaceMember（ownerMember）。
+    // conv.owner_id 存的是 userId，须转成 workspaceMemberId 才能挂 RELATION；查不到则留空。
+    ownerMemberId: c.ownerMemberId || null,
     lastMessageAt: c.last_message_at ? new Date(c.last_message_at).toISOString() : null,
     lastMessagePreview: c.last_message_preview ? String(c.last_message_preview).slice(0, 1000) : null,
     messageCount: Number(c.message_count) || 0,
