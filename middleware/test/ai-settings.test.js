@@ -151,7 +151,8 @@ test('conversationVisibilityWhere keeps privileged users scoped on personal What
     workspaceMemberId: 'member-1',
     userId: 'user-1',
   });
-  assert.match(visibility.sql, /c\.channel IN \('website', 'email', 'instagram', 'facebook'\)/);
+  assert.match(visibility.sql, /c\.channel IN \('website', 'email'\)/);
+  assert.match(visibility.sql, /c\.channel IN \('instagram', 'facebook'\)/);
   assert.match(visibility.sql, /c\.channel = 'whatsapp'/);
   assert.doesNotMatch(visibility.sql, /OR c\.channel IN \('email', 'instagram', 'facebook'\)/);
   assert.deepEqual(visibility.params, ['member-1', 'user-1']);

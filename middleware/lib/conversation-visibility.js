@@ -76,8 +76,8 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
             )
         )`
     : '';
-  const sharedChannelVisibilitySql = `(
-      ${alias}.channel IN ('website', 'email', 'instagram', 'facebook')
+  const assignedChannelVisibilitySql = `(
+      ${alias}.channel IN ('instagram', 'facebook')
       AND (
         ${alias}.status = 'open'
         OR ${alias}.agent_id = ${memberParam}
@@ -91,7 +91,7 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
       )
     )`;
   return {
-    sql: `(${sharedChannelVisibilitySql} OR (
+    sql: `(${alias}.channel IN ('website', 'email') OR ${assignedChannelVisibilitySql} OR (
       ${alias}.channel = 'whatsapp'
       AND ${ownWhatsAppSql}
     ))`,
