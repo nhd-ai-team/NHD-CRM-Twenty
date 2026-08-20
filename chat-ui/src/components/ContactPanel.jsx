@@ -104,6 +104,24 @@ function SelectField({ label, value, onChange, onBlur, options, allowEmpty = tru
     </div>
   )
 }
+function MemberSelectField({ label, value, onChange, onBlur, members, loading, placeholder = '未分配' }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>{label}</div>
+      <select
+        value={value ?? ''}
+        onChange={(e) => { onChange(e.target.value); onBlur?.() }}
+        disabled={loading}
+        style={{ ...inputStyle, opacity: loading ? 0.65 : 1 }}
+      >
+        <option value="">{loading ? '成员加载中…' : placeholder}</option>
+        {members.map((member) => (
+          <option key={member.workspaceMemberId} value={member.workspaceMemberId}>{member.name}</option>
+        ))}
+      </select>
+    </div>
+  )
+}
 function Section({ title, children, defaultOpen = true }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
@@ -272,7 +290,8 @@ function FollowUpTab({ conv }) {
 
 export function ContactPanel({ conv, open = true, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting }) {
   const [activeTab, setActiveTab] = useState('资料')
-  if (!open) return null
+  const [members, setMembers] = useState([])
+  const [membersLoading, setMembersLoading] = useState(false)
 
   const c = conv ? conv.contact : null
   const converted = c?.filedStatus === 'lead'
@@ -299,6 +318,26 @@ export function ContactPanel({ conv, open = true, inline = false, draft = {}, on
       onField('companyId', company.id)
     }
   }
+
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    setMembersLoading(true)
+    fetch('/conv-api/crm/members', {
+      cache: 'no-store',
+      headers: withTwentyAuthHeaders(),
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!active) return
+        setMembers(ok && Array.isArray(data.members) ? data.members : [])
+      })
+      .catch(() => { if (active) setMembers([]) })
+      .finally(() => { if (active) setMembersLoading(false) })
+    return () => { active = false }
+  }, [open])
+
+  if (!open) return null
 
   return (
     <>
@@ -365,6 +404,8 @@ export function ContactPanel({ conv, open = true, inline = false, draft = {}, on
 
             <Section title="线索信息">
               <SelectField label="客户来源" value={draft.source} onChange={f('source')} onBlur={onBlurSave} options={SOURCE_OPTIONS} />
+              <MemberSelectField label="销售负责人" value={draft.ownerId} onChange={f('ownerId')} onBlur={onBlurSave} members={members} loading={membersLoading} />
+              <MemberSelectField label="协办人" value={draft.collaboratorId} onChange={f('collaboratorId')} onBlur={onBlurSave} members={members} loading={membersLoading} />
               <SelectField label="公司类型" value={draft.companyType} onChange={f('companyType')} onBlur={onBlurSave} options={COMPANY_TYPE_OPTIONS} />
               <SelectField label="线索阶段" value={draft.stage} onChange={f('stage')} onBlur={onBlurSave} options={STAGE_OPTIONS} allowEmpty={false} />
               <TextField label="客户需求产品" value={draft.product} onChange={f('product')} onBlur={onBlurSave} placeholder="如：隔膜压滤机" />

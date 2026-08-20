@@ -63,6 +63,8 @@ export function buildDraft(conv) {
       stage: normalizeStage(crm.stage, INITIAL_STAGE),
       product: crm.product ?? '',
       note: crm.note ?? '',
+      ownerId: crm.ownerId ?? '',
+      collaboratorId: crm.collaboratorId ?? '',
     })
   }
   return applyContactMethodStage({
@@ -79,5 +81,7 @@ export function buildDraft(conv) {
     stage: normalizeStage(s.stage, INITIAL_STAGE),
     product: s.product ?? '',
     note: s.note ?? '',
+    ownerId: s.ownerId ?? '',
+    collaboratorId: s.collaboratorId ?? '',
   })
 }

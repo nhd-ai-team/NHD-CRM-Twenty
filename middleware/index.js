@@ -2276,7 +2276,9 @@ app.get('/api/conversations', async (req, res) => {
       'companyType', COALESCE(o."gongSiLeiXing"::text, p."keHuLeiXing"::text, ''),
       'stage', COALESCE(o.stage::text, ''),
       'product', COALESCE(o."keHuXuQiuChanPin", p."keHuXuQiuChanPin", ''),
-      'note', COALESCE(o."guanWangBeiZhuMarkdown", o."genJinJiLuMarkdown", '')
+      'note', COALESCE(o."guanWangBeiZhuMarkdown", o."genJinJiLuMarkdown", ''),
+      'ownerId', COALESCE(o."ownerId"::text, ''),
+      'collaboratorId', COALESCE(o."xieBanRenId"::text, '')
     ) END AS "crmLeadDraft",
     json_build_object(
       'enabled', COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'),
@@ -3827,7 +3829,7 @@ app.get('/api/crm/members', async (req, res) => {
     const schema = await getWorkspaceSchema();
     const result = await pool.query(
       `SELECT id AS "workspaceMemberId",
-              NULLIF(TRIM(COALESCE("nameFirstName",'') || ' ' || COALESCE("nameLastName","")), '') AS name
+              NULLIF(TRIM(COALESCE("nameFirstName",'') || ' ' || COALESCE("nameLastName",'')), '') AS name
          FROM ${schema}."workspaceMember"
         WHERE "deletedAt" IS NULL
         ORDER BY name NULLS LAST`,
@@ -4510,8 +4512,21 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   if (b.product) data.keHuXuQiuChanPin = String(b.product);
   if (b.note) { /* note 暂不写入机会（convert-to-lead 路程无 RICH_TEXT 入口，避免 message 字段不存在报错） */ }
 
-  // 电话/邮箱 best-effort：明显无效直接跳过，避免一个脏字段阻断整单推送。
+  // 电话/邮箱/成员关系 best-effort：明显无效直接跳过，避免一个脏字段阻断整单推送。
   const skipped = [];
+  const ownerId = String(b.ownerId || '').trim();
+  const collaboratorId = String(b.collaboratorId || '').trim();
+  const uuidRe = /^[0-9a-fA-F-]{36}$/;
+  const assignmentPatch = {};
+  if (ownerId) {
+    if (uuidRe.test(ownerId)) assignmentPatch.ownerId = ownerId;
+    else skipped.push('ownerId');
+  }
+  if (collaboratorId) {
+    if (uuidRe.test(collaboratorId)) assignmentPatch.xieBanRenId = collaboratorId;
+    else skipped.push('collaboratorId');
+  }
+
   const rawPhone = String(b.phone || '').replace(/[\s()-]+/g, '');
   if (rawPhone) {
     if (/^\+?\d{5,15}$/.test(rawPhone)) {
@@ -4557,6 +4572,22 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
     }
     if (!opp?.id) return res.status(502).json({ error: isUpdate ? 'updateOpportunity failed' : 'createOpportunity failed' });
     await applyRecordAudit('opportunity', opp.id, auditActor, isUpdate ? 'update' : 'create');
+    if (Object.keys(assignmentPatch).length > 0) {
+      try {
+        const schema = await getWorkspaceSchema();
+        await pool.query(
+          `UPDATE ${schema}.opportunity
+              SET "ownerId" = COALESCE($2::uuid, "ownerId"),
+                  "xieBanRenId" = COALESCE($3::uuid, "xieBanRenId"),
+                  "updatedAt" = now()
+            WHERE id = $1`,
+          [opp.id, assignmentPatch.ownerId || null, assignmentPatch.xieBanRenId || null],
+        );
+      } catch (err) {
+        console.error('[convert-to-lead] write owner/collaborator failed:', err.message);
+        skipped.push('assignment');
+      }
+    }
     // 把对话工作台填写的联系人姓名收口到 opportunity「联系人姓名」暂存列（转客户时生成 Person 主数据）
     if (name) {
       try {
