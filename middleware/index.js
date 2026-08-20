@@ -33,6 +33,8 @@ const WAHA_API_URL = process.env.WAHA_API_URL || 'http://localhost:3003';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
 const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
 const WAHA_WEBHOOK_URL = process.env.WAHA_WEBHOOK_URL || 'http://host.docker.internal:3002/api/whatsapp/webhook';
+const WAHA_STATUS_POLL_SECONDS = Math.max(30, Number(process.env.WAHA_STATUS_POLL_SECONDS || 60));
+const WAHA_AUTO_RESTART_ON_DISCONNECT = String(process.env.WAHA_AUTO_RESTART_ON_DISCONNECT ?? 'true').toLowerCase() !== 'false';
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || '';
 const AI_SERVICE_API_KEY = process.env.AI_SERVICE_API_KEY || '';
 const AI_SERVICE_TENANT_ID = process.env.AI_SERVICE_TENANT_ID || 'nhd';
@@ -2719,17 +2721,27 @@ async function checkWhatsAppRecipientForUser(authenticated, phone) {
   if (!checked.numberExists || !checked.chatId) {
     throw createHttpError('该号码未注册 WhatsApp，请检查国家区号和号码是否正确', 404, checked);
   }
+  const providerChatId = checked.chatId;
+  const canonicalChatId = `${phone}@c.us`;
 
   const existing = await pool.query(
     `SELECT id, status, last_message_at, last_message_preview
-       FROM conv.conversations
-      WHERE channel = 'whatsapp' AND external_chat_id = $1
+       FROM conv.conversations c
+       LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+      WHERE c.channel = 'whatsapp'
+        AND (
+          c.external_chat_id = $1
+          OR c.external_chat_id = $2
+          OR ct.phone = $3
+        )
+      ORDER BY CASE WHEN c.external_chat_id = $1 THEN 0 ELSE 1 END, c.updated_at DESC
       LIMIT 1`,
-    [checked.chatId],
+    [canonicalChatId, providerChatId, `+${phone}`],
   );
   return {
     phone: `+${phone}`,
-    chatId: checked.chatId,
+    chatId: canonicalChatId,
+    providerChatId,
     numberExists: true,
     existingConversationId: existing.rows[0]?.id || null,
     existingConversationStatus: existing.rows[0]?.status || null,
@@ -2797,10 +2809,11 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     const recipient = await checkWhatsAppRecipientForUser(authenticated, phone);
     const sessionName = recipient.fromAccount.session;
     const chatId = recipient.chatId;
+    const providerChatId = recipient.providerChatId || recipient.chatId;
     const sentResponse = await fetchWaha('/api/sendText', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: sessionName, chatId, text: content }),
+      body: JSON.stringify({ session: sessionName, chatId: providerChatId, text: content }),
     });
     const sent = await sentResponse.json().catch(() => ({}));
     if (!sentResponse.ok) throw new Error(sent.message || 'WhatsApp 消息发送失败');
@@ -2808,7 +2821,7 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     const externalMessageId = sent?.id?._serialized || sent?._data?.id?._serialized || null;
     await pool.query(
       `UPDATE conv.outbound_requests SET status = 'sent', result = $2, updated_at = now() WHERE idempotency_key = $1`,
-      [idempotencyKey, JSON.stringify({ phone: `+${phone}`, chatId, externalMessageId })],
+      [idempotencyKey, JSON.stringify({ phone: `+${phone}`, chatId, providerChatId, externalMessageId })],
     );
     const actorId = authenticated.userId;
     const client = await pool.connect();
@@ -2817,8 +2830,13 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     try {
       await client.query('BEGIN');
       const existing = await client.query(
-        `SELECT id FROM conv.conversations WHERE channel = 'whatsapp' AND external_chat_id = $1`,
-        [chatId],
+        `SELECT c.id
+           FROM conv.conversations c
+           LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+          WHERE c.channel = 'whatsapp'
+            AND (c.external_chat_id = $1 OR c.external_chat_id = $2 OR ct.phone = $3)
+          LIMIT 1`,
+        [chatId, providerChatId, `+${phone}`],
       );
       reused = existing.rowCount > 0;
       const contactResult = await client.query(
@@ -3296,6 +3314,110 @@ async function syncWahaBindingStatus(sessionName, normalized, source = 'status')
     return null;
   }
   return result.rows[0];
+}
+
+function wahaWebhookConfigMatches(session = {}) {
+  const hooks = Array.isArray(session.config?.webhooks) ? session.config.webhooks : [];
+  return hooks.some(hook => {
+    const events = new Set(Array.isArray(hook.events) ? hook.events : []);
+    return hook.url === WAHA_WEBHOOK_URL && WAHA_WEBHOOK_EVENTS.every(event => events.has(event));
+  });
+}
+
+async function ensureWahaSessionWebhookConfig(sessionName, currentSession = null) {
+  const current = currentSession || await getWahaSession(sessionName);
+  if (wahaWebhookConfigMatches(current)) return { updated: false, session: current };
+  const nextConfig = {
+    ...(current.config || {}),
+    webhooks: [
+      {
+        url: WAHA_WEBHOOK_URL,
+        events: WAHA_WEBHOOK_EVENTS,
+      },
+    ],
+  };
+  const response = await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: nextConfig }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || data.error || 'WAHA session config update failed');
+    error.status = response.status;
+    error.detail = data;
+    throw error;
+  }
+  console.log(`[whatsapp-status] updated webhook config for session ${sessionName}`);
+  return { updated: true, session: data };
+}
+
+let wahaStatusPolling = false;
+async function pollWahaBindingsOnce() {
+  if (wahaStatusPolling) return { skipped: true, reason: 'poll already running' };
+  wahaStatusPolling = true;
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT provider_session
+       FROM conv.channel_accounts
+       WHERE channel = 'whatsapp'
+         AND provider = 'waha'
+         AND status <> 'unbound'
+         AND provider_session IS NOT NULL
+       ORDER BY provider_session`,
+    );
+    let checked = 0, restarted = 0, failed = 0;
+    for (const row of result.rows) {
+      const sessionName = row.provider_session;
+      try {
+        let session = await getWahaSession(sessionName);
+        await ensureWahaSessionWebhookConfig(sessionName, session).catch(error => {
+          console.error(`[whatsapp-status] webhook config update failed for ${sessionName}:`, error.message);
+        });
+
+        let normalized = normalizeWahaSession(session);
+        if (WAHA_AUTO_RESTART_ON_DISCONNECT && ['FAILED', 'STOPPED'].includes(normalized.status)) {
+          const response = await fetchWaha(`/api/sessions/${encodeURIComponent(sessionName)}/restart`, { method: 'POST' });
+          if (response.ok || response.status === 201 || response.status === 202) {
+            restarted++;
+            session = await waitForWahaStatus(['SCAN_QR_CODE', 'WORKING', 'FAILED', 'STOPPED'], 12, 1000, sessionName);
+            normalized = normalizeWahaSession(session);
+          }
+        }
+        await syncWahaBindingStatus(sessionName, normalized, 'poller');
+        checked++;
+      } catch (error) {
+        failed++;
+        console.error(`[whatsapp-status] poll failed for ${sessionName}:`, error.message);
+        await pool.query(
+          `UPDATE conv.channel_accounts
+              SET status = $2,
+                  metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
+                  updated_at = now()
+            WHERE channel = 'whatsapp'
+              AND provider = 'waha'
+              AND provider_session = $1
+              AND status <> 'unbound'`,
+          [
+            sessionName,
+            error.status === 404 ? 'NOT_FOUND' : 'UNKNOWN',
+            JSON.stringify({
+              lastWahaStatus: error.status === 404 ? 'NOT_FOUND' : 'UNKNOWN',
+              lastWahaStatusAt: new Date().toISOString(),
+              lastWahaStatusSource: 'poller-error',
+              lastWahaError: error.detail || error.message,
+            }),
+          ],
+        ).catch(dbError => console.error('[whatsapp-status] failed to persist poll error:', dbError.message));
+      }
+    }
+    if (checked || restarted || failed) {
+      console.log(`[whatsapp-status] checked=${checked}, restarted=${restarted}, failed=${failed}`);
+    }
+    return { skipped: false, checked, restarted, failed };
+  } finally {
+    wahaStatusPolling = false;
+  }
 }
 
 function normalizeWhatsAppPairingPhone(input) {
@@ -5722,10 +5844,22 @@ function startEmailPoller() {
   setInterval(run, IMAP_POLL_SECONDS * 1000);
 }
 
+function startWahaStatusPoller() {
+  if (!WAHA_API_URL || !WAHA_API_KEY) {
+    console.log('[whatsapp-status] WAHA not configured (WAHA_API_URL/WAHA_API_KEY missing); poller disabled');
+    return;
+  }
+  console.log(`[whatsapp-status] poller enabled every ${WAHA_STATUS_POLL_SECONDS}s; autoRestart=${WAHA_AUTO_RESTART_ON_DISCONNECT}`);
+  const run = () => pollWahaBindingsOnce().catch(e => console.error('[whatsapp-status] poll cycle failed:', e.message));
+  run();
+  setInterval(run, WAHA_STATUS_POLL_SECONDS * 1000);
+}
+
 async function startServer() {
   await ensureSchema();
   app.listen(PORT, () => console.log(`[middleware] listening on ${PORT}`));
   startEmailPoller();
+  startWahaStatusPoller();
   // 官网接管超时自动释放：每分钟扫描一次；启动即先跑一轮，回收历史遗留的占用会话。
   if (TAKEOVER_IDLE_MINUTES > 0) {
     releaseIdleTakeovers();
