@@ -1999,8 +1999,8 @@ async function createWebsiteFormOpportunity(body, req) {
 
     await client.query(
       `UPDATE ${schema}.opportunity
-       SET "lianXiRenXingMing" = COALESCE($4, "lianXiRenXingMing"),
-           "companyId" = COALESCE("companyId", $5),
+       SET "lianXiRenXingMing" = COALESCE($2, "lianXiRenXingMing"),
+           "companyId" = COALESCE("companyId", $3),
            "updatedAt" = now()
        WHERE id = $1`,
       [opportunityId, contactName || null, companyId],
