@@ -88,7 +88,7 @@ if [ -n "${EVOLUTION_API_KEY:-}" ]; then
       -H "X-Api-Key: $EVOLUTION_API_KEY" \
       -H "Content-Type: application/json" \
       http://127.0.0.1:3003/api/sessions/start \
-      -d '{"name":"default","config":{"webhooks":[{"url":"http://host.docker.internal:3002/api/whatsapp/webhook","events":["message","session.status"]}]}}' >/dev/null || true
+      -d '{"name":"default","config":{"webhooks":[{"url":"http://middleware:3002/api/whatsapp/webhook","events":["message","message.ack","session.status"]}]}}' >/dev/null || true
   fi
 fi
 

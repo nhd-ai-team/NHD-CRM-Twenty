@@ -160,7 +160,7 @@ services:
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY}
       AI_SERVICE_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}
       # 官网入站 webhook 校验密钥（与 ai-service 的 CRM_WEBHOOK_SECRET 一致）
-      WEBSITE_INGEST_SECRET: ${WEBSITE_INGEST_SECRET:-}
+      WEBSITE_INGEST_SECRET: ${WEBSITE_INGEST_SECRET:?WEBSITE_INGEST_SECRET must be set}
       # 邮箱 IMAP 只读收取（沉淀到对话工作台 email 渠道，不回复）
       IMAP_HOST: ${IMAP_HOST:-imap.qiye.163.com}
       IMAP_PORT: ${IMAP_PORT:-993}
@@ -240,7 +240,7 @@ services:
       WHATSAPP_DEFAULT_ENGINE: WEBJS
       WAHA_PRINT_QR: "false"
       WHATSAPP_HOOK_URL: http://middleware:3002/api/whatsapp/webhook
-      WHATSAPP_HOOK_EVENTS: message.any
+      WHATSAPP_HOOK_EVENTS: message,message.ack,session.status
       HTTP_PROXY: http://host.docker.internal:7890
       HTTPS_PROXY: http://host.docker.internal:7890
       NO_PROXY: localhost,127.0.0.1,db,redis,middleware

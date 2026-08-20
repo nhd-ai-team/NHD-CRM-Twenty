@@ -270,6 +270,45 @@ function getExplicitTwentyTokenFromRequest(req) {
   return getTwentyTokenFromCookie(req);
 }
 
+function getWebsiteIngressSecret() {
+  return String(WEBSITE_INGEST_SECRET || '').trim();
+}
+
+function getProvidedWebsiteIngressSecret(req) {
+  return String(
+    req.headers['x-webhook-secret']
+    || req.headers['x-crm-webhook-secret']
+    || req.query?.secret
+    || '',
+  ).trim();
+}
+
+function requireWebsiteIngressSecret(req, res, scope = 'website ingest') {
+  const expected = getWebsiteIngressSecret();
+  if (!expected) {
+    console.error(`[${scope}] WEBSITE_INGEST_SECRET is not configured; rejecting external ingest`);
+    res.status(503).json({ error: 'website ingest secret is not configured' });
+    return false;
+  }
+  if (getProvidedWebsiteIngressSecret(req) !== expected) {
+    res.status(401).json({ error: 'unauthorized' });
+    return false;
+  }
+  return true;
+}
+
+function isLegacyWebsiteOpportunityGraphQLCompat(mapped) {
+  const query = String(mapped?.payload?.query || '');
+  const data = mapped?.payload?.variables?.data;
+  return Boolean(
+    mapped?.changed
+    && /\bcreateOpportunity\b/.test(query)
+    && data
+    && typeof data === 'object'
+    && !Array.isArray(data),
+  );
+}
+
 // —— A 方案：本地 JWT 验签（替换原先「每次鉴权都打 Twenty GraphQL 实时校验」）——
 // 用 core.signingKey 的明文公钥在本地完成 ES256 验签，移除对 Twenty 服务可达性的依赖，
 // 服务抖动/重启不再误报「无法验证当前 CRM 用户」。公钥内存缓存 10 分钟，密钥轮换时自动刷新。
@@ -839,6 +878,28 @@ async function twentyGraphQL(query, variables = {}, token = TWENTY_API_KEY) {
 app.post('/api/graphql-compat', async (req, res) => {
   const mapped = mapLegacyCreateOpportunityGraphQLPayload(req.body);
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    const authorization = String(req.headers.authorization || '');
+    const cookie = String(req.headers.cookie || '');
+    const hasExplicitUserAuth = Boolean(authorization || cookie || String(req.headers['x-twenty-access-token'] || '').trim());
+    const canUseSystemToken = !hasExplicitUserAuth && isLegacyWebsiteOpportunityGraphQLCompat(mapped);
+
+    if (!hasExplicitUserAuth) {
+      if (!canUseSystemToken) {
+        return res.status(401).json({ error: 'unauthorized graphql proxy request' });
+      }
+      if (!requireWebsiteIngressSecret(req, res, 'graphql-compat')) return;
+      if (!TWENTY_API_KEY) {
+        return res.status(503).json({ error: 'twenty api key is not configured' });
+      }
+      headers.Authorization = `Bearer ${TWENTY_API_KEY}`;
+    } else {
+      if (cookie) headers.Cookie = cookie;
+      if (authorization) headers.Authorization = authorization;
+      const forwardedToken = String(req.headers['x-twenty-access-token'] || '').trim();
+      if (!headers.Authorization && forwardedToken) headers.Authorization = `Bearer ${forwardedToken}`;
+    }
+
     const originalData = req.body?.variables?.data;
     const mappedData = mapped.payload?.variables?.data;
     const legacyCompanyName = typeof originalData?.company === 'string'
@@ -853,12 +914,6 @@ app.post('/api/graphql-compat', async (req, res) => {
         console.error('[graphql-compat] company link failed:', error.message);
       }
     }
-    const headers = { 'Content-Type': 'application/json' };
-    const authorization = String(req.headers.authorization || '');
-    const cookie = String(req.headers.cookie || '');
-    if (cookie) headers.Cookie = cookie;
-    if (authorization) headers.Authorization = authorization;
-    else if (!cookie && TWENTY_API_KEY) headers.Authorization = `Bearer ${TWENTY_API_KEY}`;
     const response = await fetch(`${TWENTY_API_URL}/graphql`, {
       method: 'POST',
       headers,
@@ -1978,9 +2033,7 @@ async function createWebsiteFormOpportunity(body, req) {
 }
 
 app.post('/api/website/form', async (req, res) => {
-  if (WEBSITE_INGEST_SECRET && req.headers['x-webhook-secret'] !== WEBSITE_INGEST_SECRET) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
+  if (!requireWebsiteIngressSecret(req, res, 'website-form')) return;
   try {
     const created = await createWebsiteFormOpportunity(req.body, req);
     res.status(201).json({ received: true, ...created });
@@ -1991,9 +2044,7 @@ app.post('/api/website/form', async (req, res) => {
 });
 
 app.post('/api/website/webhook', async (req, res) => {
-  if (WEBSITE_INGEST_SECRET && req.headers['x-webhook-secret'] !== WEBSITE_INGEST_SECRET) {
-    return res.status(401).json({ error: 'unauthorized' });
-  }
+  if (!requireWebsiteIngressSecret(req, res, 'website-webhook')) return;
   try {
     if (isWebsiteFormPayload(req.body)) {
       const created = await createWebsiteFormOpportunity(req.body, req);
