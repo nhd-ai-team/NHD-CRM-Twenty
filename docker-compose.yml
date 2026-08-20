@@ -155,6 +155,7 @@ services:
       WAHA_API_URL: http://waha:3000
       WAHA_API_KEY: ${EVOLUTION_API_KEY}
       WAHA_SESSION: default
+      WAHA_WEBHOOK_URL: http://middleware:3002/api/whatsapp/webhook
       AI_SERVICE_URL: http://ai-service:8790
       AI_SERVICE_API_KEY: ${AI_SERVICE_API_KEY}
       AI_SERVICE_TENANT_ID: ${AI_SERVICE_TENANT_ID:-nhd}

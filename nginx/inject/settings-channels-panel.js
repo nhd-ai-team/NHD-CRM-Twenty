@@ -6,9 +6,11 @@
   var CACHE_TTL_MS = 30000;
   var MIN_STATUS_INTERVAL_MS = 1500;
   var QR_CACHE_TTL_MS = 15000;
+  var STATUS_POLL_MS = 5000;
   var statusInFlight = null;
   var qrInFlight = null;
   var lastStatusStartedAt = 0;
+  var statusPoller = null;
 
   function getCookie(name) {
     var prefix = name + '=';
@@ -153,6 +155,7 @@
     if (status === 'SCAN_QR_CODE') return '等待扫码';
     if (status === 'STARTING') return '启动中';
     if (status === 'STOPPED') return '未启动';
+    if (status === 'FAILED') return '连接失败';
     return status || '未知';
   }
 
@@ -310,7 +313,7 @@
     statusInFlight = waitForTwentyAccessToken(6000)
       .then(function (token) {
         if (!token) throw new Error('登录状态正在初始化，请刷新 CRM 后重试。');
-        return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin', headers: getTwentyAuthHeaders() });
+        return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin', cache: 'no-store', headers: getTwentyAuthHeaders() });
       })
       .then(function (response) { return readJsonResponse(response, '状态加载失败'); })
       .then(function (data) {
@@ -471,6 +474,15 @@
     root.style.left = settingsDrawerRight() + 'px';
     root.style.display = 'block';
     setChannelNavActive();
+    if (!statusPoller) {
+      statusPoller = window.setInterval(function () {
+        var page = document.getElementById(PANEL_ID);
+        if (page && page.style.display !== 'none' && window.location.hash === '#channels' && document.visibilityState === 'visible') {
+          clearCachedStatus();
+          loadStatus(page, true);
+        }
+      }, STATUS_POLL_MS);
+    }
     if (!wasOpen) loadStatus(root, false);
     else {
       var cached = getCachedStatus();

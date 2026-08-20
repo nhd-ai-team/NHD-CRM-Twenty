@@ -23,6 +23,7 @@ type WhatsAppStatus = {
 };
 
 const CONV_API_PREFIX = '/conv-api';
+const WHATSAPP_STATUS_POLL_MS = 5000;
 
 const Card = styled.div`
   border: 1px solid ${({ theme }) => theme.border.color.light};
@@ -218,16 +219,20 @@ export const SettingsAccountsChannels = () => {
     return data;
   };
 
-  const refreshStatus = async () => {
-    setIsLoading(true);
-    setError('');
+  const refreshStatus = async (options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setIsLoading(true);
+      setError('');
+    }
     try {
       const data = await requestJson(`${CONV_API_PREFIX}/channel-accounts/whatsapp/status`);
       setStatus(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'WhatsApp 状态读取失败');
     } finally {
-      setIsLoading(false);
+      if (!options?.silent) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -323,6 +328,16 @@ export const SettingsAccountsChannels = () => {
       return;
     }
     refreshStatus();
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        refreshStatus({ silent: true });
+      }
+    }, WHATSAPP_STATUS_POLL_MS);
+    return () => window.clearInterval(timer);
   }, [accessToken]);
 
   useEffect(() => {

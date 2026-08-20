@@ -4,6 +4,7 @@
     if (status === 'SCAN_QR_CODE') return '等待扫码';
     if (status === 'STARTING') return '启动中';
     if (status === 'STOPPED') return '未启动';
+    if (status === 'FAILED') return '连接失败';
     return status || '未知';
   }
 
@@ -150,7 +151,7 @@
 
   function loadWhatsAppStatus(root) {
     root.querySelector('[data-wa-error]').textContent = '';
-    return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin', headers: getTwentyAuthHeaders() })
+    return window.fetch('/conv-api/channel-accounts/whatsapp/status', { credentials: 'same-origin', cache: 'no-store', headers: getTwentyAuthHeaders() })
       .then(function (response) { return readChannelApiResponse(response, '状态加载失败'); })
       .then(function (data) { renderWhatsAppStatus(root, data); })
       .catch(function (error) {
@@ -312,7 +313,7 @@
     if (!window.__settingsChannelsPoller) {
       window.__settingsChannelsPoller = window.setInterval(function () {
         var page = document.getElementById(CHANNELS_SETTINGS_PAGE_ID);
-        if (page && isChannelsSettingsPage()) loadWhatsAppStatus(page);
+        if (page && isChannelsSettingsPage() && document.visibilityState === 'visible') loadWhatsAppStatus(page);
       }, 6000);
     }
   }
