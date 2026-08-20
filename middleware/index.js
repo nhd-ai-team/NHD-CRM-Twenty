@@ -1612,6 +1612,12 @@ async function receiveWhatsAppWebhook(req, res) {
   const event = req.body.event || req.params.event?.replace(/-/g, '.');
   // WAHA 在 webhook body 中携带 session（WAHA session 名），用于归属到对应销售。
   const session = String(req.body?.session || WAHA_SESSION);
+  if (event === 'session.status') {
+    const normalized = normalizeWahaSessionStatusPayload(req.body, session);
+    syncWahaBindingStatus(session, normalized, 'webhook')
+      .catch(error => console.error('[whatsapp-status] webhook failed:', error.message));
+    return;
+  }
   // 需求二：ack 必须单独处理，绝不能当普通文本消息落库。
   if (event === 'message.ack') {
     persistWhatsAppMessageAck(req.body, session)
@@ -3191,6 +3197,56 @@ function normalizeWahaSession(session = {}) {
   };
 }
 
+function normalizeWahaSessionStatusPayload(payload = {}, sessionName = WAHA_SESSION) {
+  const data = payload.payload || payload;
+  const nestedSession = data.session && typeof data.session === 'object' ? data.session : {};
+  const status = data.status || data.state || nestedSession.status || nestedSession.state || payload.status || payload.state || '';
+  const me = data.me || nestedSession.me || payload.me || {};
+  const engine = data.engine || nestedSession.engine || payload.engine || {};
+  return normalizeWahaSession({
+    name: sessionName,
+    status: status || 'UNKNOWN',
+    me,
+    engine,
+  });
+}
+
+async function syncWahaBindingStatus(sessionName, normalized, source = 'status') {
+  if (!sessionName || !normalized?.status) return null;
+  const metadataPatch = {
+    lastWahaStatus: normalized.status,
+    lastWahaStatusAt: new Date().toISOString(),
+    lastWahaStatusSource: source,
+  };
+  if (normalized.phone) metadataPatch.phone = normalized.phone;
+  if (normalized.engine) metadataPatch.engine = normalized.engine;
+  const result = await pool.query(
+    `UPDATE conv.channel_accounts
+        SET status = $2,
+            external_account_id = COALESCE(NULLIF($3, ''), external_account_id),
+            display_name = COALESCE(NULLIF($4, ''), display_name),
+            metadata = COALESCE(metadata, '{}'::jsonb) || $5::jsonb,
+            updated_at = now()
+      WHERE channel = 'whatsapp'
+        AND provider = 'waha'
+        AND provider_session = $1
+        AND status <> 'unbound'
+      RETURNING id, user_id, workspace_member_id, provider_session, external_account_id, display_name, status, metadata, updated_at`,
+    [
+      sessionName,
+      normalized.status,
+      normalized.accountId || '',
+      normalized.displayName || normalized.phone || '',
+      JSON.stringify(metadataPatch),
+    ],
+  );
+  if (!result.rowCount) {
+    console.warn('[whatsapp-status] no active CRM binding for WAHA session:', sessionName, normalized.status);
+    return null;
+  }
+  return result.rows[0];
+}
+
 function normalizeWhatsAppPairingPhone(input) {
   return String(input || '').replace(/[^\d]/g, '');
 }
@@ -3425,18 +3481,25 @@ app.get('/api/channel-accounts/whatsapp/status', requireSameSite, async (req, re
     const binding = normalized.accountId
       ? await getActiveWhatsAppBindingByAccount(normalized.accountId)
       : await getCurrentUserWhatsAppBinding(authenticated.userId);
+    const syncedBinding = binding
+      ? await syncWahaBindingStatus(sessionName, normalized, 'status-endpoint').catch(error => {
+        console.error('[whatsapp-status] sync failed:', error.message);
+        return null;
+      })
+      : null;
+    const effectiveBinding = syncedBinding || binding;
     res.json({
       channel: 'whatsapp',
       provider: 'waha',
       ...normalized,
-      phone: normalized.phone || binding?.metadata?.phone || '',
-      accountId: normalized.accountId || binding?.external_account_id || '',
-      displayName: normalized.displayName || binding?.display_name || '',
+      phone: normalized.phone || effectiveBinding?.metadata?.phone || '',
+      accountId: normalized.accountId || effectiveBinding?.external_account_id || '',
+      displayName: normalized.displayName || effectiveBinding?.display_name || '',
       binding: {
-        bound: !!binding,
-        boundToCurrentUser: !!binding && binding.user_id === authenticated.userId,
-        boundByOther: !!binding && binding.user_id !== authenticated.userId,
-        ownerName: binding && binding.user_id !== authenticated.userId ? formatBindingOwner(binding) : '',
+        bound: !!effectiveBinding,
+        boundToCurrentUser: !!effectiveBinding && effectiveBinding.user_id === authenticated.userId,
+        boundByOther: !!effectiveBinding && effectiveBinding.user_id !== authenticated.userId,
+        ownerName: effectiveBinding && effectiveBinding.user_id !== authenticated.userId ? formatBindingOwner(effectiveBinding) : '',
       },
       qrAvailable: ['SCAN_QR_CODE', 'FAILED', 'STOPPED', 'STARTING'].includes(normalized.status),
     });
