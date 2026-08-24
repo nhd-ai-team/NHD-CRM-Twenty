@@ -15,8 +15,13 @@
     "end": 716
   },
   {
-    "file": "30-nav.js",
+    "file": "21-history-panel.js",
     "start": 717,
+    "end": 984
+  },
+  {
+    "file": "30-nav.js",
+    "start": 985,
     "end": 1184
   },
   {

@@ -48,11 +48,49 @@
       container = refAnchor.parentElement; // keep ref for cloning wrapper
     }
 
-    // insertBefore 的参照必须是 listEl 的直接子节点，否则浏览器会抛
-    // NotFoundError（tryInsert 一抛，后面的按钮/入口注入也全被带停）。
-    var insertBeforeNode = refAnchor;
-    while (insertBeforeNode && insertBeforeNode.parentElement !== listEl) {
-      insertBeforeNode = insertBeforeNode.parentElement;
+    function directNavRowFor(node) {
+      var row = node;
+      while (row && row.parentElement && row.parentElement !== listEl && row !== document.body) {
+        row = row.parentElement;
+      }
+      return row && row.parentElement === listEl ? row : null;
+    }
+
+    function navOrderForAnchor(anchor) {
+      if (!anchor) return 900;
+      if (anchor.id === NAV_ID) return 10;
+      if (anchor.id === MAIL_NAV_ID) return 20;
+      if (anchor.id === SETTINGS_NAV_ID) return 70;
+      var href = anchor.getAttribute('href') || '';
+      if (/^\/settings(\/|$)/.test(href)) return 70;
+      var objectSlug = '';
+      var objectMatch = href.match(/^\/objects\/([^\/?#]+)/);
+      if (objectMatch) objectSlug = canonicalObject(objectMatch[1]);
+      else if (/^\/opportunities(\?|#|$)/.test(href)) objectSlug = 'opportunity';
+      else if (/^\/people(\?|#|$)/.test(href)) objectSlug = 'person';
+      if (objectSlug === 'opportunity') return 30;
+      if (objectSlug === 'person') return 40;
+      if (objectSlug === 'xiangMu') return 50;
+      if (objectSlug === 'duiHuaLiShi') return 60;
+      return 900;
+    }
+
+    function applyMainNavOrder() {
+      try {
+        listEl.style.display = 'flex';
+        listEl.style.flexDirection = 'column';
+        var seen = [];
+        Array.from(listEl.querySelectorAll('a[href],[role="button"]')).forEach(function (anchor) {
+          if (!isLeftNavigationAnchor(anchor) &&
+              anchor.id !== NAV_ID &&
+              anchor.id !== MAIL_NAV_ID &&
+              anchor.id !== SETTINGS_NAV_ID) return;
+          var row = directNavRowFor(anchor);
+          if (!row || seen.indexOf(row) !== -1) return;
+          seen.push(row);
+          row.style.order = String(navOrderForAnchor(anchor));
+        });
+      } catch (e) {}
     }
 
     if (!isSettingsPage()) {
@@ -66,8 +104,7 @@
         wrapper.className = container.className;
         wrapper.setAttribute('data-chat-nav-wrapper', '1');
         wrapper.appendChild(item);
-        if (insertBeforeNode) listEl.insertBefore(wrapper, insertBeforeNode);
-        else listEl.appendChild(wrapper);
+        listEl.appendChild(wrapper);
       });
     }
 
@@ -87,6 +124,8 @@
     }
     if (settingsWrapper && settingsWrapper.parentElement !== listEl) listEl.appendChild(settingsWrapper);
     else if (settingsWrapper && settingsWrapper.nextElementSibling) listEl.appendChild(settingsWrapper);
+
+    applyMainNavOrder();
 
     setupNavInterception();
 

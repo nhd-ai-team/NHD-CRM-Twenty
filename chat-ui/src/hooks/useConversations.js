@@ -16,9 +16,20 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const [activeStatus, setActiveStatus] = useState('all')
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState(null)
+  const [authExpired, setAuthExpired] = useState(false)
+
+  async function requireAccessToken() {
+    const token = await waitForTwentyAccessToken()
+    if (!token) {
+      setAuthExpired(true)
+      throw new Error('登录状态已失效，请刷新 CRM 后重试')
+    }
+    return token
+  }
 
   async function loadConversations() {
-    await waitForTwentyAccessToken()
+    if (authExpired) return
+    await requireAccessToken()
     // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
     const params = new URLSearchParams({ _: String(Date.now()) })
     if (view === 'history') params.set('view', 'history')
@@ -26,6 +37,10 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       cache: 'no-store',
       headers: withTwentyAuthHeaders(),
     })
+    if (response.status === 401) {
+      setAuthExpired(true)
+      throw new Error('登录状态已失效，请刷新 CRM 后重试')
+    }
     if (!response.ok) throw new Error('无法加载会话')
     // 邮箱是独立板块（见 useEmails），渠道工作台默认不展示 email 会话；只读历史页可按需复用全量接口。
     const list = (await response.json()).filter(c => includeEmail || c.channel !== 'email')
@@ -41,14 +56,18 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   }
 
   async function loadMessages(convId) {
-    if (!convId) return
-    await waitForTwentyAccessToken()
+    if (!convId || authExpired) return
+    await requireAccessToken()
     const params = new URLSearchParams({ _: String(Date.now()) })
     if (view === 'history') params.set('view', 'history')
     const response = await fetch(`/conv-api/conversations/${convId}/messages?${params.toString()}`, {
       cache: 'no-store',
       headers: withTwentyAuthHeaders(),
     })
+    if (response.status === 401) {
+      setAuthExpired(true)
+      throw new Error('登录状态已失效，请刷新 CRM 后重试')
+    }
     if (!response.ok) throw new Error('无法加载聊天记录')
     const messages = (await response.json()).map(message => ({
       ...message,
@@ -64,19 +83,21 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   }
 
   useEffect(() => {
+    if (authExpired) return undefined
     loadConversations().catch(error => console.error(error))
     const timer = setInterval(() => loadConversations().catch(() => {}), 10000)
     return () => clearInterval(timer)
-  }, [includeEmail, view])
+  }, [includeEmail, view, authExpired])
 
   useEffect(() => {
+    if (authExpired) return undefined
     loadMessages(selectedId).catch(error => console.error(error))
     if (!selectedId) return undefined
     // 列表轮询只刷新会话摘要，且刻意保留旧 messages；当前打开的会话必须单独轮询，
     // 否则官网访客新消息和 AI 回复要等销售切走再切回来才显示。
     const timer = setInterval(() => loadMessages(selectedId).catch(() => {}), 5000)
     return () => clearInterval(timer)
-  }, [selectedId, view])
+  }, [selectedId, view, authExpired])
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {
@@ -98,7 +119,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const selected = conversations.find(c => c.id === selectedId) ?? null
 
   async function sendMessage(convId, content, file) {
-    await waitForTwentyAccessToken()
+    await requireAccessToken()
     const options = { method: 'POST' }
     if (file) {
       const form = new FormData()
@@ -123,7 +144,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
 
   async function setTakeover(convId, action) {
     if (!convId) return
-    await waitForTwentyAccessToken()
+    await requireAccessToken()
     const response = await fetch(`/conv-api/conversations/${convId}/status`, {
       method: 'PATCH',
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -138,7 +159,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
 
   async function closeConversation(convId) {
     if (!convId) return
-    await waitForTwentyAccessToken()
+    await requireAccessToken()
     const response = await fetch(`/conv-api/conversations/${convId}/status`, {
       method: 'PATCH',
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -154,7 +175,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   // 需求一：对话名称人工编辑。name 传空字符串 = 清除人工名并恢复渠道原始名。
   async function renameConversation(convId, name) {
     if (!convId) return null
-    await waitForTwentyAccessToken()
+    await requireAccessToken()
     const response = await fetch(`/conv-api/conversations/${convId}/name`, {
       method: 'PATCH',
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),

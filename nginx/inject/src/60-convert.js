@@ -262,12 +262,17 @@
     if (!existing) existing = makeButton(CONVERT_BTN_ID, '转客户', 'person', '#1f9d5f', 8);
     if (!projectBtn) projectBtn = makeButton(CONVERT_PROJECT_BTN_ID, '转项目', 'project', '#2563eb', 8);
 
-    if (existing.parentElement !== anchor.parentElement || existing.nextElementSibling !== projectBtn) {
-      anchor.parentElement.insertBefore(existing, anchor);
+    var host = document.getElementById('__lead_convert_action_host__');
+    if (!host || host.parentElement !== anchor.parentElement) {
+      if (host) host.remove();
+      host = document.createElement('span');
+      host.id = '__lead_convert_action_host__';
+      host.setAttribute('data-lead-convert-host', '1');
+      host.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-left:8px;flex-shrink:0;';
+      anchor.parentElement.appendChild(host);
     }
-    if (projectBtn.parentElement !== anchor.parentElement || projectBtn.nextElementSibling !== anchor) {
-      anchor.parentElement.insertBefore(projectBtn, anchor);
-    }
+    if (existing.parentElement !== host) host.appendChild(existing);
+    if (projectBtn.parentElement !== host) host.appendChild(projectBtn);
   }
 
   // ── 线索详情页：跟进记录悬浮入口 + 弹窗列表 ──────────────────────────────────

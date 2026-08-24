@@ -24,9 +24,12 @@ twenty/infra/build/
 
 # Logs and temp files
 *.log
+*.bak
+*.bak_*
 logs/
 tmp/
 .cache/
+.tmp-deploy-backup/
 
 # Preserved nested repository metadata
 .embedded-git/

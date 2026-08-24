@@ -514,5 +514,5 @@
       openResetPwdByEmail(findMemberEmailOnPage());
     });
     btn.style.marginRight = '8px';
-    adminRow.insertBefore(btn, delBtn);
+    adminRow.appendChild(btn);
   }

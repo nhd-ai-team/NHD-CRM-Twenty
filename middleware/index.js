@@ -21,6 +21,17 @@ const {
   mapLegacyCreateOpportunityGraphQLPayload,
   normalizeWebsiteFormPayload,
 } = require('./lib/website-form');
+const {
+  attachmentFromUploadedFile,
+  createUploadFileAllowed,
+  deleteUploadedFileBestEffort,
+  extensionFromName,
+  fileMessageType,
+  fileTitle,
+  fileTypeFromName,
+  normalizeOutboundAttachments,
+  normalizeUploadFilename,
+} = require('./lib/files');
 
 const app = express();
 // verify 回调保留原始 body，供 Instagram/Meta 的 X-Hub-Signature-256 校验使用。
@@ -83,6 +94,11 @@ const ALLOWED_UPLOAD_MIME_TYPES = new Set([
   'application/vnd.ms-powerpoint',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 ]);
+const uploadFileAllowed = createUploadFileAllowed({
+  allowedExtensions: ALLOWED_UPLOAD_EXTENSIONS,
+  allowedMimePrefixes: ALLOWED_UPLOAD_MIME_PREFIXES,
+  allowedMimeTypes: ALLOWED_UPLOAD_MIME_TYPES,
+});
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let workspaceSchemaCache = null;
 
@@ -139,99 +155,6 @@ function requireSameSite(req, res, next) {
   if (hostAllowed(host)) return next();
   console.warn('[same-site] blocked origin:', source, req.method, req.path);
   return res.status(403).json({ error: 'forbidden origin' });
-}
-
-function publicFileUrl(req, storedName) {
-  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
-  const isLocalDirect = host.startsWith('localhost:3002') || host.startsWith('127.0.0.1:3002');
-  const proto = req.headers['x-forwarded-proto'] || (host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https');
-  const prefix = isLocalDirect ? '/api' : '/conv-api';
-  const relative = `${prefix}/uploads/conversation-files/${encodeURIComponent(storedName)}`;
-  return host ? `${proto}://${host}${relative}` : relative;
-}
-
-function fileMessageType(file = {}) {
-  const mime = String(file.mimetype || '').toLowerCase();
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  if (mime.startsWith('audio/')) return 'audio';
-  return 'file';
-}
-
-function extensionFromName(name = '') {
-  return path.extname(String(name || '').trim()).toLowerCase();
-}
-
-function fileTypeFromName(name = '', fallback = 'file') {
-  const ext = extensionFromName(name).replace('.', '');
-  return ext || fallback;
-}
-
-function uploadFileAllowed(file = {}) {
-  const title = fileTitle(file);
-  const ext = extensionFromName(title);
-  const mime = String(file.mimetype || '').toLowerCase();
-  if (ALLOWED_UPLOAD_EXTENSIONS.has(ext)) return true;
-  if (ALLOWED_UPLOAD_MIME_PREFIXES.some(prefix => mime.startsWith(prefix))) return true;
-  return ALLOWED_UPLOAD_MIME_TYPES.has(mime);
-}
-
-function deleteUploadedFileBestEffort(file = {}) {
-  if (!file.path) return;
-  fs.unlink(file.path, () => {});
-}
-
-function attachmentFromUploadedFile(req, file, content = '') {
-  const title = fileTitle(file);
-  const messageType = fileMessageType(file);
-  return {
-    title,
-    fileType: fileTypeFromName(title, messageType),
-    contentType: file.mimetype || 'application/octet-stream',
-    sizeBytes: file.size || 0,
-    url: publicFileUrl(req, file.filename),
-    caption: content || '',
-  };
-}
-
-function normalizeOutboundAttachment(attachment = {}) {
-  if (!attachment || typeof attachment !== 'object') return null;
-  const url = String(attachment.url || attachment.href || '').trim();
-  if (!url) return null;
-  const title = normalizeUploadFilename(attachment.title || attachment.fileName || attachment.filename || '附件');
-  const fileType = String(attachment.fileType || fileTypeFromName(title, 'file')).replace(/^\./, '').toLowerCase() || 'file';
-  return {
-    attachmentId: attachment.attachmentId || attachment.id || undefined,
-    title,
-    fileType,
-    contentType: attachment.contentType || attachment.mimeType || attachment.mimetype || undefined,
-    sizeBytes: Number(attachment.sizeBytes || attachment.size || 0) || undefined,
-    url,
-  };
-}
-
-function normalizeOutboundAttachments(value) {
-  return (Array.isArray(value) ? value : [])
-    .map(normalizeOutboundAttachment)
-    .filter(Boolean)
-    .slice(0, 10);
-}
-
-function normalizeUploadFilename(name = '') {
-  const raw = String(name || '').trim();
-  if (!raw) return '附件';
-  const mojibakePattern = /[ÃÂâäåæçèéðÐÑ¤¥¦§¨©ª«¬®¯°±²³µ¶·¸¹º¼½¾¿]/;
-  const decoded = Buffer.from(raw, 'latin1').toString('utf8');
-  const candidate = mojibakePattern.test(raw) && decoded && !decoded.includes('�') ? decoded : raw;
-  return candidate
-    .normalize('NFC')
-    .replace(/[\\/:\0-\x1F\x7F]/g, '_')
-    .trim()
-    .slice(0, 180) || '附件';
-}
-
-function fileTitle(file = {}) {
-  return file.displayName || normalizeUploadFilename(file.originalname || '附件');
 }
 
 function getCookieFromRequest(req, name) {
@@ -1181,6 +1104,13 @@ async function ensureSchema() {
     ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_longitude NUMERIC(9,6);
     ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_source TEXT;
     ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS geo_updated_at TIMESTAMPTZ;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS landing_page_url TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS referrer_url TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS utm_source TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS utm_medium TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS utm_campaign TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS utm_term TEXT;
+    ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS utm_content TEXT;
   `);
   }
 
@@ -1748,6 +1678,75 @@ function isPublicIp(ip) {
   return true;
 }
 
+function cleanWebsiteMetaText(value, maxLength = 1000) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  return text.slice(0, maxLength);
+}
+
+function firstWebsiteMetaString(...values) {
+  for (const value of values) {
+    const clean = cleanWebsiteMetaText(value);
+    if (clean) return clean;
+  }
+  return null;
+}
+
+function parseUtmFromUrl(pageUrl) {
+  if (!pageUrl) return {};
+  try {
+    const url = new URL(pageUrl);
+    return {
+      source: cleanWebsiteMetaText(url.searchParams.get('utm_source'), 255),
+      medium: cleanWebsiteMetaText(url.searchParams.get('utm_medium'), 255),
+      campaign: cleanWebsiteMetaText(url.searchParams.get('utm_campaign'), 255),
+      term: cleanWebsiteMetaText(url.searchParams.get('utm_term'), 255),
+      content: cleanWebsiteMetaText(url.searchParams.get('utm_content'), 255),
+    };
+  } catch {
+    return {};
+  }
+}
+
+function extractWebsiteContext(body = {}) {
+  const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : {};
+  const utm = body.utm && typeof body.utm === 'object' ? body.utm : {};
+  const pageUrl = firstWebsiteMetaString(body.pageUrl, body.pageURL, body.landingPageUrl, metadata.pageUrl, metadata.landingPageUrl);
+  const referrer = firstWebsiteMetaString(body.referrer, body.referer, body.referrerUrl, metadata.referrer, metadata.referer);
+  const fromUrl = parseUtmFromUrl(pageUrl);
+  return {
+    pageUrl,
+    referrer,
+    utmSource: firstWebsiteMetaString(body.utm_source, body.utmSource, utm.source, utm.utm_source, metadata.utm_source, metadata.utmSource, fromUrl.source),
+    utmMedium: firstWebsiteMetaString(body.utm_medium, body.utmMedium, utm.medium, utm.utm_medium, metadata.utm_medium, metadata.utmMedium, fromUrl.medium),
+    utmCampaign: firstWebsiteMetaString(body.utm_campaign, body.utmCampaign, utm.campaign, utm.utm_campaign, metadata.utm_campaign, metadata.utmCampaign, fromUrl.campaign),
+    utmTerm: firstWebsiteMetaString(body.utm_term, body.utmTerm, utm.term, utm.utm_term, metadata.utm_term, metadata.utmTerm, fromUrl.term),
+    utmContent: firstWebsiteMetaString(body.utm_content, body.utmContent, utm.content, utm.utm_content, metadata.utm_content, metadata.utmContent, fromUrl.content),
+  };
+}
+
+function extractTrustedWebsiteClientIp(req) {
+  const headers = req?.headers || {};
+  const body = req?.body && typeof req.body === 'object' ? req.body : {};
+  const candidates = [];
+  if (headers['cf-connecting-ip']) candidates.push(String(headers['cf-connecting-ip']).trim());
+  if (headers['x-original-client-ip']) candidates.push(String(headers['x-original-client-ip']).trim());
+  if (headers['x-forwarded-for']) {
+    candidates.push(...String(headers['x-forwarded-for']).split(',').map((part) => part.trim()));
+  }
+  if (headers['x-real-ip']) candidates.push(String(headers['x-real-ip']).trim());
+  // 仅 website webhook 通过密钥校验后调用本函数；请求体 IP 只作为 AI 服务内部转发兜底。
+  for (const key of ['clientIp', 'clientIP', 'ip', 'visitorIp', 'visitorIP']) {
+    if (body[key]) candidates.push(String(body[key]).trim());
+  }
+  if (req?.socket?.remoteAddress) candidates.push(req.socket.remoteAddress);
+  for (const raw of candidates) {
+    const ip = String(raw || '').replace(/^::ffff:/, '').trim();
+    if (isPublicIp(ip)) return ip;
+  }
+  return null;
+}
+
 // IP→Geo 缓存（含 null 结果），避免每条消息都打外部服务。TTL 24h。
 const _geoCache = new Map();
 const GEO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1772,7 +1771,10 @@ async function resolveGeoByIp(ip) {
     const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const sep = providerUrl.includes('?') ? '&' : '?';
-      const resp = await fetch(`${providerUrl}${sep}ip=${encodeURIComponent(clean)}`, {
+      const targetUrl = providerName === 'ip-api' && /\/json\/?$/.test(providerUrl)
+        ? `${providerUrl.replace(/\/$/, '')}/${encodeURIComponent(clean)}`
+        : `${providerUrl}${sep}ip=${encodeURIComponent(clean)}`;
+      const resp = await fetch(targetUrl, {
         signal: controller.signal, headers: { accept: 'application/json' },
       });
       if (resp.ok) {
@@ -1820,17 +1822,21 @@ async function persistWebsiteMessage(body, clientIp) {
   const primaryAttachment = attachments[0] || null;
   const contentType = primaryAttachment ? fileMessageType({ mimetype: primaryAttachment.contentType || '' }) : 'text';
   const mediaUrl = primaryAttachment ? primaryAttachment.url : null;
+  const websiteContext = extractWebsiteContext(body);
+  const storedClientIp = isPublicIp(clientIp) ? clientIp : null;
   // 需求三：解析官网访客真实 IP 地域（私网/回环直接返回 null，不阻断入库）。
-  const geo = (await resolveGeoByIp(clientIp)) || null;
+  const geo = (await resolveGeoByIp(storedClientIp)) || null;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const contactResult = await client.query(`INSERT INTO conv.contacts(
         channel, external_id, display_name, channel_display_name,
         ip_address, geo_country_code, geo_country_name, geo_region, geo_city,
-        geo_timezone, geo_latitude, geo_longitude, geo_source, geo_updated_at)
+        geo_timezone, geo_latitude, geo_longitude, geo_source, geo_updated_at,
+        landing_page_url, referrer_url, utm_source, utm_medium, utm_campaign, utm_term, utm_content)
       VALUES ('website', $1, $2, $2, $4, $5, $6, $7, $8, $9, $10, $11, $12::text,
-        CASE WHEN $12::text IS NOT NULL THEN now() ELSE NULL END)
+        CASE WHEN $12::text IS NOT NULL THEN now() ELSE NULL END,
+        $13, $14, $15, $16, $17, $18, $19)
       ON CONFLICT(channel, external_id)
       DO UPDATE SET
         channel_display_name = COALESCE($3::text, conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
@@ -1848,11 +1854,20 @@ async function persistWebsiteMessage(body, clientIp) {
         geo_longitude = COALESCE($11, conv.contacts.geo_longitude),
         geo_source = COALESCE($12::text, conv.contacts.geo_source),
         geo_updated_at = CASE WHEN $12::text IS NOT NULL THEN now() ELSE conv.contacts.geo_updated_at END,
+        landing_page_url = COALESCE($13, conv.contacts.landing_page_url),
+        referrer_url = COALESCE($14, conv.contacts.referrer_url),
+        utm_source = COALESCE($15, conv.contacts.utm_source),
+        utm_medium = COALESCE($16, conv.contacts.utm_medium),
+        utm_campaign = COALESCE($17, conv.contacts.utm_campaign),
+        utm_term = COALESCE($18, conv.contacts.utm_term),
+        utm_content = COALESCE($19, conv.contacts.utm_content),
         updated_at = now() RETURNING *`,
       [visitorId || sessionId, displayName, channelName,
-       clientIp || null,
+       storedClientIp,
        geo?.countryCode ?? null, geo?.countryName ?? null, geo?.region ?? null, geo?.city ?? null,
-       geo?.timezone ?? null, geo?.latitude ?? null, geo?.longitude ?? null, geo?.source ?? null]);
+       geo?.timezone ?? null, geo?.latitude ?? null, geo?.longitude ?? null, geo?.source ?? null,
+       websiteContext.pageUrl, websiteContext.referrer, websiteContext.utmSource, websiteContext.utmMedium,
+       websiteContext.utmCampaign, websiteContext.utmTerm, websiteContext.utmContent]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
       VALUES ('website', $1, $2) ON CONFLICT(channel, external_chat_id)
@@ -2052,7 +2067,7 @@ app.post('/api/website/webhook', async (req, res) => {
       const created = await createWebsiteFormOpportunity(req.body, req);
       return res.status(201).json({ received: true, ...created });
     }
-    await persistWebsiteMessage(req.body, extractClientIp(req));
+    await persistWebsiteMessage(req.body, extractTrustedWebsiteClientIp(req));
     res.status(200).json({ received: true });
   } catch (error) {
     console.error('[website] ingest failed:', error.message);
@@ -2305,8 +2320,15 @@ app.get('/api/conversations', async (req, res) => {
       'region', COALESCE(ct.geo_region, ''),
       'city', COALESCE(ct.geo_city, ''),
       'timezone', COALESCE(ct.geo_timezone, ''),
-      'ip', COALESCE(ct.ip_address::text, ''),
+      'ip', COALESCE(host(ct.ip_address), ''),
       'geoSource', COALESCE(ct.geo_source, ''),
+      'pageUrl', COALESCE(ct.landing_page_url, ''),
+      'referrer', COALESCE(ct.referrer_url, ''),
+      'utmSource', COALESCE(ct.utm_source, ''),
+      'utmMedium', COALESCE(ct.utm_medium, ''),
+      'utmCampaign', COALESCE(ct.utm_campaign, ''),
+      'utmTerm', COALESCE(ct.utm_term, ''),
+      'utmContent', COALESCE(ct.utm_content, ''),
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
@@ -4379,11 +4401,6 @@ async function stripUnavailableOpportunityFields(data, skipped = []) {
 async function ensureOpportunityForInboundConversation({ conversationId, contactId, channel, phone }) {
   if (!conversationId || !contactId || !['whatsapp', 'website'].includes(channel)) return null;
   const source = SOURCE_BY_CHANNEL[channel];
-  const existing = await pool.query(
-    'SELECT twenty_opportunity_id FROM conv.contacts WHERE id = $1 LIMIT 1',
-    [contactId],
-  );
-  if (existing.rows[0]?.twenty_opportunity_id) return existing.rows[0].twenty_opportunity_id;
 
   const data = {
     // Opportunity.name 对应线索列表首列「公司名称」。自动建线索阶段通常没有公司主数据，
@@ -4402,12 +4419,22 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
   }
   await stripUnavailableOpportunityFields(data, []);
 
-  // [DEBUG] 临时日志：定位 phone 字段错误来源，确认后删除
-  if (data.phone !== undefined) {
-    console.error('[auto-lead] DEBUG: data.phone is set!', JSON.stringify(data).substring(0, 500));
-  }
-
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+    const existing = await client.query(
+      'SELECT twenty_opportunity_id FROM conv.contacts WHERE id = $1 FOR UPDATE',
+      [contactId],
+    );
+    if (!existing.rowCount) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    if (existing.rows[0]?.twenty_opportunity_id) {
+      await client.query('COMMIT');
+      return existing.rows[0].twenty_opportunity_id;
+    }
+
     const result = await twentyGraphQL(
       'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
       { data },
@@ -4419,14 +4446,15 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
     // 即便 DB 触发器已兜底，这里也写入 JS 生成值，使审计日志可携带稳定线索ID。
     const leadNo = generateLeadId();
     const schema = await getWorkspaceSchema();
-    await pool.query(
+    await client.query(
       `UPDATE ${schema}.opportunity SET "leadNo" = $2, "customerIdentityKey" = $3, "updatedAt" = now() WHERE id = $1`,
       [opportunity.id, leadNo, leadNo],
     );
-    await pool.query(
-      'UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1 AND twenty_opportunity_id IS NULL',
+    await client.query(
+      'UPDATE conv.contacts SET twenty_opportunity_id = $2, updated_at = now() WHERE id = $1',
       [contactId, opportunity.id],
     );
+    await client.query('COMMIT');
     await recordAuditEvent('conversation.auto_created_lead', {
       channel,
       conversationId,
@@ -4434,8 +4462,11 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
     });
     return opportunity.id;
   } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
     console.error('[auto-lead] create opportunity failed:', error.message);
     return null;
+  } finally {
+    client.release();
   }
 }
 

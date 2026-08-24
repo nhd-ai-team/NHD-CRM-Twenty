@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "check": "node --check index.js && node ../nginx/inject/build-chat-nav.js --check",
     "test": "node --test test/*.test.js",
     "metadata:lead-company": "node tools/apply-lead-company-metadata.js"
   },

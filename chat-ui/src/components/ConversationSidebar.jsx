@@ -40,6 +40,7 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
   const timeStr = formatDistanceToNow(conv.lastMessageAt, { locale: zhCN, addSuffix: false })
   // 需求三：列表显示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示），缺失时明确标示「未知地区」
   const geoParts = [conv.contact?.country, conv.contact?.region, conv.contact?.city, fmtTimezone(conv.contact?.timezone)].filter(Boolean)
+  const utmSource = conv.contact?.utmSource || conv.contact?.utmCampaign || ''
   return (
     <div
       onClick={onSelect}
@@ -101,7 +102,7 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
           {/* 地域行仅官网渠道展示（其他渠道无 IP 概念，显示「未知地区」是噪音）；官网无地域时明确标示 */}
           {conv.channel === 'website' ? (
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              📍 {geoParts.length > 0 ? geoParts.join(' · ') : '未知地区'}
+              📍 {geoParts.length > 0 ? geoParts.join(' · ') : '未知地区'}{utmSource ? ` · ${utmSource}` : ''}
             </div>
           ) : null}
         </div>

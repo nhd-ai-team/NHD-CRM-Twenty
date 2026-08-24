@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  window.__NHD_VERSION__ = '20260819-inline-chat-v6';
+  window.__NHD_VERSION__ = '20260824-nav-order-v1';
 
   // ── 全局错误捕获（2026-08-19 线索页崩溃排查用）：把运行时错误/未处理 Promise 拒绝
   //     记录到 window.__NHD_ERRORS__（含堆栈），控制台运行 window.__NHD_ERRORS__ 即可查看。
@@ -60,7 +60,7 @@
     return OBJECT_SLUGS[slug] || slug;
   }
 
-  var CHAT_SRC   = '/chat/?v=20260818-chat-ui-histdrill';
+  var CHAT_SRC   = '/chat/?v=20260824-chat-ui-pollingfix';
   var LABEL      = '对话工作台';
   var NAV_ID     = '__chat_nav_item__';
   var MAIL_LABEL = '邮箱';

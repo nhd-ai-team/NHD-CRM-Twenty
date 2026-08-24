@@ -367,6 +367,13 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
   // 需求三：会话详情（客户资料上下文）展示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示）；官网渠道带真实 IP，WhatsApp/邮件不显示伪造 IP
   const contactInfo = conv.contact || {}
   const geoParts = [contactInfo.country, contactInfo.region, contactInfo.city, fmtTimezone(contactInfo.timezone)].filter(Boolean)
+  const utmParts = [
+    contactInfo.utmSource ? `source=${contactInfo.utmSource}` : '',
+    contactInfo.utmMedium ? `medium=${contactInfo.utmMedium}` : '',
+    contactInfo.utmCampaign ? `campaign=${contactInfo.utmCampaign}` : '',
+    contactInfo.utmTerm ? `term=${contactInfo.utmTerm}` : '',
+    contactInfo.utmContent ? `content=${contactInfo.utmContent}` : '',
+  ].filter(Boolean)
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%' }}>
@@ -402,6 +409,25 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 📍 {geoParts.join(' · ')}{contactInfo.ip ? ` · IP ${contactInfo.ip}` : ''}
                 {contactInfo.geoSource ? ` · 来源 ${contactInfo.geoSource}` : ''}
+              </div>
+            )}
+            {(utmParts.length > 0 || contactInfo.pageUrl || contactInfo.referrer) && (
+              <div
+                title={[
+                  utmParts.length ? `UTM ${utmParts.join(' · ')}` : '',
+                  contactInfo.pageUrl ? `访问页 ${contactInfo.pageUrl}` : '',
+                  contactInfo.referrer ? `来源页 ${contactInfo.referrer}` : '',
+                ].filter(Boolean).join('\n')}
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: 720,
+                }}
+              >
+                🔗 {[utmParts.length ? `UTM ${utmParts.join(' · ')}` : '', contactInfo.pageUrl ? `访问页 ${contactInfo.pageUrl}` : '', contactInfo.referrer ? `来源页 ${contactInfo.referrer}` : ''].filter(Boolean).join(' · ')}
               </div>
             )}
         </div>

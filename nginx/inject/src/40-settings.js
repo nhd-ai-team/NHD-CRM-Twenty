@@ -68,7 +68,7 @@
     root.querySelector('[data-wa-name]').textContent = state ? (state.displayName || '-') : '-';
     root.querySelector('[data-wa-account-id]').textContent = state ? (state.accountId || '-') : '-';
     root.querySelector('[data-wa-binding]').textContent = boundToCurrentUser
-      ? '已绑定到我的账号'
+      ? (connected ? '已绑定并在线' : '已关联到当前账号，等待扫码授权')
       : boundByOther
         ? '已被其他用户绑定：' + (binding.ownerName || '其他 CRM 用户')
         : connected
@@ -116,7 +116,9 @@
           ? '该 WhatsApp 已绑定到其他 CRM 用户，当前账号不能使用。'
           : '该 WhatsApp 已连接，但还未绑定到 CRM 账号。请点击“绑定到我的账号”。'
       : waitingQr
-        ? (state.status === 'FAILED' ? '当前会话异常，系统会自动重新生成二维码。请稍等几秒后扫码。' : '请用 WhatsApp 手机端扫描下方二维码，完成后页面会自动刷新状态。')
+        ? (boundToCurrentUser
+          ? '当前 CRM 账号已关联该 WhatsApp 会话，但还没有完成手机扫码授权。请用 WhatsApp 手机端扫描二维码，成功后才可收发消息。'
+          : (state.status === 'FAILED' ? '当前会话异常，系统会自动重新生成二维码。请稍等几秒后扫码。' : '请用 WhatsApp 手机端扫描下方二维码，完成后页面会自动刷新状态。'))
         : '如未显示二维码，请点击“启动/刷新二维码”。';
     var qrBox = root.querySelector('[data-wa-qr-box]');
     qrBox.style.display = waitingQr ? 'block' : 'none';
