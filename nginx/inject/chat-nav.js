@@ -3,7 +3,22 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  window.__NHD_VERSION__ = '20260824-nav-order-v1';
+  var NHD_VERSION = '20260825-dom-stability-v2';
+  if (window.__NHD_CHAT_NAV_BOOTED__) {
+    try {
+      window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
+      window.__NHD_ERRORS__.push({
+        type: 'duplicate-script',
+        msg: 'chat-nav duplicate execution skipped',
+        version: window.__NHD_VERSION__,
+        at: Date.now(),
+        url: location.pathname + location.search + location.hash,
+      });
+    } catch (_) {}
+    return;
+  }
+  window.__NHD_CHAT_NAV_BOOTED__ = true;
+  window.__NHD_VERSION__ = NHD_VERSION;
 
   // ── 全局错误捕获（2026-08-19 线索页崩溃排查用）：把运行时错误/未处理 Promise 拒绝
   //     记录到 window.__NHD_ERRORS__（含堆栈），控制台运行 window.__NHD_ERRORS__ 即可查看。
@@ -1318,6 +1333,75 @@
     });
   }
 
+  function ensureStandaloneMainNav(listEl, refAnchor) {
+    if (!listEl || !refAnchor) return;
+    var rect = listEl.getBoundingClientRect();
+    if (!rect.width || rect.left > 360) return;
+
+    // 自定义入口不再插入 Twenty/React 管理的左侧菜单树。
+    // 之前 append/insert 到原生列表后，React 重新渲染时会出现 insertBefore
+    // 目标节点已被注入层移动/删除的崩溃。这里改为 body 下的独立层，只用定位覆盖。
+    var overlay = document.getElementById('__nhd_standalone_main_nav__');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = '__nhd_standalone_main_nav__';
+      overlay.setAttribute('data-chat-nav-standalone', '1');
+      document.body.appendChild(overlay);
+    }
+    overlay.style.cssText = [
+      'position:fixed',
+      'left:' + Math.max(0, Math.round(rect.left)) + 'px',
+      'top:' + Math.max(0, Math.round(rect.top)) + 'px',
+      'width:' + Math.round(rect.width) + 'px',
+      'z-index:30',
+      'pointer-events:none',
+      'display:flex',
+      'flex-direction:column',
+      'gap:4px',
+      'box-sizing:border-box',
+    ].join(';');
+
+    function ensureOverlayItem(opts) {
+      var item = document.getElementById(opts.navId);
+      var wrapper = item && item.closest('[data-chat-nav-standalone-row="1"]');
+      if (!item || !wrapper || wrapper.parentElement !== overlay) {
+        if (wrapper) wrapper.remove();
+        item = buildNavItem(refAnchor, opts);
+        wrapper = document.createElement('div');
+        wrapper.setAttribute('data-chat-nav-standalone-row', '1');
+        wrapper.style.cssText = 'pointer-events:auto;box-sizing:border-box;';
+        wrapper.appendChild(item);
+        overlay.appendChild(wrapper);
+      }
+      return wrapper;
+    }
+
+    ensureOverlayItem({ navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' });
+    ensureOverlayItem({ navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' });
+
+    var spacer = document.getElementById('__nhd_standalone_nav_spacer__');
+    if (!spacer) {
+      spacer = document.createElement('div');
+      spacer.id = '__nhd_standalone_nav_spacer__';
+      spacer.style.cssText = 'height:128px;pointer-events:none;';
+      overlay.appendChild(spacer);
+    }
+    ensureOverlayItem({
+      navId: SETTINGS_NAV_ID,
+      label: SETTINGS_LABEL,
+      svg: SETTINGS_SVG,
+      href: '/settings/profile',
+    });
+
+    // 给原生菜单让出前两行空间；只改样式，不改 DOM 子节点结构。
+    listEl.style.paddingTop = '68px';
+  }
+
+  function removeStandaloneMainNav() {
+    var overlay = document.getElementById('__nhd_standalone_main_nav__');
+    if (overlay) overlay.remove();
+  }
+
   // ── build and insert nav item ──────────────────────────────────────────────
 
   function buildNavItem(refAnchor, opts) {
@@ -2300,10 +2384,9 @@
     try { var _s = window.__NHD_STATE__; if (_s) { _s.lastTryInsertAt = Date.now(); _s.lastSettings = isSettingsPage(); } } catch (_) {}
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
-      // 注入层兼容：在设置页（含「自定义布局」页）左侧导航也呈现对话工作台/邮箱，
-      // 不再整体移除自建入口，避免它们从设置页左侧消失、无法进行自定义布局调整。
-      ensureSettingsChatNav();
-      ensureSettingsChannelsNav();
+      removeStandaloneMainNav();
+      // 设置页左侧菜单由 Twenty 原生 React 树管理。不要向该树插入/移动节点，
+      // 否则路由切换或 token renewal 后容易触发 React insertBefore 崩溃。
       setNavActive(getActiveView());
       if (isCustomManagedSettingsPage()) {
         ensureSettingsAccountsCards();
@@ -2391,36 +2474,8 @@
     }
 
     if (!isSettingsPage()) {
-      [
-        { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
-        { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
-      ].forEach(function (opts) {
-        if (document.getElementById(opts.navId)) return;
-        var item = buildNavItem(refAnchor, opts);
-        var wrapper = document.createElement(container.tagName);
-        wrapper.className = container.className;
-        wrapper.setAttribute('data-chat-nav-wrapper', '1');
-        wrapper.appendChild(item);
-        listEl.appendChild(wrapper);
-      });
+      ensureStandaloneMainNav(listEl, refAnchor);
     }
-
-    var settingsItem = document.getElementById(SETTINGS_NAV_ID);
-    var settingsWrapper = settingsItem ? settingsItem.closest('[data-chat-nav-wrapper="1"]') : null;
-    if (!settingsItem) {
-      settingsItem = buildNavItem(refAnchor, {
-        navId: SETTINGS_NAV_ID,
-        label: SETTINGS_LABEL,
-        svg: SETTINGS_SVG,
-        href: '/settings/profile',
-      });
-      settingsWrapper = document.createElement(container.tagName);
-      settingsWrapper.className = container.className;
-      settingsWrapper.setAttribute('data-chat-nav-wrapper', '1');
-      settingsWrapper.appendChild(settingsItem);
-    }
-    if (settingsWrapper && settingsWrapper.parentElement !== listEl) listEl.appendChild(settingsWrapper);
-    else if (settingsWrapper && settingsWrapper.nextElementSibling) listEl.appendChild(settingsWrapper);
 
     applyMainNavOrder();
 
@@ -3326,6 +3381,8 @@
   // 没被调用。这里拦截 pushState/replaceState 并监听 popstate/hashchange，每次路由变化都
   // 强制重跑 tick，从根上保证注入/清理在导航后必然执行。
   function installRouteTrigger() {
+    if (window.__NHD_ROUTE_TRIGGER_INSTALLED__) return;
+    window.__NHD_ROUTE_TRIGGER_INSTALLED__ = true;
     function fire() {
       try { if (window.__NHD_STATE__) window.__NHD_STATE__.route++; } catch (_) {}
       scheduleTick();
@@ -3485,38 +3542,8 @@
   })();
 
 
-  // ── 兜底：退出设置时整页重载主页，强制 chat-nav.js 重新执行（修复菜单消失/绑定页残留）──
-      (function () {
-    if (typeof window.__NHD_LEAVE_RELOAD__ === 'function') return;
-    var SETTINGS_RE = /^\/settings\//;
-    var wasInSettings = SETTINGS_RE.test(window.location.pathname);
-    function _absoluteUrl(url) {
-      if (!url) return window.location.pathname + window.location.search + window.location.hash;
-      try { return new URL('' + url, window.location.href).href; } catch (e) { return '' + url; }
-    }
-    function _leaveTo(url) { _leftSettingsAt = Date.now(); window.location.replace(_absoluteUrl(url)); }
-    function _isLeave(url) {
-      if (url === undefined || url === null) return false;
-      var p = ('' + url).split('#')[0];
-      return wasInSettings && !SETTINGS_RE.test(p);
-    }
-    function _watch() {
-      var nowInSettings = SETTINGS_RE.test(window.location.pathname);
-      if (wasInSettings && !nowInSettings) { _leaveTo(); return; }
-      wasInSettings = nowInSettings;
-    }
-    window.addEventListener('popstate', _watch);
-    window.addEventListener('hashchange', _watch);
-    var _ps = history.pushState, _rs = history.replaceState;
-    history.pushState = function (state, title, url) {
-      if (_isLeave(url)) { _leaveTo(url); return; }
-      var r = _ps.apply(history, arguments); _watch(); return r;
-    };
-    history.replaceState = function (state, title, url) {
-      if (_isLeave(url)) { _leaveTo(url); return; }
-      var r = _rs.apply(history, arguments); _watch(); return r;
-    };
-    window.__NHD_LEAVE_RELOAD__ = _watch;
-  })();
+  // 旧版这里还会再次包装 history 并在退出设置时强制 reload。该兜底会和
+  // installRouteTrigger 叠加，重复执行 Twenty bundle，触发 fragment 重复注册和
+  // React insertBefore 崩溃。现在只保留异步 tick + 面板清理，不再劫持第二次 history。
 
 })();

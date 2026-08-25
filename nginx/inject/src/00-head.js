@@ -3,7 +3,22 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  window.__NHD_VERSION__ = '20260824-nav-order-v1';
+  var NHD_VERSION = '20260825-dom-stability-v2';
+  if (window.__NHD_CHAT_NAV_BOOTED__) {
+    try {
+      window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
+      window.__NHD_ERRORS__.push({
+        type: 'duplicate-script',
+        msg: 'chat-nav duplicate execution skipped',
+        version: window.__NHD_VERSION__,
+        at: Date.now(),
+        url: location.pathname + location.search + location.hash,
+      });
+    } catch (_) {}
+    return;
+  }
+  window.__NHD_CHAT_NAV_BOOTED__ = true;
+  window.__NHD_VERSION__ = NHD_VERSION;
 
   // ── 全局错误捕获（2026-08-19 线索页崩溃排查用）：把运行时错误/未处理 Promise 拒绝
   //     记录到 window.__NHD_ERRORS__（含堆栈），控制台运行 window.__NHD_ERRORS__ 即可查看。

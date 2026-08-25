@@ -88,6 +88,8 @@
   // 没被调用。这里拦截 pushState/replaceState 并监听 popstate/hashchange，每次路由变化都
   // 强制重跑 tick，从根上保证注入/清理在导航后必然执行。
   function installRouteTrigger() {
+    if (window.__NHD_ROUTE_TRIGGER_INSTALLED__) return;
+    window.__NHD_ROUTE_TRIGGER_INSTALLED__ = true;
     function fire() {
       try { if (window.__NHD_STATE__) window.__NHD_STATE__.route++; } catch (_) {}
       scheduleTick();
@@ -247,38 +249,8 @@
   })();
 
 
-  // ── 兜底：退出设置时整页重载主页，强制 chat-nav.js 重新执行（修复菜单消失/绑定页残留）──
-      (function () {
-    if (typeof window.__NHD_LEAVE_RELOAD__ === 'function') return;
-    var SETTINGS_RE = /^\/settings\//;
-    var wasInSettings = SETTINGS_RE.test(window.location.pathname);
-    function _absoluteUrl(url) {
-      if (!url) return window.location.pathname + window.location.search + window.location.hash;
-      try { return new URL('' + url, window.location.href).href; } catch (e) { return '' + url; }
-    }
-    function _leaveTo(url) { _leftSettingsAt = Date.now(); window.location.replace(_absoluteUrl(url)); }
-    function _isLeave(url) {
-      if (url === undefined || url === null) return false;
-      var p = ('' + url).split('#')[0];
-      return wasInSettings && !SETTINGS_RE.test(p);
-    }
-    function _watch() {
-      var nowInSettings = SETTINGS_RE.test(window.location.pathname);
-      if (wasInSettings && !nowInSettings) { _leaveTo(); return; }
-      wasInSettings = nowInSettings;
-    }
-    window.addEventListener('popstate', _watch);
-    window.addEventListener('hashchange', _watch);
-    var _ps = history.pushState, _rs = history.replaceState;
-    history.pushState = function (state, title, url) {
-      if (_isLeave(url)) { _leaveTo(url); return; }
-      var r = _ps.apply(history, arguments); _watch(); return r;
-    };
-    history.replaceState = function (state, title, url) {
-      if (_isLeave(url)) { _leaveTo(url); return; }
-      var r = _rs.apply(history, arguments); _watch(); return r;
-    };
-    window.__NHD_LEAVE_RELOAD__ = _watch;
-  })();
+  // 旧版这里还会再次包装 history 并在退出设置时强制 reload。该兜底会和
+  // installRouteTrigger 叠加，重复执行 Twenty bundle，触发 fragment 重复注册和
+  // React insertBefore 崩溃。现在只保留异步 tick + 面板清理，不再劫持第二次 history。
 
 })();

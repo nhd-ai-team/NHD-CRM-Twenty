@@ -3,10 +3,9 @@
     try { var _s = window.__NHD_STATE__; if (_s) { _s.lastTryInsertAt = Date.now(); _s.lastSettings = isSettingsPage(); } } catch (_) {}
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
-      // 注入层兼容：在设置页（含「自定义布局」页）左侧导航也呈现对话工作台/邮箱，
-      // 不再整体移除自建入口，避免它们从设置页左侧消失、无法进行自定义布局调整。
-      ensureSettingsChatNav();
-      ensureSettingsChannelsNav();
+      removeStandaloneMainNav();
+      // 设置页左侧菜单由 Twenty 原生 React 树管理。不要向该树插入/移动节点，
+      // 否则路由切换或 token renewal 后容易触发 React insertBefore 崩溃。
       setNavActive(getActiveView());
       if (isCustomManagedSettingsPage()) {
         ensureSettingsAccountsCards();
@@ -94,36 +93,8 @@
     }
 
     if (!isSettingsPage()) {
-      [
-        { navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' },
-        { navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' },
-      ].forEach(function (opts) {
-        if (document.getElementById(opts.navId)) return;
-        var item = buildNavItem(refAnchor, opts);
-        var wrapper = document.createElement(container.tagName);
-        wrapper.className = container.className;
-        wrapper.setAttribute('data-chat-nav-wrapper', '1');
-        wrapper.appendChild(item);
-        listEl.appendChild(wrapper);
-      });
+      ensureStandaloneMainNav(listEl, refAnchor);
     }
-
-    var settingsItem = document.getElementById(SETTINGS_NAV_ID);
-    var settingsWrapper = settingsItem ? settingsItem.closest('[data-chat-nav-wrapper="1"]') : null;
-    if (!settingsItem) {
-      settingsItem = buildNavItem(refAnchor, {
-        navId: SETTINGS_NAV_ID,
-        label: SETTINGS_LABEL,
-        svg: SETTINGS_SVG,
-        href: '/settings/profile',
-      });
-      settingsWrapper = document.createElement(container.tagName);
-      settingsWrapper.className = container.className;
-      settingsWrapper.setAttribute('data-chat-nav-wrapper', '1');
-      settingsWrapper.appendChild(settingsItem);
-    }
-    if (settingsWrapper && settingsWrapper.parentElement !== listEl) listEl.appendChild(settingsWrapper);
-    else if (settingsWrapper && settingsWrapper.nextElementSibling) listEl.appendChild(settingsWrapper);
 
     applyMainNavOrder();
 

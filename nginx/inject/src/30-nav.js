@@ -150,6 +150,75 @@
     });
   }
 
+  function ensureStandaloneMainNav(listEl, refAnchor) {
+    if (!listEl || !refAnchor) return;
+    var rect = listEl.getBoundingClientRect();
+    if (!rect.width || rect.left > 360) return;
+
+    // 自定义入口不再插入 Twenty/React 管理的左侧菜单树。
+    // 之前 append/insert 到原生列表后，React 重新渲染时会出现 insertBefore
+    // 目标节点已被注入层移动/删除的崩溃。这里改为 body 下的独立层，只用定位覆盖。
+    var overlay = document.getElementById('__nhd_standalone_main_nav__');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = '__nhd_standalone_main_nav__';
+      overlay.setAttribute('data-chat-nav-standalone', '1');
+      document.body.appendChild(overlay);
+    }
+    overlay.style.cssText = [
+      'position:fixed',
+      'left:' + Math.max(0, Math.round(rect.left)) + 'px',
+      'top:' + Math.max(0, Math.round(rect.top)) + 'px',
+      'width:' + Math.round(rect.width) + 'px',
+      'z-index:30',
+      'pointer-events:none',
+      'display:flex',
+      'flex-direction:column',
+      'gap:4px',
+      'box-sizing:border-box',
+    ].join(';');
+
+    function ensureOverlayItem(opts) {
+      var item = document.getElementById(opts.navId);
+      var wrapper = item && item.closest('[data-chat-nav-standalone-row="1"]');
+      if (!item || !wrapper || wrapper.parentElement !== overlay) {
+        if (wrapper) wrapper.remove();
+        item = buildNavItem(refAnchor, opts);
+        wrapper = document.createElement('div');
+        wrapper.setAttribute('data-chat-nav-standalone-row', '1');
+        wrapper.style.cssText = 'pointer-events:auto;box-sizing:border-box;';
+        wrapper.appendChild(item);
+        overlay.appendChild(wrapper);
+      }
+      return wrapper;
+    }
+
+    ensureOverlayItem({ navId: NAV_ID, label: LABEL, svg: CHAT_SVG, view: 'chat' });
+    ensureOverlayItem({ navId: MAIL_NAV_ID, label: MAIL_LABEL, svg: MAIL_SVG, view: 'mail' });
+
+    var spacer = document.getElementById('__nhd_standalone_nav_spacer__');
+    if (!spacer) {
+      spacer = document.createElement('div');
+      spacer.id = '__nhd_standalone_nav_spacer__';
+      spacer.style.cssText = 'height:128px;pointer-events:none;';
+      overlay.appendChild(spacer);
+    }
+    ensureOverlayItem({
+      navId: SETTINGS_NAV_ID,
+      label: SETTINGS_LABEL,
+      svg: SETTINGS_SVG,
+      href: '/settings/profile',
+    });
+
+    // 给原生菜单让出前两行空间；只改样式，不改 DOM 子节点结构。
+    listEl.style.paddingTop = '68px';
+  }
+
+  function removeStandaloneMainNav() {
+    var overlay = document.getElementById('__nhd_standalone_main_nav__');
+    if (overlay) overlay.remove();
+  }
+
   // ── build and insert nav item ──────────────────────────────────────────────
 
   function buildNavItem(refAnchor, opts) {
