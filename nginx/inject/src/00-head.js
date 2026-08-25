@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260825-extension-guard-v1';
+  var NHD_VERSION = '20260825-dom-guard-v1';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];

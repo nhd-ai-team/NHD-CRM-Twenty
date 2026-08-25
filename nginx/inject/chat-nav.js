@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260825-extension-guard-v1';
+  var NHD_VERSION = '20260825-dom-guard-v1';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -1361,7 +1361,10 @@
       if (!item) return;
       var wrapper = item.closest('[data-chat-nav-wrapper="1"]') || item;
       var rect = wrapper.getBoundingClientRect();
-      if (isClearlyMisplacedRect(rect)) wrapper.remove();
+      if (isClearlyMisplacedRect(rect)) {
+        wrapper.style.display = 'none';
+        wrapper.setAttribute('data-chat-nav-retired', '1');
+      }
     });
   }
 
@@ -1394,10 +1397,10 @@
     ].join(';');
 
     function ensureOverlayItem(opts) {
-      var item = document.getElementById(opts.navId);
+      var item = Array.from(overlay.querySelectorAll('#' + opts.navId)).find(Boolean) || null;
       var wrapper = item && item.closest('[data-chat-nav-standalone-row="1"]');
       if (!item || !wrapper || wrapper.parentElement !== overlay) {
-        if (wrapper) wrapper.remove();
+        if (wrapper && wrapper.parentElement === overlay) wrapper.remove();
         item = buildNavItem(refAnchor, opts);
         wrapper = document.createElement('div');
         wrapper.setAttribute('data-chat-nav-standalone-row', '1');

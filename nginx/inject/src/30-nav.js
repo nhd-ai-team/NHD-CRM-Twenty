@@ -146,7 +146,10 @@
       if (!item) return;
       var wrapper = item.closest('[data-chat-nav-wrapper="1"]') || item;
       var rect = wrapper.getBoundingClientRect();
-      if (isClearlyMisplacedRect(rect)) wrapper.remove();
+      if (isClearlyMisplacedRect(rect)) {
+        wrapper.style.display = 'none';
+        wrapper.setAttribute('data-chat-nav-retired', '1');
+      }
     });
   }
 
@@ -179,10 +182,10 @@
     ].join(';');
 
     function ensureOverlayItem(opts) {
-      var item = document.getElementById(opts.navId);
+      var item = Array.from(overlay.querySelectorAll('#' + opts.navId)).find(Boolean) || null;
       var wrapper = item && item.closest('[data-chat-nav-standalone-row="1"]');
       if (!item || !wrapper || wrapper.parentElement !== overlay) {
-        if (wrapper) wrapper.remove();
+        if (wrapper && wrapper.parentElement === overlay) wrapper.remove();
         item = buildNavItem(refAnchor, opts);
         wrapper = document.createElement('div');
         wrapper.setAttribute('data-chat-nav-standalone-row', '1');
