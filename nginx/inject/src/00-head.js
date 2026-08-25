@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260825-dom-stability-v2';
+  var NHD_VERSION = '20260825-extension-guard-v1';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -25,8 +25,35 @@
   //     若 window.__NHD_ERRORS__ 为空但有崩溃，说明错误发生在 React 渲染内部（注入层之外）。 ──
   window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
   try {
+    function isKnownExtensionCountryCheckNoise(reason, ev) {
+      try {
+        var sourceText = [
+          reason && reason.message,
+          reason && reason.httpStatusText,
+          reason && reason.name,
+          reason && reason.stack,
+          reason && reason.originalError && reason.originalError.message,
+          reason && reason.originalError && reason.originalError.stack,
+          ev && ev.filename,
+        ].filter(Boolean).join(' ');
+        var reqInfo = reason && reason.reqInfo ? reason.reqInfo : {};
+        var isCountryCheck = reqInfo.pathPrefix === '/user' &&
+          reqInfo.method === 'POST' &&
+          reqInfo.path === '/check_country';
+        var isExtensionStack = /chrome-extension:|background\.js|content\.js/.test(sourceText);
+        var isNetworkOnly = /Failed to fetch|ERR_CONNECTION_CLOSED|network error/i.test(sourceText);
+        return isCountryCheck && isExtensionStack && isNetworkOnly;
+      } catch (_) {
+        return false;
+      }
+    }
     window.addEventListener('error', function (ev) {
       try {
+        if (isKnownExtensionCountryCheckNoise(ev && ev.error, ev)) {
+          ev.preventDefault();
+          if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+          return;
+        }
         var item = {
           type: 'error',
           msg: (ev && ev.message) || String(ev && ev.error) || 'unknown error',
@@ -41,6 +68,11 @@
     window.addEventListener('unhandledrejection', function (ev) {
       try {
         var reason = ev && ev.reason;
+        if (isKnownExtensionCountryCheckNoise(reason, ev)) {
+          ev.preventDefault();
+          if (ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+          return;
+        }
         window.__NHD_ERRORS__.push({
           type: 'unhandledrejection',
           msg: (reason && (reason.message || String(reason))) || 'unhandled rejection',
