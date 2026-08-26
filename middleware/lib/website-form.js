@@ -271,9 +271,11 @@ function normalizeWebsiteFormPayload(body = {}) {
   const stage = normalizeOpportunityStage(form.stage, 'WEI_CHU_LI_XIANSUO');
 
   const opportunity = {
-    // Opportunity.name 是线索列表首列；按主数据口径只承载公司名称。
-    // 没有公司名时保持空，联系人/邮箱/手机号/来源分别写入各自字段，避免污染公司列。
-    name: company || '',
+    // 线索名称（列表首列）＝身份兜底链：公司名 → 联系人 → 邮箱 → 电话。
+    // 原始信息仍各自写入专属字段（company→companyId、联系人→lianXiRenXingMing、邮箱/电话→youXiang/whatsapp），
+    // name 仅作可读身份、不承载唯一数据。四者全空时留空，建单时再兜底为线索编号（见 createWebsiteFormOpportunity），
+    // 保证列表首列绝不空白，也永不误当公司名。
+    name: firstString(company, name, email, phone),
     keHuLaiYuan: source,
     stage,
   };

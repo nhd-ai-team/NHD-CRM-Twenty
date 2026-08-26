@@ -195,20 +195,41 @@ test('normalizeWebsiteFormPayload maps website form fields to current Twenty opp
   assert.doesNotThrow(() => JSON.parse(guanWangBeiZhu.blocknote));
 });
 
-test('normalizeWebsiteFormPayload leaves lead title empty when company is missing', () => {
-  const normalized = normalizeWebsiteFormPayload({
+test('normalizeWebsiteFormPayload 线索名称按 公司→联系人→邮箱→电话 兜底', () => {
+  // 无公司名 → 用联系人姓名
+  const withContact = normalizeWebsiteFormPayload({
     type: 'form_submission',
     full_name: 'Ada',
     email: 'ada@example.com',
     mobile: '+86 177 1005 1913',
     source: '官网表单',
   });
+  assert.equal(withContact.opportunity.name, 'Ada');
+  assert.equal(withContact.raw.name, 'Ada');
+  assert.equal(withContact.raw.company, '');
+  assert.equal(withContact.opportunity.youXiang.primaryEmail, 'ada@example.com');
+  assert.equal(withContact.opportunity.whatsapp.primaryPhoneNumber, '+8617710051913');
 
-  assert.equal(normalized.opportunity.name, '');
-  assert.equal(normalized.raw.name, 'Ada');
-  assert.equal(normalized.raw.company, '');
-  assert.equal(normalized.opportunity.youXiang.primaryEmail, 'ada@example.com');
-  assert.equal(normalized.opportunity.whatsapp.primaryPhoneNumber, '+8617710051913');
+  // 无公司名、无联系人 → 用邮箱
+  const withEmail = normalizeWebsiteFormPayload({
+    type: 'form_submission',
+    email: 'lead@example.com',
+    mobile: '+86 177 1005 1913',
+    source: '官网表单',
+  });
+  assert.equal(withEmail.opportunity.name, 'lead@example.com');
+
+  // 只有电话 → 用电话（取原始输入串）
+  const withPhone = normalizeWebsiteFormPayload({
+    type: 'form_submission',
+    mobile: '+86 177 1005 1913',
+    source: '官网表单',
+  });
+  assert.equal(withPhone.opportunity.name, '+86 177 1005 1913');
+
+  // 四者全空 → normalize 阶段留空（建单时再兜底为线索编号）
+  const empty = normalizeWebsiteFormPayload({ type: 'form_submission', source: '官网表单' });
+  assert.equal(empty.opportunity.name, '');
 });
 
 test('website form helpers keep unknown optional enums from blocking ingestion', () => {

@@ -1942,6 +1942,11 @@ async function createWebsiteFormOpportunity(body, req) {
   const leadNo = generateLeadId();
   const customerIdentityKey = leadNo;
 
+  // 线索名称兜底：normalize 已按 公司→联系人→邮箱→电话 取身份；四者全空时用线索编号，保证列表首列绝不空白。
+  if (!String(opportunity.name || '').trim()) {
+    opportunity.name = leadNo;
+  }
+
   // 建线索（标准字段走 GraphQL；leadNo/customerIdentityKey 为自定义列，建完用 DB 补齐）
   const result = await twentyGraphQL(
     'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
