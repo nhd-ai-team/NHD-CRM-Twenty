@@ -24,7 +24,7 @@ export INTEGRATION_TENANT_ID="${AI_SERVICE_TENANT_ID:-nhd}"
 export OPENROUTER_API_BASE=http://127.0.0.1:8787/api/v1
 export OPENROUTER_MODEL=openai/gpt-oss-120b
 export OPENROUTER_TIMEOUT_MS=20000
-export ALLOWED_ORIGINS="https://chinanhd.com,https://www.chinanhd.com,https://aichatbot.chinanhd.com,https://staging.chinanhd.com,http://staging.chinanhd.com,http://localhost:8790,http://127.0.0.1:8790"
+export ALLOWED_ORIGINS="https://chinanhd.com,https://www.chinanhd.com,https://chinanhd.kinsta.cloud,https://aichatbot.chinanhd.com,https://staging.chinanhd.com,http://staging.chinanhd.com,http://localhost:8790,http://127.0.0.1:8790"
 export CRM_WEBHOOK_URL=http://127.0.0.1:3002/api/website/webhook
 export CRM_WEBHOOK_SECRET="${WEBSITE_INGEST_SECRET}"
 
