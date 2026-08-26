@@ -2088,40 +2088,34 @@
 
   function ensureSettingsAccountsRbacCard() {
     if (window.location.pathname !== '/settings/accounts') {
-      var stale = document.getElementById('__nhd_rbac_section__');
+      var stale = document.getElementById(RBAC_SETTINGS_CARD_ID);
       if (stale) stale.remove();
       return;
     }
-    if (document.getElementById('__nhd_rbac_section__')) return;
+    if (document.getElementById(RBAC_SETTINGS_CARD_ID)) return;
     loadRbacAdminStatus(function (isAdmin) {
       if (!isAdmin) return; // 非管理员不显示权限卡片
-      if (window.location.pathname !== '/settings/accounts') return;
-      if (document.getElementById('__nhd_rbac_section__')) return;
-      // 与「外部渠道」同一套稳定锚点：账户页滚动容器（id 含 settings-page-container-accounts），
-      // 不依赖 v2.17 哈希类名，在页面末尾追加独立「权限管理」小节，避免塞进原生网格错位。
-      var cont = document.querySelector('[id*="settings-page-container-accounts"]');
-      if (!cont) return;
-      var sectionEl = cont.querySelector('[class*="_section_"]');
-      var host = (sectionEl && sectionEl.parentElement) || cont.firstElementChild || cont;
-      if (!host) return;
-      var sec = document.createElement('div');
-      sec.id = '__nhd_rbac_section__';
-      sec.style.cssText = 'margin-top:24px;max-width:760px';
-      sec.innerHTML =
-        '<div style="font-size:13px;font-weight:600;color:var(--twenty-font-color-primary,#3f3f46);margin-bottom:4px">权限管理</div>' +
-        '<div style="font-size:12px;color:var(--twenty-font-color-tertiary,#71717a);margin-bottom:12px">为成员分配角色与数据可见范围（仅后台管理员可见）。</div>' +
-        '<div id="__nhd_rbac_cards__" style="display:flex;gap:16px;flex-wrap:wrap;max-width:360px"></div>';
-      host.appendChild(sec);
-      var cardsHost = sec.querySelector('#__nhd_rbac_cards__');
-      if (cardsHost && !document.getElementById(RBAC_SETTINGS_CARD_ID)) {
-        cardsHost.appendChild(buildSettingsAccountsCard({
-          id: RBAC_SETTINGS_CARD_ID,
-          href: RBAC_SETTINGS_PATH,
-          label: RBAC_SETTINGS_LABEL,
-          description: '为成员分配角色：后台管理员 / 销售主管 / 销售。',
-          svg: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
-        }));
-      }
+      var sections = Array.from(document.querySelectorAll('h2, [role="heading"]'));
+      var settingsHeading = sections.find(function (el) { var t = (el.textContent || '').trim(); return t === 'Settings' || t === '设置'; });
+      if (!settingsHeading) return;
+      var section = settingsHeading.closest('section') || settingsHeading.parentElement;
+      if (!section) return;
+      var cardsHost = Array.from(section.querySelectorAll('div')).find(function (el) {
+        var rect = el.getBoundingClientRect();
+        return rect.width > 300 && rect.height > 40 && window.getComputedStyle(el).display === 'flex';
+      });
+      if (!cardsHost) return;
+      var card = document.createElement('div');
+      card.id = RBAC_SETTINGS_CARD_ID;
+      card.style.cssText = 'border:1px solid #e4e4e7;border-radius:8px;padding:16px;min-width:220px;flex:1;cursor:pointer;background:#fff;color:#71717a';
+      card.innerHTML =
+        '<div style="display:flex;align-items:center;gap:12px;color:#3f3f46;font-weight:600">' +
+          '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>' +
+          '<span style="flex:1">权限</span><span style="color:#a1a1aa">›</span>' +
+        '</div>' +
+        '<div style="padding-left:32px;margin-top:8px;font-size:13px">为成员分配角色：后台管理员 / 销售主管 / 销售。</div>';
+      card.addEventListener('click', function () { window.location.href = RBAC_SETTINGS_PATH; });
+      cardsHost.appendChild(card);
     });
   }
 
@@ -2357,7 +2351,7 @@
   }
 
   function removeSettingsAccountsCards() {
-    [EMAILS_SETTINGS_CARD_ID, CHANNELS_SETTINGS_CARD_ID, '__nhd_accounts_extra_section__', '__nhd_rbac_section__'].forEach(function (id) {
+    [EMAILS_SETTINGS_CARD_ID, CHANNELS_SETTINGS_CARD_ID].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.remove();
     });
@@ -2398,26 +2392,19 @@
       removeSettingsAccountsCards();
       return;
     }
-    if (document.getElementById('__nhd_accounts_extra_section__')) return;
-    // v2.17：账户页原生已有 电子邮件/日历 卡片，不再重复注入电子邮件。
-    // 原生卡片网格类名是哈希的、不稳；改为用稳定锚点（滚动容器 id 含
-    // settings-page-container-accounts）在页面末尾追加一个独立「外部渠道」小节，
-    // 避免塞进原生 flex 网格造成错位/重叠。
-    var cont = document.querySelector('[id*="settings-page-container-accounts"]');
-    if (!cont) return;
-    var sectionEl = cont.querySelector('[class*="_section_"]');
-    var host = (sectionEl && sectionEl.parentElement) || cont.firstElementChild || cont;
-    if (!host) return;
-    var sec = document.createElement('div');
-    sec.id = '__nhd_accounts_extra_section__';
-    sec.style.cssText = 'margin-top:24px;max-width:760px';
-    sec.innerHTML =
-      '<div style="font-size:13px;font-weight:600;color:var(--twenty-font-color-primary,#3f3f46);margin-bottom:4px">外部渠道</div>' +
-      '<div style="font-size:12px;color:var(--twenty-font-color-tertiary,#71717a);margin-bottom:12px">绑定 WhatsApp 等外部沟通渠道到当前账号。</div>' +
-      '<div id="__nhd_accounts_extra_cards__" style="display:flex;gap:16px;flex-wrap:wrap;max-width:360px"></div>';
-    host.appendChild(sec);
-    var cardsHost = sec.querySelector('#__nhd_accounts_extra_cards__');
-    if (cardsHost && !document.getElementById(CHANNELS_SETTINGS_CARD_ID)) {
+    if (document.getElementById(EMAILS_SETTINGS_CARD_ID) && document.getElementById(CHANNELS_SETTINGS_CARD_ID)) return;
+    var cardsHost = findSettingsAccountsCardsHost();
+    if (!cardsHost) return;
+    if (!document.getElementById(EMAILS_SETTINGS_CARD_ID)) {
+      cardsHost.appendChild(buildSettingsAccountsCard({
+        id: EMAILS_SETTINGS_CARD_ID,
+        href: '/settings/accounts/emails',
+        label: '电子邮件',
+        description: '绑定和管理 CRM 邮箱账号。',
+        svg: EMAILS_SVG,
+      }));
+    }
+    if (!document.getElementById(CHANNELS_SETTINGS_CARD_ID)) {
       cardsHost.appendChild(buildSettingsAccountsCard({
         id: CHANNELS_SETTINGS_CARD_ID,
         href: CHANNELS_SETTINGS_PATH,
