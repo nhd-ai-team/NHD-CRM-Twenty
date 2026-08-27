@@ -123,6 +123,7 @@ ul.notes li b{color:var(--ink);}
   <div class="eyebrow">NHD CRM · 数据模型</div>
   <h1>线索 · 公司 · 客户 · 项目 的关系</h1>
   <p class="lede">四个对象如何互相关联、字段如何跨表同步,以及「公司名称」按<strong>方向 A</strong>(公司走关系、主列归还给联系人/访客)理顺后的最终形态。<strong>二期</strong>已把项目并入公司真相源(新增 <code>company</code> / <code>pointOfContact</code> 关系 + <code>companyId</code> 三表同步)。</p>
+  <p class="lede" style="margin-top:10px;padding:10px 14px;background:color-mix(in srgb,var(--accent) 8%,transparent);border-left:3px solid var(--accent);border-radius:8px"><strong>⚠ 2026-08-27 架构更新:</strong> 三表 <code>syncGroupCode</code> 一对一对一字段镜像同步<strong>已整体退役</strong>,改为「客户/公司=去重主数据,线索/项目引用」的标准 CRM 模型(1 客户 : N 线索 : N 项目)。本页下方「② 三表字段同步」小节为历史记录。最新规格见《客户主数据与转客户去重》。</p>
   <div class="meta">
     <span class="tag a">方向 A · 二期</span>
     <span class="tag">公司=关系单一真相</span>
@@ -256,8 +257,8 @@ ul.notes li b{color:var(--ink);}
       <td>线索 / 客户 / 项目 / 公司</td>
     </tr>
     <tr>
-      <td><b style="color:var(--sync)">② 三表字段同步</b><br><span style="color:var(--muted);font-size:12.5px">触发器</span></td>
-      <td>按 <span class="chip">syncGroupCode</span> / <span class="chip">sourceOpportunityId</span> / <span class="chip">linkedPersonId</span> 把共享字段跨表对齐(COALESCE「只填空不覆盖」)</td>
+      <td><b style="color:var(--sync)">② 三表字段同步</b><br><span style="color:var(--del,#c63f36);font-size:12.5px;font-weight:600">已退役 2026-08-27</span></td>
+      <td><del>按 <span class="chip">syncGroupCode</span> 把共享字段跨表镜像</del> → 改为主数据引用:线索/项目通过 <span class="chip">pointOfContact</span> / <span class="chip">company</span> 关系<b>引用</b>客户/公司,不再镜像字段</td>
       <td>线索 / 客户 / 项目</td>
     </tr>
     <tr>
