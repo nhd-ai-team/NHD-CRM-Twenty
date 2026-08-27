@@ -2622,27 +2622,112 @@
     if (m) m.remove();
   }
 
+  var OPP_STAGE_LABELS = {
+    WEI_CHU_LI_XIANSUO: '未处理线索', XIANSUO: '线索', YOUXIAO_XIANSUO: '有效线索',
+    QUE_REN_XUN_PAN: '确认询盘', XUN_PAN_ZHUAN_ZONGBU: '询盘转总部', ZONGBU_FANG_AN_BAO_JIA: '总部方案报价',
+    JI_SHU_CHENG_QING: '技术澄清', SHANG_WU_CHENG_QING: '商务澄清', YI_QIAN_DAN_FU_KUAN: '已签单付款', YI_FA_HUO: '已发货',
+  };
+  function convertStageLabel(v) { return OPP_STAGE_LABELS[v] || (v ? String(v) : '—'); }
+
+  // 转客户命中疑似重复客户时的弹窗：展示疑似客户 + 其名下线索/项目，让用户判断。
+  // 返回 Promise，resolve 为 { mode:'assign', personId } / { mode:'create' } / { mode:'cancel' }。
+  function openDuplicateModal(item, duplicates) {
+    return new Promise(function (resolve) {
+      var DUP_ID = '__lead_convert_dup_modal__';
+      var old = document.getElementById(DUP_ID);
+      if (old) old.remove();
+      var overlay = document.createElement('div');
+      overlay.id = DUP_ID;
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:100004;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;padding:18px;';
+      var card = document.createElement('div');
+      card.style.cssText = 'width:min(560px,100%);max-height:86vh;display:flex;flex-direction:column;border-radius:12px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.3);overflow:hidden;font-family:inherit;';
+
+      var list = (duplicates || []).map(function (d) {
+        var leads = d.leads || [];
+        var projects = d.projects || [];
+        var leadsHtml = leads.length
+          ? leads.slice(0, 5).map(function (l) { return '<div style="color:#555">· 线索 ' + escapeHtml(l.name || l.leadNo || '') + ' <span style="color:#999">(' + escapeHtml(convertStageLabel(l.stage)) + ')</span></div>'; }).join('')
+          : '<div style="color:#bbb">· 暂无线索</div>';
+        var projHtml = projects.length
+          ? projects.slice(0, 5).map(function (p) { return '<div style="color:#555">· 项目 ' + escapeHtml(p.name || '') + ' <span style="color:#999">(' + escapeHtml(p.stage || '—') + ')</span></div>'; }).join('')
+          : '<div style="color:#bbb">· 暂无项目</div>';
+        return '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+            '<div style="min-width:0">' +
+              '<div style="font-weight:700;color:#111;font-size:13.5px">' + escapeHtml(d.name || '（未命名客户）') + '</div>' +
+              '<div style="font-size:12px;color:#666;margin-top:2px">' +
+                (d.email ? ('📧 ' + escapeHtml(d.email)) : '') + (d.email && d.phone ? '　' : '') + (d.phone ? ('📱 ' + escapeHtml(d.phone)) : '') +
+                (d.companyName ? ('<br>🏢 ' + escapeHtml(d.companyName)) : '') +
+              '</div>' +
+              '<div style="font-size:11px;color:#c2410c;margin-top:3px">匹配：' + (d.matchedBy === 'email' ? '邮箱相同' : '手机号相同') + '</div>' +
+            '</div>' +
+            '<button data-assign="' + escapeHtml(d.id) + '" style="flex:none;padding:7px 12px;border-radius:6px;border:none;background:#1f9d5f;color:#fff;cursor:pointer;font-size:12px;font-weight:700">分配给TA</button>' +
+          '</div>' +
+          '<div style="margin-top:8px;font-size:11.5px;line-height:1.7">' + leadsHtml + projHtml + '</div>' +
+        '</div>';
+      }).join('');
+
+      card.innerHTML =
+        '<div style="padding:16px 18px 10px;border-bottom:1px solid #eee">' +
+          '<div style="font-size:15px;font-weight:700;color:#111">发现疑似重复客户</div>' +
+          '<div style="margin-top:6px;font-size:12.5px;line-height:1.6;color:#555">线索「' + escapeHtml(item.name) + '」的邮箱/手机号已存在于以下客户。可把本线索<b>分配给已有客户</b>，或<b>仍然新建</b>一个客户。</div>' +
+        '</div>' +
+        '<div style="padding:14px 18px;overflow:auto;flex:1">' + (list || '<div style="color:#999">（无）</div>') + '</div>' +
+        '<div style="display:flex;justify-content:space-between;gap:8px;padding:12px 18px 16px;border-top:1px solid #eee">' +
+          '<button data-act="cancel" style="padding:7px 14px;border-radius:6px;border:1px solid #ddd;background:#fff;color:#555;cursor:pointer;font-size:12px;font-weight:600">取消本条</button>' +
+          '<button data-act="create" style="padding:7px 14px;border-radius:6px;border:none;background:#2563eb;color:#fff;cursor:pointer;font-size:12px;font-weight:700">仍然新建客户</button>' +
+        '</div>';
+
+      function done(choice) { overlay.remove(); resolve(choice); }
+      overlay.appendChild(card);
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) done({ mode: 'cancel' }); });
+      card.querySelector('[data-act="cancel"]').addEventListener('click', function () { done({ mode: 'cancel' }); });
+      card.querySelector('[data-act="create"]').addEventListener('click', function () { done({ mode: 'create' }); });
+      Array.from(card.querySelectorAll('[data-assign]')).forEach(function (btn) {
+        btn.addEventListener('click', function () { done({ mode: 'assign', personId: btn.getAttribute('data-assign') }); });
+      });
+      document.body.appendChild(overlay);
+    });
+  }
+
   function runConvert(items, mode, onProgress) {
     var created = 0, updated = 0, personIds = [], projectIds = [], failures = [];
     var endpoint = mode === 'project' ? 'convert-to-project' : 'convert-to-person';
+
+    function convertOne(item, extra) {
+      return window.fetch('/conv-api/opportunities/' + encodeURIComponent(item.id) + '/' + endpoint, {
+        method: 'POST',
+        headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'same-origin',
+        body: extra ? JSON.stringify(extra) : undefined,
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (data) { return { status: r.status, ok: r.ok, data: data }; });
+      });
+    }
+    function applyResult(item, res) {
+      if (!res.ok) { failures.push({ id: item.id, name: item.name, reason: convertErrorMessage(res.status, res.data) }); return; }
+      var data = res.data || {};
+      if (data.personId) personIds.push(data.personId);
+      if (data.projectId) projectIds.push(data.projectId);
+      if (data.created) created++; else updated++;
+    }
+
     var chain = Promise.resolve();
     items.forEach(function (item, idx) {
       chain = chain.then(function () {
         onProgress(idx + 1, items.length);
-        return window.fetch('/conv-api/opportunities/' + encodeURIComponent(item.id) + '/' + endpoint, {
-          method: 'POST',
-          headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
-          credentials: 'same-origin',
-        }).then(function (r) {
-          return r.json().catch(function () { return {}; }).then(function (data) {
-            if (!r.ok) {
-              failures.push({ id: item.id, name: item.name, reason: convertErrorMessage(r.status, data) });
-              return;
-            }
-            if (data && data.personId) personIds.push(data.personId);
-            if (data && data.projectId) projectIds.push(data.projectId);
-            if (data && data.created) created++; else updated++;
-          });
+        return convertOne(item).then(function (res) {
+          // 转客户命中疑似重复 → 弹窗让用户选分配/新建，再带 mode 重发。
+          if (res.status === 409 && res.data && res.data.code === 'DUPLICATE_CUSTOMER') {
+            return openDuplicateModal(item, res.data.duplicates).then(function (choice) {
+              if (!choice || choice.mode === 'cancel') {
+                failures.push({ id: item.id, name: item.name, reason: '已取消（发现疑似重复客户）' });
+                return;
+              }
+              return convertOne(item, { mode: choice.mode, personId: choice.personId }).then(function (res2) { applyResult(item, res2); });
+            });
+          }
+          applyResult(item, res);
         }).catch(function (error) {
           failures.push({ id: item.id, name: item.name, reason: error.message || '网络请求失败' });
         });

@@ -4408,9 +4408,8 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
   const source = SOURCE_BY_CHANNEL[channel];
 
   const data = {
-    // Opportunity.name 对应线索列表首列「公司名称」。自动建线索阶段通常没有公司主数据，
-    // 因此保持为空；渠道名、手机号、访客名只留在 conv/contact 或联系人字段，不写入公司列。
-    name: '',
+    // 线索名称（列表首列）在下方按兜底链赋值：访客名/渠道名 → 电话 → 线索编号，
+    // 保证聊天自动建的线索绝不空白（否则列表里是空名行，看着像"没进来"）。
     // 初始进度：仅「官网表单(GUAN_WANG_BIAO_DAN)」来源为「未处理线索」；
     // 其他渠道（官网客服 GUAN_WANG_KE_FU / WhatsApp 等）统一为「线索(XIANSUO)」。
     stage: source === 'GUAN_WANG_BIAO_DAN' ? 'WEI_CHU_LI_XIANSUO' : 'XIANSUO',
@@ -4428,7 +4427,7 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
   try {
     await client.query('BEGIN');
     const existing = await client.query(
-      'SELECT twenty_opportunity_id FROM conv.contacts WHERE id = $1 FOR UPDATE',
+      'SELECT twenty_opportunity_id, display_name FROM conv.contacts WHERE id = $1 FOR UPDATE',
       [contactId],
     );
     if (!existing.rowCount) {
@@ -4440,6 +4439,13 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
       return existing.rows[0].twenty_opportunity_id;
     }
 
+    // 显式生成线索ID（与表单路径一致），同时作为三表关联键 customerIdentityKey；
+    // 即便 DB 触发器已兜底，这里也写入 JS 生成值，使审计日志可携带稳定线索ID。
+    const leadNo = generateLeadId();
+    // 线索名称兜底链：访客名/渠道名（conv.contacts.display_name，如「网站访客 xxxxxx」）→ 电话 → 线索编号。
+    const displayName = String(existing.rows[0]?.display_name || '').trim();
+    data.name = displayName || rawPhone || leadNo;
+
     const result = await twentyGraphQL(
       'mutation($data: OpportunityCreateInput!){ createOpportunity(data: $data){ id name } }',
       { data },
@@ -4447,9 +4453,6 @@ async function ensureOpportunityForInboundConversation({ conversationId, contact
     );
     const opportunity = result?.createOpportunity;
     if (!opportunity?.id) throw new Error('createOpportunity returned empty id');
-    // 显式生成线索ID（与表单路径一致），同时作为三表关联键 customerIdentityKey；
-    // 即便 DB 触发器已兜底，这里也写入 JS 生成值，使审计日志可携带稳定线索ID。
-    const leadNo = generateLeadId();
     const schema = await getWorkspaceSchema();
     await client.query(
       `UPDATE ${schema}.opportunity SET "leadNo" = $2, "customerIdentityKey" = $3, "updatedAt" = now() WHERE id = $1`,
@@ -4700,46 +4703,55 @@ app.post('/api/webhooks/twenty/opportunity-updated', async (req, res) => {
   }
 });
 
-async function findExistingPersonForOpportunity(client, schema, opportunity) {
+// 客户主数据去重探测（新模型：客户按 邮箱/手机号 唯一）。
+// 返回疑似重复客户 + 每个客户名下的线索/项目，用于转客户弹窗让用户判断「分配 or 新建」。
+// 只做提示，不自动复用。
+async function findDuplicateCustomers(client, schema, opportunity) {
   const emails = [
     firstValidEmail(opportunity.youXiang),
     firstValidEmail(opportunity.emailPrimaryEmail),
   ].filter(Boolean).map((item) => item.toLowerCase());
   const phone = phoneDigits(opportunity.phonePrimaryPhoneNumber);
+  if (emails.length === 0 && !phone) return [];
 
   const result = await client.query(
-    `SELECT id, "syncGroupCode"
-     FROM ${schema}.person
-     WHERE "deletedAt" IS NULL
-       AND (
-         id = $1
-         OR id = $2
-         OR ($3::text IS NOT NULL AND "syncGroupCode" = $3)
-         OR (cardinality($4::text[]) > 0 AND lower(COALESCE("emailsPrimaryEmail", '')) = ANY($4::text[]))
-         OR ($5::text <> '' AND regexp_replace(COALESCE("phonesPrimaryPhoneNumber", ''), '\\D', '', 'g') = $5)
-       )
-     ORDER BY
+    `SELECT
+       p.id,
+       NULLIF(btrim(concat_ws(' ', p."nameFirstName", p."nameLastName")), '') AS name,
+       p."emailsPrimaryEmail" AS email,
+       p."phonesPrimaryPhoneNumber" AS phone,
+       c.name AS "companyName",
        CASE
-         WHEN id = $1 THEN 0
-         WHEN id = $2 THEN 1
-         WHEN "syncGroupCode" = $3 THEN 2
-         WHEN cardinality($4::text[]) > 0 AND lower(COALESCE("emailsPrimaryEmail", '')) = ANY($4::text[]) THEN 3
-         ELSE 4
-       END
-     LIMIT 1`,
-    [
-      opportunity.linkedPersonId || null,
-      opportunity.pointOfContactId || null,
-      opportunity.syncGroupCode || null,
-      emails,
-      phone,
-    ],
+         WHEN cardinality($1::text[]) > 0 AND lower(COALESCE(p."emailsPrimaryEmail", '')) = ANY($1::text[]) THEN 'email'
+         ELSE 'phone'
+       END AS "matchedBy",
+       COALESCE((
+         SELECT json_agg(json_build_object('id', o.id, 'name', o.name, 'stage', o.stage, 'leadNo', o."leadNo") ORDER BY o."createdAt" DESC)
+         FROM ${schema}.opportunity o
+         WHERE o."deletedAt" IS NULL AND o."pointOfContactId" = p.id AND o.id <> $3
+       ), '[]'::json) AS leads,
+       COALESCE((
+         SELECT json_agg(json_build_object('id', x.id, 'name', x.name, 'stage', x."xiangMuJieDuan") ORDER BY x."createdAt" DESC)
+         FROM ${schema}."_xiangMu" x
+         WHERE x."deletedAt" IS NULL AND x."pointOfContactId" = p.id
+       ), '[]'::json) AS projects
+     FROM ${schema}.person p
+     LEFT JOIN ${schema}.company c ON c.id = p."companyId"
+     WHERE p."deletedAt" IS NULL
+       AND (
+         (cardinality($1::text[]) > 0 AND lower(COALESCE(p."emailsPrimaryEmail", '')) = ANY($1::text[]))
+         OR ($2::text <> '' AND regexp_replace(COALESCE(p."phonesPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2)
+       )
+     ORDER BY p."createdAt" DESC
+     LIMIT 10`,
+    [emails, phone, opportunity.id],
   );
-  return result.rows[0] || null;
+  return result.rows;
 }
 
-async function upsertPersonFromOpportunity(client, schema, opportunity) {
-  const existing = await findExistingPersonForOpportunity(client, schema, opportunity);
+// 新模型：转客户永远新建客户主数据（不再按邮箱/电话/回访客复用）。
+// 去重改由 findDuplicateCustomers + 前端弹窗处理（用户判断分配 or 新建）。
+async function createPersonFromOpportunity(client, schema, opportunity) {
   // 客户(Person)姓名优先取线索「联系人姓名」暂存列（官网表单/对话工作台收口的联系人姓名），
   // 回退到线索标题（兼容无联系人姓名的旧线索）。
   const name = nonBlankOrNull(opportunity.lianXiRenXingMing) || nonBlankOrNull(opportunity.name);
@@ -4748,57 +4760,15 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
     ? String(opportunity.keHuLeiXing)
     : null;
 
-  if (existing?.id) {
-    const result = await client.query(
-      `UPDATE ${schema}.person AS target
-       SET
-         "syncGroupCode" = COALESCE("syncGroupCode", $2),
-         "leadNo" = COALESCE("leadNo", $16),
-         "sourceOpportunityId" = COALESCE("sourceOpportunityId", $1),
-         "linkedProjectId" = COALESCE("linkedProjectId", $3),
-         "nameFirstName" = COALESCE($4, "nameFirstName"),
-         "companyId" = COALESCE($5, "companyId"),
-         "phonesPrimaryPhoneNumber" = COALESCE($6, "phonesPrimaryPhoneNumber"),
-         "phonesPrimaryPhoneCountryCode" = COALESCE($7, "phonesPrimaryPhoneCountryCode"),
-         "phonesPrimaryPhoneCallingCode" = COALESCE($8, "phonesPrimaryPhoneCallingCode"),
-         "emailsPrimaryEmail" = CASE
-           WHEN $9::text IS NULL THEN target."emailsPrimaryEmail"
-           WHEN NOT EXISTS (
-             SELECT 1 FROM ${schema}.person AS other
-             WHERE other."deletedAt" IS NULL
-               AND lower(other."emailsPrimaryEmail") = lower($9::text)
-               AND other.id <> target.id
-           ) THEN $9::text
-           ELSE target."emailsPrimaryEmail"
-         END,
-         "guoJiaDiQuAddressCountry" = COALESCE($10, "guoJiaDiQuAddressCountry"),
-         "keHuXuQiuChanPin" = COALESCE($11, "keHuXuQiuChanPin"),
-         "keHuLaiYuan" = CASE WHEN $12::text IS NULL THEN "keHuLaiYuan" ELSE $12::text::${schema}."person_keHuLaiYuan_enum" END,
-         "keHuLeiXing" = CASE WHEN $13::text IS NULL THEN "keHuLeiXing" ELSE $13::text::${schema}."person_keHuLeiXing_enum" END,
-         "jobTitle" = COALESCE($14, "jobTitle"),
-         "updatedAt" = now()
-       WHERE target.id = $15
-       RETURNING id`,
-      [
-        opportunity.id,
-        opportunity.syncGroupCode,
-        opportunity.linkedProjectId || null,
-        name,
-        opportunity.companyId || null,
-        nonBlankOrNull(opportunity.phonePrimaryPhoneNumber),
-        nonBlankOrNull(opportunity.phonePrimaryPhoneCountryCode),
-        nonBlankOrNull(opportunity.phonePrimaryPhoneCallingCode),
-        email,
-        nonBlankOrNull(opportunity.countryAddressCountry),
-        nonBlankOrNull(opportunity.keHuXuQiuChanPin),
-        opportunity.keHuLaiYuan || null,
-        customerType,
-        nonBlankOrNull(opportunity.zhiWei),
-        existing.id,
-        nonBlankOrNull(opportunity.leadNo),
-      ],
+  // 邮箱唯一：若用户在弹窗选择「仍然新建」而该邮箱已被其他客户占用，新客户不写邮箱（归属已有客户），
+  // 避免撞唯一索引；电话无唯一约束，可重复。
+  let insertEmail = email;
+  if (insertEmail) {
+    const emailTaken = await client.query(
+      `SELECT 1 FROM ${schema}.person WHERE "deletedAt" IS NULL AND lower("emailsPrimaryEmail") = lower($1) LIMIT 1`,
+      [insertEmail],
     );
-    return { id: result.rows[0]?.id || existing.id, created: false };
+    if (emailTaken.rowCount) insertEmail = null;
   }
 
   const fallbackName = name || email || nonBlankOrNull(opportunity.phonePrimaryPhoneNumber) || nonBlankOrNull(opportunity.syncGroupCode) || '未命名客户';
@@ -4845,7 +4815,7 @@ async function upsertPersonFromOpportunity(client, schema, opportunity) {
       nonBlankOrNull(opportunity.phonePrimaryPhoneNumber),
       nonBlankOrNull(opportunity.phonePrimaryPhoneCountryCode),
       nonBlankOrNull(opportunity.phonePrimaryPhoneCallingCode),
-      email,
+      insertEmail,
       nonBlankOrNull(opportunity.countryAddressCountry),
       nonBlankOrNull(opportunity.keHuXuQiuChanPin),
       opportunity.keHuLaiYuan || null,
@@ -5032,8 +5002,43 @@ app.post('/api/opportunities/:id/convert-to-person', requireSameSite, async (req
       opportunity.syncGroupCode = codeResult.rows[0]?.syncGroupCode;
     }
 
-    const person = await upsertPersonFromOpportunity(client, schema, opportunity);
-    if (!person?.id) throw new Error('person upsert failed');
+    const convertMode = String(req.body?.mode || '').trim();
+    const assignPersonId = String(req.body?.personId || '').trim() || null;
+
+    // 首次调用（未指定 mode）：按邮箱/手机号查重；命中则返回疑似客户+其线索/项目，交前端弹窗判断。
+    if (convertMode !== 'assign' && convertMode !== 'create') {
+      const duplicates = await findDuplicateCustomers(client, schema, opportunity);
+      if (duplicates.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          code: 'DUPLICATE_CUSTOMER',
+          error: '发现疑似重复客户',
+          detail: '系统中已有相同邮箱/手机号的客户，请选择「分配给已有客户」或「仍然新建」。',
+          duplicates,
+        });
+      }
+    }
+
+    let person;
+    if (convertMode === 'assign') {
+      if (!assignPersonId) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ code: 'PERSON_REQUIRED', error: '未指定要分配的客户' });
+      }
+      const chk = await client.query(
+        `SELECT id FROM ${schema}.person WHERE id = $1 AND "deletedAt" IS NULL`,
+        [assignPersonId],
+      );
+      if (!chk.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ code: 'PERSON_NOT_FOUND', error: '要分配的客户不存在或已删除' });
+      }
+      // 分配给已有客户：只挂关系，不改客户主数据。
+      person = { id: assignPersonId, created: false };
+    } else {
+      person = await createPersonFromOpportunity(client, schema, opportunity);
+    }
+    if (!person?.id) throw new Error('person create failed');
 
     await client.query(
       `UPDATE ${schema}.opportunity
@@ -5308,8 +5313,14 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
       opportunity.syncGroupCode = codeResult.rows[0]?.syncGroupCode;
     }
 
-    const person = await upsertPersonFromOpportunity(client, schema, opportunity);
-    if (!person?.id) throw new Error('person upsert failed');
+    // 项目也挂到客户上：线索已有客户则复用，否则新建（转客户弹窗已覆盖去重判断，此处不再弹窗）。
+    let person;
+    if (nonBlankOrNull(opportunity.pointOfContactId)) {
+      person = { id: opportunity.pointOfContactId, created: false };
+    } else {
+      person = await createPersonFromOpportunity(client, schema, opportunity);
+    }
+    if (!person?.id) throw new Error('person create failed');
 
     opportunity.linkedPersonId = person.id;
     const project = await upsertProjectFromOpportunity(client, schema, opportunity, person.id, auditActor);
