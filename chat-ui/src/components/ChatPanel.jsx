@@ -137,7 +137,7 @@ export function MessageBubble({ msg, channel }) {
 
   const isCustomer = msg.senderType === 'customer'
   const isAI = msg.senderType === 'ai'
-  const timeStr = format(msg.sentAt, 'HH:mm')
+  const timeStr = format(msg.sentAt, 'MM-dd HH:mm')
   const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
   const mediaAttachments = attachments.length
     ? attachments
