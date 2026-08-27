@@ -1340,7 +1340,7 @@ td.muted{color:var(--text-tertiary);}
         <ul>
           <li>主字段标签：线索「线索名称」/ 客户「客户联系人」/ 项目「项目名称」；项目主列与公司名解耦。</li>
           <li>公司名称统一走 <code>company</code> 关系「公司」；客户旧文本字段 <code>gongSiMingCheng</code> 停用。项目类型修正（询盘时间→日期、成本价→货币）。</li>
-          <li><strong>AI 客服当前全局关闭</strong>（知识库未搭建）：所有会话走离线兜底话术；<code>config.py</code> 缺省即为关闭；开启走 设置→AI 客服设置。</li>
+          <li><strong>AI 客服当前「强制全兜底」</strong>（知识库未正式搭建）：<code>aiEnabled=true</code> + <code>aiBackendAvailable=true</code> + <code>knowledgeMinScore=100</code>，种子知识库永不命中 → 所有会话统一走离线兜底话术。<strong>注意「关闭 aiEnabled」= 完全不自动回复、连兜底都没有</strong>，不是走兜底。知识库就绪后把 <code>knowledgeMinScore</code> 调回 60 即恢复真答；<code>config.py</code> 缺省值已同为「强制全兜底」。</li>
           <li>对话工作台消息时间戳改为「日期+时间」<code>MM-dd HH:mm</code>，便于跨天定位。</li>
         </ul>
       </div>
