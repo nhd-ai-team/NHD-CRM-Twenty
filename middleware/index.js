@@ -4329,10 +4329,22 @@ const OPPORTUNITY_EMAIL_FIELD = 'youXiang';
 const EMAIL_SEPARATOR_RE = /[\s,;，；]+/;
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const workspaceColumnExistsCache = new Map();
-const normalizeEmailList = (value) => String(value || '')
-  .split(EMAIL_SEPARATOR_RE)
-  .map((item) => item.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, ''))
-  .filter(Boolean);
+const normalizeEmailList = (value) => {
+  if (!value) return [];
+  if (typeof value === 'object') {
+    return [
+      value.primaryEmail,
+      value.secondaryEmail,
+      ...(Array.isArray(value.additionalEmails) ? value.additionalEmails : []),
+    ]
+      .flatMap((item) => normalizeEmailList(item))
+      .filter(Boolean);
+  }
+  return String(value || '')
+    .split(EMAIL_SEPARATOR_RE)
+    .map((item) => item.trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, ''))
+    .filter(Boolean);
+};
 const VALID_OPPORTUNITY_STAGES = new Set([
   'WEI_CHU_LI_XIANSUO',
   'XIANSUO',
@@ -4577,7 +4589,9 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const email = String(b.email || '').trim();
   if (email) {
     const emails = normalizeEmailList(email);
-    if (emails.length > 0 && emails.every((item) => EMAIL_RE.test(item))) data[OPPORTUNITY_EMAIL_FIELD] = emails.join(', ');
+    if (emails.length > 0 && emails.every((item) => EMAIL_RE.test(item))) {
+      data[OPPORTUNITY_EMAIL_FIELD] = { primaryEmail: emails[0] };
+    }
     else skipped.push('email');
   }
   if (data.stage) data.stage = normalizeOpportunityStage(data.stage);
