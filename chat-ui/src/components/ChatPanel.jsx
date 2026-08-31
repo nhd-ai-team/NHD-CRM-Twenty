@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import {
   UserCheck, Bot,
   Send, Paperclip,
-  Menu, X, FileText,
+  Menu, X, FileText, History,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
@@ -375,6 +375,15 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
     contactInfo.utmContent ? `content=${contactInfo.utmContent}` : '',
   ].filter(Boolean)
 
+  function openHistory() {
+    if (!conv?.id) return
+    if (typeof window.parent?.openHistoryPanel === 'function') {
+      window.parent.openHistoryPanel(conv.id)
+      return
+    }
+    window.parent?.postMessage({ type: 'nhd-open-history', conversationId: conv.id }, window.location.origin)
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%' }}>
       {/* Header */}
@@ -432,6 +441,18 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
             )}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+          <button
+            onClick={openHistory}
+            title="查看历史记录"
+            aria-label="查看历史记录"
+            style={{
+              width: 30, height: 30, padding: 0, border: '1px solid var(--border)',
+              borderRadius: 6, background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+              display: 'grid', placeItems: 'center', cursor: 'pointer',
+            }}
+          >
+            <History size={16} />
+          </button>
           {/* 窄屏汉堡：唤出会话列表 */}
           {layout === 'narrow' && (
             <button onClick={onToggleSidebar} style={{ padding: '4px 6px', border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', borderRadius: 4 }}>
