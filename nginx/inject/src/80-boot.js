@@ -27,7 +27,10 @@
     { id: 'attach',   run: ensureAttachEntry },
     { id: 'drill',    run: ensureHistoryDrillButton },
     { id: 'collab',   run: ensureCollaboratorEntry },
-    { id: 'resetpwd', when: function () { return window.location.pathname.indexOf('/settings/workspace-members') === 0; }, run: ensureMemberResetPwdButton }
+    { id: 'resetpwd', when: function () {
+      return window.location.pathname.indexOf('/settings/workspace-members') === 0 ||
+        window.location.pathname.indexOf('/settings/members') === 0;
+    }, run: ensureMemberResetPwdButton }
   ];
 
   function tick() {
@@ -141,8 +144,18 @@
   observer.observe(document.body, { childList: true, subtree: true });
   installRouteTrigger();
   if (document.readyState === 'complete') tick(); else window.addEventListener('load', tick);
-  // 低频次兜底：React 重渲染 / 元数据刷新后，即便上述触发器都漏了，也能在 2s 内自愈。
-  setInterval(tick, 2000);
+  // 低频次兜底只做状态判断，不再每 2s 无条件跑全量 tick。
+  // 大表格页 + iframe 轮询时，全量 DOM 探测会放大卡顿；只有菜单缺失或设置页残留时才自愈。
+  function needsPeriodicSelfHeal() {
+    if (SETTINGS_RE.test(window.location.pathname)) return false;
+    if (document.getElementById('__settings_channels_page__') || document.getElementById('__settings_rbac_page__')) return true;
+    var nativeNav = document.querySelector('a[href^="/objects/"],a[href^="/opportunities"],a[href^="/people"]');
+    if (!nativeNav) return false;
+    return !document.getElementById(NAV_ID) || !document.getElementById(MAIL_NAV_ID) || !document.getElementById(SETTINGS_NAV_ID);
+  }
+  setInterval(function () {
+    if (needsPeriodicSelfHeal()) scheduleTick();
+  }, 2000);
   setInterval(refreshIframeAuthToken, 30000);
 
   // 诊断入口：手动强制重跑注入（排查"自动触发器没生效"时调用）。

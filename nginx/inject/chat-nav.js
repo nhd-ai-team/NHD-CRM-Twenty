@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260825-dom-guard-v1';
+  var NHD_VERSION = '20260831-nav-restore-v1';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -1238,8 +1238,7 @@
   // ── hide native nav items disabled for this workspace ─────────────────────
 
   function textLooksLikeDisabledNav(text) {
-    var normalized = String(text || '').replace(/\s+/g, ' ').trim();
-    return HIDDEN_NAV_LABELS.indexOf(normalized) !== -1;
+    return HIDDEN_NAV_LABELS.indexOf(String(text || '').replace(/\s+/g, ' ').trim()) !== -1;
   }
 
   function hrefLooksLikeDisabledNav(href) {
@@ -1265,6 +1264,14 @@
   }
 
   function hideDisabledNativeNavItems() {
+    Array.from(document.querySelectorAll('[data-chat-hidden-native-nav="1"]')).forEach(function (row) {
+      var trigger = row.matches && row.matches('a[href],button,[role="button"]') ? row : row.querySelector('a[href],button,[role="button"]');
+      var href = trigger ? (trigger.getAttribute('href') || '') : '';
+      if (hrefLooksLikeDisabledNav(href) || textLooksLikeDisabledNav(row.textContent)) return;
+      row.style.display = '';
+      row.removeAttribute('data-chat-hidden-native-nav');
+    });
+
     var selectors = 'a[href],button,[role="button"]';
     Array.from(document.querySelectorAll(selectors)).forEach(function (el) {
       if (el.id === NAV_ID || el.id === MAIL_NAV_ID || el.id === SETTINGS_NAV_ID) return;
@@ -1272,10 +1279,7 @@
       if (!hrefLooksLikeDisabledNav(href) && !textLooksLikeDisabledNav(el.textContent)) return;
       var rect = el.getBoundingClientRect();
       // Only target the left CRM sidebar. Do not hide content inside detail pages.
-      // href 命中（工作流）时按导航同一把尺放宽宽度，兼容宽侧栏/抽屉布局；
-      // 纯文本命中仍保持保守上限，避免误隐藏详情页里的同名文字。
-      var byHref = hrefLooksLikeDisabledNav(href);
-      var maxWidth = byHref ? navRowMaxWidth() : 420;
+      var maxWidth = navRowMaxWidth();
       if (rect.left > 360 || rect.width > maxWidth) return;
       var row = sidebarRowFor(el, maxWidth);
       row.style.display = 'none';
@@ -2355,6 +2359,8 @@
       var el = document.getElementById(id);
       if (el) el.remove();
     });
+    var group = document.getElementById('__settings_accounts_entry_group__');
+    if (group && !group.children.length) group.remove();
   }
 
   function findSettingsAccountsCardsHost() {
@@ -2366,11 +2372,23 @@
     var section = settingsHeading && (settingsHeading.closest('section') || settingsHeading.parentElement);
     if (!section) section = document.querySelector('main') || document.querySelector('[role="main"]');
     if (!section) return null;
-    return Array.from(section.querySelectorAll('div')).find(function (el) {
+    var existing = document.getElementById('__settings_accounts_entry_group__');
+    if (existing) return existing;
+    // Keep the injected entry group beside the native account sections. The
+    // first flex container may be the blocklist or email settings section.
+    var host = document.createElement('div');
+    host.id = '__settings_accounts_entry_group__';
+    host.style.cssText = [
+      'display:flex', 'gap:12px', 'width:100%', 'box-sizing:border-box',
+      'margin:0 0 24px', 'align-items:stretch', 'order:-10'
+    ].join(';');
+    var firstContent = Array.from(section.children).find(function (el) {
+      if (settingsHeading && (el === settingsHeading || el.contains(settingsHeading))) return false;
       var rect = el.getBoundingClientRect();
-      var style = window.getComputedStyle(el);
-      return rect.width > 300 && rect.height > 40 && style.display === 'flex';
-    }) || section;
+      return rect.width > 300 && rect.height > 20;
+    });
+    section.insertBefore(host, firstContent || null);
+    return host;
   }
 
   function buildSettingsAccountsCard(opts) {
@@ -3346,9 +3364,8 @@
         rect.width > 80 &&
         rect.height > 20 &&
         rect.height < 80 &&
-        buttons.length >= 2 &&
-        (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1) &&
-        (text.indexOf('假装') !== -1 || text.indexOf('Impersonate') !== -1)
+        buttons.length >= 1 &&
+        (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1)
       ) {
         return node;
       }
@@ -3372,7 +3389,8 @@
   }
 
   function ensureMemberResetPwdButton() {
-    var canInjectHere = window.location.pathname.indexOf('/settings/workspace-members') === 0;
+    var canInjectHere = window.location.pathname.indexOf('/settings/workspace-members') === 0 ||
+      window.location.pathname.indexOf('/settings/members') === 0;
     if (!canInjectHere) {
       var stale = document.getElementById(MEMBER_RESETPWD_BTN_ID);
       if (stale) stale.remove();
@@ -3440,7 +3458,10 @@
     { id: 'attach',   run: ensureAttachEntry },
     { id: 'drill',    run: ensureHistoryDrillButton },
     { id: 'collab',   run: ensureCollaboratorEntry },
-    { id: 'resetpwd', when: function () { return window.location.pathname.indexOf('/settings/workspace-members') === 0; }, run: ensureMemberResetPwdButton }
+    { id: 'resetpwd', when: function () {
+      return window.location.pathname.indexOf('/settings/workspace-members') === 0 ||
+        window.location.pathname.indexOf('/settings/members') === 0;
+    }, run: ensureMemberResetPwdButton }
   ];
 
   function tick() {
@@ -3554,8 +3575,18 @@
   observer.observe(document.body, { childList: true, subtree: true });
   installRouteTrigger();
   if (document.readyState === 'complete') tick(); else window.addEventListener('load', tick);
-  // 低频次兜底：React 重渲染 / 元数据刷新后，即便上述触发器都漏了，也能在 2s 内自愈。
-  setInterval(tick, 2000);
+  // 低频次兜底只做状态判断，不再每 2s 无条件跑全量 tick。
+  // 大表格页 + iframe 轮询时，全量 DOM 探测会放大卡顿；只有菜单缺失或设置页残留时才自愈。
+  function needsPeriodicSelfHeal() {
+    if (SETTINGS_RE.test(window.location.pathname)) return false;
+    if (document.getElementById('__settings_channels_page__') || document.getElementById('__settings_rbac_page__')) return true;
+    var nativeNav = document.querySelector('a[href^="/objects/"],a[href^="/opportunities"],a[href^="/people"]');
+    if (!nativeNav) return false;
+    return !document.getElementById(NAV_ID) || !document.getElementById(MAIL_NAV_ID) || !document.getElementById(SETTINGS_NAV_ID);
+  }
+  setInterval(function () {
+    if (needsPeriodicSelfHeal()) scheduleTick();
+  }, 2000);
   setInterval(refreshIframeAuthToken, 30000);
 
   // 诊断入口：手动强制重跑注入（排查"自动触发器没生效"时调用）。

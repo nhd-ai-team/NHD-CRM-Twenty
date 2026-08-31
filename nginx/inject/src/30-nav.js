@@ -23,8 +23,7 @@
   // ── hide native nav items disabled for this workspace ─────────────────────
 
   function textLooksLikeDisabledNav(text) {
-    var normalized = String(text || '').replace(/\s+/g, ' ').trim();
-    return HIDDEN_NAV_LABELS.indexOf(normalized) !== -1;
+    return HIDDEN_NAV_LABELS.indexOf(String(text || '').replace(/\s+/g, ' ').trim()) !== -1;
   }
 
   function hrefLooksLikeDisabledNav(href) {
@@ -50,6 +49,14 @@
   }
 
   function hideDisabledNativeNavItems() {
+    Array.from(document.querySelectorAll('[data-chat-hidden-native-nav="1"]')).forEach(function (row) {
+      var trigger = row.matches && row.matches('a[href],button,[role="button"]') ? row : row.querySelector('a[href],button,[role="button"]');
+      var href = trigger ? (trigger.getAttribute('href') || '') : '';
+      if (hrefLooksLikeDisabledNav(href) || textLooksLikeDisabledNav(row.textContent)) return;
+      row.style.display = '';
+      row.removeAttribute('data-chat-hidden-native-nav');
+    });
+
     var selectors = 'a[href],button,[role="button"]';
     Array.from(document.querySelectorAll(selectors)).forEach(function (el) {
       if (el.id === NAV_ID || el.id === MAIL_NAV_ID || el.id === SETTINGS_NAV_ID) return;
@@ -57,10 +64,7 @@
       if (!hrefLooksLikeDisabledNav(href) && !textLooksLikeDisabledNav(el.textContent)) return;
       var rect = el.getBoundingClientRect();
       // Only target the left CRM sidebar. Do not hide content inside detail pages.
-      // href 命中（工作流）时按导航同一把尺放宽宽度，兼容宽侧栏/抽屉布局；
-      // 纯文本命中仍保持保守上限，避免误隐藏详情页里的同名文字。
-      var byHref = hrefLooksLikeDisabledNav(href);
-      var maxWidth = byHref ? navRowMaxWidth() : 420;
+      var maxWidth = navRowMaxWidth();
       if (rect.left > 360 || rect.width > maxWidth) return;
       var row = sidebarRowFor(el, maxWidth);
       row.style.display = 'none';

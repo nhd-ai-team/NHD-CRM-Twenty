@@ -451,9 +451,8 @@
         rect.width > 80 &&
         rect.height > 20 &&
         rect.height < 80 &&
-        buttons.length >= 2 &&
-        (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1) &&
-        (text.indexOf('假装') !== -1 || text.indexOf('Impersonate') !== -1)
+        buttons.length >= 1 &&
+        (text.indexOf('删除账户') !== -1 || text.indexOf('删除账号') !== -1 || text.indexOf('Delete account') !== -1)
       ) {
         return node;
       }
@@ -477,7 +476,8 @@
   }
 
   function ensureMemberResetPwdButton() {
-    var canInjectHere = window.location.pathname.indexOf('/settings/workspace-members') === 0;
+    var canInjectHere = window.location.pathname.indexOf('/settings/workspace-members') === 0 ||
+      window.location.pathname.indexOf('/settings/members') === 0;
     if (!canInjectHere) {
       var stale = document.getElementById(MEMBER_RESETPWD_BTN_ID);
       if (stale) stale.remove();

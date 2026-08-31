@@ -389,6 +389,11 @@ export function ContactPanel({ conv, open = true, inline = false, draft = {}, on
               <div style={{ fontSize: 10.5, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
                 {converted ? '补填信息后可再次「更新线索」' : '信息随填随存 · 转为线索写入线索'}
               </div>
+              {converted && draft.leadNo && (
+                <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--text-muted)', textAlign: 'center' }}>
+                  线索ID：<span style={{ color: 'var(--text-primary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', wordBreak: 'break-all' }}>{draft.leadNo}</span>
+                </div>
+              )}
             </div>
 
             {/* Editable fields — 对齐 Opportunity，失焦自动暂存 */}

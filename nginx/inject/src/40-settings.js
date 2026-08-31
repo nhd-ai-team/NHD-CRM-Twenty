@@ -600,6 +600,8 @@
       var el = document.getElementById(id);
       if (el) el.remove();
     });
+    var group = document.getElementById('__settings_accounts_entry_group__');
+    if (group && !group.children.length) group.remove();
   }
 
   function findSettingsAccountsCardsHost() {
@@ -611,11 +613,23 @@
     var section = settingsHeading && (settingsHeading.closest('section') || settingsHeading.parentElement);
     if (!section) section = document.querySelector('main') || document.querySelector('[role="main"]');
     if (!section) return null;
-    return Array.from(section.querySelectorAll('div')).find(function (el) {
+    var existing = document.getElementById('__settings_accounts_entry_group__');
+    if (existing) return existing;
+    // Keep the injected entry group beside the native account sections. The
+    // first flex container may be the blocklist or email settings section.
+    var host = document.createElement('div');
+    host.id = '__settings_accounts_entry_group__';
+    host.style.cssText = [
+      'display:flex', 'gap:12px', 'width:100%', 'box-sizing:border-box',
+      'margin:0 0 24px', 'align-items:stretch', 'order:-10'
+    ].join(';');
+    var firstContent = Array.from(section.children).find(function (el) {
+      if (settingsHeading && (el === settingsHeading || el.contains(settingsHeading))) return false;
       var rect = el.getBoundingClientRect();
-      var style = window.getComputedStyle(el);
-      return rect.width > 300 && rect.height > 40 && style.display === 'flex';
-    }) || section;
+      return rect.width > 300 && rect.height > 20;
+    });
+    section.insertBefore(host, firstContent || null);
+    return host;
   }
 
   function buildSettingsAccountsCard(opts) {

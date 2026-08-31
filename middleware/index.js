@@ -2287,6 +2287,7 @@ app.get('/api/conversations', async (req, res) => {
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
+      'leadNo', COALESCE(o."leadNo"::text, ''),
       'company', COALESCE(co.name, p."gongSiMingCheng", ''),
       'companyId', COALESCE(o."companyId"::text, ''),
       'phone', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', o."whatsappPrimaryPhoneCallingCode", o."whatsappPrimaryPhoneNumber")), ''), ct.phone, ''),

@@ -52,6 +52,7 @@ export function buildDraft(conv) {
   const crm = conv?.crmLeadDraft || null
   if (crm) {
     return applyContactMethodStage({
+      leadNo: crm.leadNo ?? '',
       name: crm.name ?? '',
       company: crm.company ?? '',
       companyId: crm.companyId ?? '',
