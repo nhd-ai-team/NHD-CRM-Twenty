@@ -1044,6 +1044,8 @@ async function ensureSchema() {
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS waha_session TEXT;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS owner_id TEXT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS raw_message_type TEXT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS message_summary TEXT;
     ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS owner_id TEXT;
     CREATE INDEX IF NOT EXISTS conversations_owner_idx
       ON conv.conversations(owner_id) WHERE owner_id IS NOT NULL;
@@ -1128,21 +1130,43 @@ async function resolvePhone(jid = '', session = WAHA_SESSION) {
     return String(contact.id || '').endsWith('@c.us') ? phoneFromJid(contact.id) : null;
   } catch (error) { console.error('[whatsapp] lid resolve failed:', error.message); return null; }
 }
-// WAHA `message` 事件为扁平 payload：{ from, body, hasMedia, media: { url, mimetype }, type }
+// WAHA `message` 事件为扁平 payload：{ from, body, hasMedia, media: { url, mimetype }, type }。
+// 非文本消息的原始类型可能位于 type 或 _data.type，两个位置都兼容。
+function whatsappRawMessageType(payload = {}) {
+  return String(payload.type || payload._data?.type || payload.messageType || payload._data?.messageType || 'unknown')
+    .trim().toLowerCase() || 'unknown';
+}
+
+function whatsappMessageSummary(payload = {}, rawType = whatsappRawMessageType(payload)) {
+  const sender = payload.fromMe ? '我方' : '客户';
+  const reaction = payload.reaction || payload.reactionText || payload._data?.reaction || payload._data?.reactionText || payload._data?.body || '';
+  if (['reaction', 'reaction_message'].includes(rawType)) {
+    return `${sender}发送了表情回应${reaction ? ` ${String(reaction).trim()}` : ''}`;
+  }
+  if (['location', 'live_location', 'location_message'].includes(rawType)) return `${sender}分享了位置`;
+  if (['vcard', 'contact', 'contacts', 'multi_vcard'].includes(rawType)) return `${sender}分享了联系人`;
+  if (['poll_creation', 'poll_update', 'poll'].includes(rawType)) return `${sender}${rawType === 'poll_update' ? '回复了投票' : '发起了投票'}`;
+  return `${sender}发送了暂不支持的 WhatsApp 消息（类型：${rawType}）`;
+}
+
 function messageContent(payload = {}) {
   const media = payload.media || {};
   const mime = media.mimetype || '';
+  const rawType = whatsappRawMessageType(payload);
   if (payload.hasMedia && media.url) {
-    if (mime.startsWith('image/')) return { content: payload.body || '[图片]', type: 'image', mediaUrl: media.url };
-    if (mime.startsWith('video/')) return { content: payload.body || '[视频]', type: 'video', mediaUrl: media.url };
-    if (mime.startsWith('audio/')) return { content: '[语音]', type: 'audio', mediaUrl: media.url };
+    if (mime.startsWith('image/')) return { content: payload.body || '[图片]', type: 'image', mediaUrl: media.url, rawType, summary: null };
+    if (mime.startsWith('video/')) return { content: payload.body || '[视频]', type: 'video', mediaUrl: media.url, rawType, summary: null };
+    if (mime.startsWith('audio/')) return { content: '[语音]', type: 'audio', mediaUrl: media.url, rawType, summary: null };
     // WAHA 给的 media.filename 常是 UTF-8 被当 latin1 传过来的乱码，走同款归一化修复
     // （normalizeUploadFilename 会侦测 mojibake 并 latin1→utf8 还原）。
     const fileTitle = media.filename ? normalizeUploadFilename(media.filename) : (payload.body || '[文件]');
-    return { content: fileTitle, type: 'file', mediaUrl: media.url };
+    return { content: fileTitle, type: 'file', mediaUrl: media.url, rawType, summary: null };
   }
-  if (payload.body) return { content: payload.body, type: 'text' };
-  return { content: '[暂不支持的消息]', type: 'unknown' };
+  if (payload.body && !['reaction', 'reaction_message', 'location', 'live_location', 'location_message', 'vcard', 'contact', 'contacts', 'multi_vcard', 'poll_creation', 'poll_update', 'poll'].includes(rawType)) {
+    return { content: payload.body, type: 'text', rawType, summary: null };
+  }
+  const summary = whatsappMessageSummary(payload, rawType);
+  return { content: summary, type: 'unknown', rawType, summary };
 }
 
 async function syncPerson(phone, displayName) {
@@ -1386,9 +1410,9 @@ async function persistWhatsAppMessage(payload, session) {
         waha_session = COALESCE(conv.conversations.waha_session, EXCLUDED.waha_session)
       RETURNING *`, [chatKey, contact.id, ownerUserId, inboundSession]);
     const conversation = conversationResult.rows[0];
-    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at, owner_id)
-      VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), $8) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
-      [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.timestamp ? Number(data.timestamp) * 1000 : Date.now(), ownerUserId]);
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at, owner_id, raw_message_type, message_summary)
+      VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), $8, $9, $10) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [externalMessageId || null, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null, data.timestamp ? Number(data.timestamp) * 1000 : Date.now(), ownerUserId, parsed.rawType, parsed.summary]);
     if (inserted.rowCount) await client.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversation.id, parsed.content]);
     await client.query('COMMIT');
     // 沟通状态表单：新会话首条消息即落 duiHuaLiShi 档案（幂等；仅上线后新会话）。
@@ -2354,11 +2378,30 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const historyView = String(req.query?.view || req.query?.scope || '').trim() === 'history';
   const access = await requireConversationAccess(req, res, { historyView });
   if (!access) return;
-  const result = await pool.query(`SELECT id, sender_type AS "senderType", content, content_type AS "contentType", media_url AS "mediaUrl", subject, attachments, sent_at AS "sentAt",
+  const workspaceSchema = await getWorkspaceSchema();
+  const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments, m.sent_at AS "sentAt",
+      m.raw_message_type AS "rawMessageType", m.message_summary AS "messageSummary",
+      CASE WHEN m.sender_type = 'agent' THEN COALESCE(
+        NULLIF(CONCAT_WS(' ', sender_member."nameFirstName", sender_member."nameLastName"), ''),
+        NULLIF(CONCAT_WS(' ', owner_member."nameFirstName", owner_member."nameLastName"), ''),
+        NULLIF((SELECT ae.actor_name
+                  FROM conv.audit_events ae
+                 WHERE ae.message_id = m.id
+                   AND ae.event_type IN ('message.sent', 'message.send_failed')
+                 ORDER BY ae.created_at DESC
+                 LIMIT 1), ''),
+        '未识别成员'
+      ) ELSE NULL END AS "senderName",
       -- 需求二：出站消息送达状态（pending/sent/delivered/read/failed）
       delivery_status AS "deliveryStatus", delivery_status_at AS "deliveryStatusAt",
       delivered_at AS "deliveredAt", read_at AS "readAt", failed_at AS "failedAt", status_detail AS "statusDetail"
-    FROM conv.messages WHERE conversation_id = $1 ORDER BY sent_at`, [req.params.id]);
+    FROM conv.messages m
+    JOIN conv.conversations c ON c.id = m.conversation_id
+    LEFT JOIN ${workspaceSchema}."workspaceMember" sender_member
+      ON sender_member."userId"::text = m.owner_id AND sender_member."deletedAt" IS NULL
+    LEFT JOIN ${workspaceSchema}."workspaceMember" owner_member
+      ON owner_member.id::text = c.agent_id AND owner_member."deletedAt" IS NULL
+    WHERE m.conversation_id = $1 ORDER BY m.sent_at`, [req.params.id]);
   res.json(result.rows);
 });
 
@@ -5401,10 +5444,10 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
 async function recordAgentMessage(conversationId, content, externalId, options = {}) {
   // 需求二：出站消息落库即带状态。渠道 API 返回成功 = sent；调用失败 = failed（带错误摘要）。
   const deliveryStatus = options.deliveryStatus || 'sent';
-  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at,
+  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at, owner_id,
       delivery_status, delivery_status_at, failed_at, status_detail)
-    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now(), $7, now(),
-      CASE WHEN $7 = 'failed' THEN now() ELSE NULL END, $8) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now(), $7, $8, now(),
+      CASE WHEN $8 = 'failed' THEN now() ELSE NULL END, $9) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
     [
       externalId || null,
       conversationId,
@@ -5412,6 +5455,7 @@ async function recordAgentMessage(conversationId, content, externalId, options =
       options.contentType || 'text',
       options.mediaUrl || null,
       options.attachments ? JSON.stringify(options.attachments) : null,
+      options.ownerId || null,
       deliveryStatus,
       options.statusDetail ? String(options.statusDetail).slice(0, 500) : null,
     ]);
@@ -5586,6 +5630,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       try {
         const sent = await sendWhatsAppFile(conversation, uploadedFile, content, conversation.waha_session || WAHA_SESSION);
         const messageId = await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
+          ownerId: access.viewer.userId,
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
@@ -5602,6 +5647,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       } catch (error) {
         // 需求二：附件与文本共用同一状态模型，失败同样落 failed 并留痕。
         const failedId = await recordAgentMessage(req.params.id, displayContent, null, {
+          ownerId: access.viewer.userId,
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
@@ -5625,6 +5671,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         const idempotencyKey = `crm-file:${req.params.id}:${Date.now()}`;
         const sent = await sendWebsiteAgentMessage(conversation, displayContent, idempotencyKey, attachment);
         const messageId = await recordAgentMessage(req.params.id, displayContent, `web:agent:${sent?.messageId || idempotencyKey}`, {
+          ownerId: access.viewer.userId,
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
@@ -5652,6 +5699,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       // 需求二：发送失败也要留痕并显示「失败」，绝不能静默丢弃或显示为已发送。
       const detail = await response.text();
       const failedId = await recordAgentMessage(req.params.id, content, null, {
+        ownerId: access.viewer.userId,
         deliveryStatus: 'failed',
         statusDetail: `WAHA sendText ${response.status}: ${detail}`,
       });
@@ -5666,7 +5714,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       return res.status(502).json({ error: 'WhatsApp send failed', detail });
     }
     const sent = await response.json();
-    const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized);
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized, { ownerId: access.viewer.userId });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -5687,7 +5735,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     });
     if (!response.ok) return res.status(502).json({ error: 'Instagram send failed', detail: await response.text() });
     const sent = await response.json();
-    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id);
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id, { ownerId: access.viewer.userId });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -5708,7 +5756,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     });
     if (!response.ok) return res.status(502).json({ error: 'Facebook send failed', detail: await response.text() });
     const sent = await response.json();
-    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id);
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id, { ownerId: access.viewer.userId });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -5729,7 +5777,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     } catch (error) {
       return res.status(502).json({ error: 'Website send failed', detail: error.message });
     }
-    const messageId = await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`);
+    const messageId = await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`, { ownerId: access.viewer.userId });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,

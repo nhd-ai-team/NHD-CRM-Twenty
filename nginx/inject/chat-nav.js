@@ -824,7 +824,7 @@
   function renderConversationMessageHtml(msg) {
     var senderLabel = '未知', senderColor = '#52525b';
     if (msg.senderType === 'customer') { senderLabel = '客户'; senderColor = '#0369a1'; }
-    else if (msg.senderType === 'agent') { senderLabel = '我方'; senderColor = '#7c3aed'; }
+    else if (msg.senderType === 'agent') { senderLabel = String(msg.senderName || '未识别成员'); senderColor = '#7c3aed'; }
     else if (msg.senderType === 'ai') { senderLabel = 'AI'; senderColor = '#059669'; }
     var timeText = formatFollowUpTimeLocal(msg.sentAt);
     var parts = [];
@@ -995,6 +995,7 @@
             contentType: att.contentType || att.mimeType || att.mimetype || null,
             sizeBytes: Number(att.sizeBytes || att.size || 0) || null,
             senderType: m.senderType,
+            senderName: m.senderName,
             direction: direction,
             sentAt: m.sentAt,
           });
@@ -1008,6 +1009,7 @@
           contentType: m.contentType || null,
           sizeBytes: null,
           senderType: m.senderType,
+          senderName: m.senderName,
           direction: direction,
           sentAt: m.sentAt,
         });
@@ -1052,7 +1054,7 @@
       var badge, badgeColor;
       if (it.direction === 'inbound') { badge = '客户 · 入站'; badgeColor = '#0369a1'; }
       else if (it.senderType === 'ai') { badge = 'AI · 出站'; badgeColor = '#059669'; }
-      else { badge = '我方 · 出站'; badgeColor = '#7c3aed'; }
+      else { badge = (it.senderName || '未识别成员') + ' · 出站'; badgeColor = '#7c3aed'; }
       var size = formatAttachSize(it.sizeBytes || 0);
       var time = formatFollowUpTimeLocal(it.sentAt);
       var meta = [];
