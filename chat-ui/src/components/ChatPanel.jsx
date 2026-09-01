@@ -255,7 +255,7 @@ function ActionBar({ conv, onRequestAction }) {
           title="将会话发送权限交还给原销售"
           style={btnStyle('green')}
         >
-          <UserCheck size={13} /> 交还销售
+          <UserCheck size={13} /> 交还会话
         </button>
       )}
     </div>
@@ -424,7 +424,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
     : pendingAction === 'transfer'
       ? '当前销售会收到接管提示，10 秒后本会话将转交给您。转交完成后，原销售将不能继续发送消息。'
       : pendingAction === 'return'
-        ? '确认后会话发送权限将交还给原销售，主管仍可查看完整沟通记录。'
+        ? `确认后会话发送权限将交还给 ${permissions.returnAgentName || '原销售'}，主管仍可查看完整沟通记录。`
       : '确认后此会话将重新交给 AI 客服托管，销售需要再次接入人工后才能回复。'
   // 需求三：会话详情（客户资料上下文）展示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示）；官网渠道带真实 IP，WhatsApp/邮件不显示伪造 IP
   const contactInfo = conv.contact || {}

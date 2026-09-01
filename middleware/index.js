@@ -2452,6 +2452,7 @@ app.get('/api/conversations', async (req, res) => {
       'canTransferSales', ${canTransferExpression},
       'canReturnSales', ${canReturnExpression},
       'returnAgentId', CASE WHEN ${canReturnExpression} THEN latest_sales_handoff.from_agent_id ELSE NULL END,
+      'returnAgentName', CASE WHEN ${canReturnExpression} THEN latest_sales_handoff.from_agent_name ELSE NULL END,
       'canRespondHandoff', (pending_handoff.id IS NOT NULL AND pending_handoff.from_agent_id = $1),
       'isAssignedToMe', ${assignedToMeExpression},
       'hasTakenOverBefore', ${takenBeforeExpression}
@@ -2501,8 +2502,11 @@ app.get('/api/conversations', async (req, res) => {
        ORDER BY r.requested_at DESC LIMIT 1
     ) pending_handoff ON TRUE
     LEFT JOIN LATERAL (
-      SELECT r.id, r.from_agent_id
+      SELECT r.id, r.from_agent_id,
+             NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS from_agent_name
         FROM conv.conversation_handoff_requests r
+        LEFT JOIN ${workspaceSchema}."workspaceMember" wm
+          ON wm.id::text = r.from_agent_id AND wm."deletedAt" IS NULL
        WHERE r.conversation_id = c.id
          AND r.status = 'completed'
          AND r.requested_by_member_id = $1
@@ -3341,8 +3345,11 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
         return res.status(403).json({ error: '仅当前接管该会话的销售主管可以交还销售' });
       }
       const handoffResult = await client.query(
-        `SELECT r.id, r.from_agent_id
+        `SELECT r.id, r.from_agent_id,
+                NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS from_agent_name
            FROM conv.conversation_handoff_requests r
+           LEFT JOIN ${workspaceSchema}."workspaceMember" wm
+             ON wm.id::text = r.from_agent_id AND wm."deletedAt" IS NULL
           WHERE r.conversation_id = $1
             AND r.status = 'completed'
             AND r.requested_by_member_id = $2
@@ -3376,7 +3383,7 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
         `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
          VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
         [`system:${conversation.id}:${Date.now()}:transfer-return`, conversation.id,
-          `销售主管已将会话交还给原销售`, viewer.userId],
+          `销售主管已将会话交还给 ${handoff.from_agent_name || '原销售'}`, viewer.userId],
       );
       await client.query('COMMIT');
       syncConversationToHistory(conversation.id, { createIfMissing: false }).catch(() => {});
