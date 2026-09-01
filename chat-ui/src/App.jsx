@@ -41,6 +41,9 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
       {CHANNELS.map((ch) => {
         const active = activeChannel === ch.id
         const count = ch.id === 'all' ? conversations.length : conversations.filter(c => c.channel === ch.id).length
+        const unreadCount = ch.id === 'all'
+          ? conversations.reduce((sum, conversation) => sum + (conversation.unread || 0), 0)
+          : conversations.filter(c => c.channel === ch.id).reduce((sum, conversation) => sum + (conversation.unread || 0), 0)
         return (
           <button
             key={ch.id}
@@ -59,6 +62,11 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
               background: active ? 'var(--accent-soft)' : 'var(--bg-active)',
               color: active ? 'var(--accent-text)' : 'var(--text-muted)',
             }}>{count}</span>
+            {unreadCount > 0 && <span style={{
+              minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8,
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+              background: 'var(--accent)', color: '#fff', fontSize: 10, fontWeight: 700,
+            }}>{unreadCount}</span>}
           </button>
         )
       })}

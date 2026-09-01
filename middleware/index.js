@@ -444,6 +444,7 @@ async function resolveConversationViewer(req) {
   }
   return {
     userId,
+    workspaceId: String(tokenPayload.workspaceId),
     workspaceMemberId: String(member.id),
     email,
     name: [member.nameFirstName, member.nameLastName].filter(Boolean).join(' ').trim() || email || 'CRM 用户',
@@ -913,6 +914,16 @@ async function ensureSchema() {
       contact_id UUID REFERENCES conv.contacts(id), status TEXT DEFAULT 'open', agent_id TEXT,
       last_message_at TIMESTAMPTZ, last_message_preview TEXT, created_at TIMESTAMPTZ DEFAULT now(),
       updated_at TIMESTAMPTZ DEFAULT now(), UNIQUE(channel, external_chat_id));
+    CREATE TABLE IF NOT EXISTS conv.conversation_read_states (
+      conversation_id UUID REFERENCES conv.conversations(id) ON DELETE CASCADE,
+      scope_key TEXT NOT NULL,
+      last_read_at TIMESTAMPTZ,
+      last_read_message_id UUID,
+      read_by_member_id TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (conversation_id, scope_key));
+    CREATE INDEX IF NOT EXISTS conversation_read_states_scope_idx
+      ON conv.conversation_read_states(scope_key, conversation_id);
     CREATE TABLE IF NOT EXISTS conv.conversation_participants (
       conversation_id UUID REFERENCES conv.conversations(id) ON DELETE CASCADE,
       workspace_member_id TEXT NOT NULL,
@@ -2283,6 +2294,12 @@ app.post('/api/meta/webhook', (req, res) => {
   return res.status(400).json({ error: 'unsupported Meta webhook object' });
 });
 
+// 官网由销售团队共享已读；WhatsApp 按绑定账号所属用户独立计算。
+function conversationReadScopeKey(viewer, channel) {
+  if (channel === 'website') return `website:workspace:${viewer.workspaceId}`;
+  return `${channel}:user:${viewer.userId}`;
+}
+
 app.get('/api/conversations', async (req, res) => {
   try {
     // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
@@ -2295,7 +2312,10 @@ app.get('/api/conversations', async (req, res) => {
       workspaceSchema,
       allowPrivilegedAllChannels: historyView,
     });
-    const listParams = visibility.params;
+    const listParams = [...visibility.params, viewer.workspaceId, viewer.userId];
+    const readScopeSql = `(CASE WHEN c.channel = 'website'
+      THEN 'website:workspace:' || $3::text
+      ELSE c.channel || ':user:' || $4::text END)`;
     const viewerRole = viewer.isBoss ? "'boss'" : `'${viewer.role || 'sales'}'`;
     // AI 模式（ai_enabled 为真）下：仅接管自己的会话可回复；AI 关闭时：非关闭会话销售均可直接回复，无需先接管。
     const aiEnabledExpr = `(COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'))`;
@@ -2309,6 +2329,7 @@ app.get('/api/conversations', async (req, res) => {
       WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
     )` : 'false';
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
+    COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
       'leadNo', COALESCE(o."leadNo"::text, ''),
@@ -2365,12 +2386,57 @@ app.get('/api/conversations', async (req, res) => {
     LEFT JOIN ${workspaceSchema}.opportunity o ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
     LEFT JOIN ${workspaceSchema}.person p ON p."deletedAt" IS NULL AND p.id = COALESCE(o."pointOfContactId", o."linkedPersonId")
     LEFT JOIN ${workspaceSchema}.company co ON co."deletedAt" IS NULL AND co.id = o."companyId"
+    LEFT JOIN conv.conversation_read_states read_state
+      ON read_state.conversation_id = c.id AND read_state.scope_key = ${readScopeSql}
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS unread_count
+      FROM conv.messages unread_message
+      WHERE unread_message.conversation_id = c.id
+        AND unread_message.sender_type = 'customer'
+        AND (read_state.last_read_at IS NULL OR unread_message.sent_at > read_state.last_read_at)
+    ) unread ON TRUE
     WHERE ${visibility.sql}
     ORDER BY c.last_message_at DESC NULLS LAST`, listParams);
     res.json(result.rows);
   } catch (error) {
     console.error('[conversations] list failed:', error.message);
     res.status(502).json({ error: '无法加载会话', detail: error.message });
+  }
+});
+
+app.post('/api/conversations/:id/read', async (req, res) => {
+  const access = await requireConversationAccess(req, res);
+  if (!access) return;
+  const { viewer, conversation } = access;
+  const scopeKey = conversationReadScopeKey(viewer, conversation.channel);
+  try {
+    const latest = await pool.query(
+      `SELECT id, sent_at AS "sentAt"
+         FROM conv.messages
+        WHERE conversation_id = $1 AND sender_type = 'customer'
+        ORDER BY sent_at DESC
+        LIMIT 1`,
+      [conversation.id],
+    );
+    const message = latest.rows[0];
+    if (!message) return res.json({ conversationId: conversation.id, scopeKey, marked: false });
+    await pool.query(
+      `INSERT INTO conv.conversation_read_states(
+         conversation_id, scope_key, last_read_at, last_read_message_id, read_by_member_id)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (conversation_id, scope_key) DO UPDATE SET
+         last_read_at = EXCLUDED.last_read_at,
+         last_read_message_id = EXCLUDED.last_read_message_id,
+         read_by_member_id = EXCLUDED.read_by_member_id,
+         updated_at = now()
+       WHERE conv.conversation_read_states.last_read_at IS NULL
+          OR conv.conversation_read_states.last_read_at < EXCLUDED.last_read_at`,
+      [conversation.id, scopeKey, message.sentAt, message.id, viewer.workspaceMemberId],
+    );
+    res.json({ conversationId: conversation.id, scopeKey, marked: true, readThroughMessageId: message.id, readThroughAt: message.sentAt });
+  } catch (error) {
+    console.error('[conversations] mark read failed:', error.message);
+    res.status(502).json({ error: '标记已读失败' });
   }
 });
 

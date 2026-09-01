@@ -47,7 +47,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     setConversations(current => list.map(conv => ({
       ...conv,
       messages: current.find(item => item.id === conv.id)?.messages ?? [],
-      unread: 0,
+      unread: Number(conv.unreadCount || 0),
     })))
     setSelectedId(current => {
       if (current && list.some(conv => conv.id === current)) return current
@@ -80,6 +80,8 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       if (sameMessageList(conv.messages, messages)) return conv
       return { ...conv, messages }
     }))
+    // 官网团队已读、WhatsApp 个人已读都以服务端游标为准；页面在前台且消息加载成功后才标记。
+    if (document.visibilityState === 'visible') markRead(convId).catch(error => console.error(error))
   }
 
   useEffect(() => {
@@ -199,13 +201,19 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     return data
   }
 
-  function markRead(convId) {
-    setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, unread: 0 }))
+  async function markRead(convId) {
+    if (!convId || document.visibilityState !== 'visible') return
+    await requireAccessToken()
+    const response = await fetch(`/conv-api/conversations/${convId}/read`, {
+      method: 'POST',
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+    })
+    if (!response.ok) throw new Error('标记已读失败')
+    setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, unread: 0, unreadCount: 0 }))
   }
 
   function selectConversation(id) {
     setSelectedId(id)
-    markRead(id)
   }
 
   return {
