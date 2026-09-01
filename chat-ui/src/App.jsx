@@ -42,8 +42,8 @@ function PresenceSwitch({ status, disabled, onClick }) {
       style={{
         width: 30, height: 30, borderRadius: 6, border: 'none', padding: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
-        background: online ? '#dcfce7' : '#f4f4f5',
-        color: online ? '#16a34a' : 'var(--text-muted)',
+        background: online ? '#16a34a' : '#f4f4f5',
+        color: online ? '#fff' : 'var(--text-muted)',
         cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1,
         transition: 'background .18s ease, opacity .18s ease',
       }}
