@@ -282,6 +282,8 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
   const [input, setInput] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
+  const [presencePromptOpen, setPresencePromptOpen] = useState(false)
+  const [presenceSwitching, setPresenceSwitching] = useState(false)
   const [switching, setSwitching] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
@@ -363,6 +365,30 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
     } finally {
       setSwitching(false)
     }
+  }
+
+  async function confirmOnlineAndTakeover() {
+    if (!presence?.setPresenceStatus || presenceSwitching) return
+    setPresenceSwitching(true)
+    try {
+      const changed = await presence.setPresenceStatus('online')
+      if (!changed) return
+      setPresencePromptOpen(false)
+      await onTakeover('takeover')
+      setSendError('')
+    } catch (error) {
+      setSendError(error.message)
+    } finally {
+      setPresenceSwitching(false)
+    }
+  }
+
+  function requestAction(action) {
+    if (action === 'takeover' && conv.channel === 'website' && presence?.status !== 'online') {
+      setPresencePromptOpen(true)
+      return
+    }
+    setPendingAction(action)
   }
 
   const supportsAttachments = ['website', 'whatsapp'].includes(conv.channel)
@@ -619,7 +645,63 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
       </div>
 
       {/* Action bar */}
-      <ActionBar conv={conv} onRequestAction={setPendingAction} />
+      <ActionBar conv={conv} onRequestAction={requestAction} />
+
+      {presencePromptOpen && (
+        <div
+          role="presentation"
+          onClick={() => !presenceSwitching && setPresencePromptOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 290, background: 'rgba(0,0,0,.42)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="offline-takeover-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 'min(390px, 100%)', borderRadius: 8, background: 'var(--bg-primary)',
+              border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,.28)', overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '16px 18px 10px' }}>
+              <div id="offline-takeover-title" style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                当前处于离线状态
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+                切换为人工接管前，需要先打开上线状态。保持离线时，会话将继续由 AI 接管。
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px 16px',
+              borderTop: '1px solid var(--border-soft)',
+            }}>
+              <button
+                type="button"
+                onClick={() => setPresencePromptOpen(false)}
+                disabled={presenceSwitching}
+                style={{
+                  height: 32, padding: '0 14px', borderRadius: 6, border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--text-secondary)', cursor: presenceSwitching ? 'default' : 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                }}
+              >保持 AI 接管</button>
+              <button
+                type="button"
+                onClick={confirmOnlineAndTakeover}
+                disabled={presenceSwitching}
+                style={{
+                  height: 32, padding: '0 14px', borderRadius: 6, border: 'none', background: '#16a34a',
+                  color: '#fff', cursor: presenceSwitching ? 'default' : 'pointer', opacity: presenceSwitching ? .7 : 1,
+                  fontSize: 12, fontWeight: 700,
+                }}
+              >{presenceSwitching ? '处理中…' : '切换在线并接入人工'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingAction && (
         <div style={{
