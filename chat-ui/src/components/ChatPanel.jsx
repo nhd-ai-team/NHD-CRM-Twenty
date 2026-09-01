@@ -278,7 +278,7 @@ function btnStyle(variant, disabled = false) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggleSidebar, presence }) {
+export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNoticeSeen, layout, onToggleSidebar, presence }) {
   const [input, setInput] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
@@ -289,6 +289,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
   const [sendError, setSendError] = useState('')
   const [handoffPromptId, setHandoffPromptId] = useState(null)
   const [dismissedHandoffId, setDismissedHandoffId] = useState(null)
+  const [returnNoticeId, setReturnNoticeId] = useState(null)
   const bottomRef = useRef(null)
   const fileInputRef = useRef(null)
   const composingRef = useRef(false)
@@ -303,6 +304,10 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
       : null
     setHandoffPromptId(requestId || null)
   }, [conv?.id, conv?.permissions?.canRespondHandoff, conv?.handoff?.id, dismissedHandoffId])
+
+  useEffect(() => {
+    setReturnNoticeId(conv?.returnNotice?.id || null)
+  }, [conv?.id, conv?.returnNotice?.id])
 
   const aiMode = !!(conv?.aiControl || {}).enabled
 
@@ -767,7 +772,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
             <div style={{ padding: '16px 18px 10px' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>销售主管请求接管会话</div>
               <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。请知悉：10 秒后会话将自动转交给主管，您无需接受或拒绝。
+                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。请知悉：10 秒后会话将自动转交给主管。
               </div>
             </div>
             <div style={{
@@ -783,6 +788,51 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
                   padding: '7px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)',
                   color: '#fff', cursor: 'pointer',
                   fontSize: 12, fontWeight: 700,
+                }}
+              >知道了</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {returnNoticeId && (
+        <div
+          role="presentation"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 195, background: 'rgba(0,0,0,.42)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            style={{
+              width: 'min(400px, 100%)', borderRadius: 8, background: 'var(--bg-primary)',
+              border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,.28)', overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '16px 18px 10px' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>会话已交还</div>
+              <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+                {conv.returnNotice?.message || '销售主管已将会话交还给你。'}
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', padding: '12px 18px 16px',
+              borderTop: '1px solid var(--border-soft)',
+            }}>
+              <button
+                onClick={async () => {
+                  try {
+                    await onMarkHandoffNoticeSeen?.(returnNoticeId)
+                    setReturnNoticeId(null)
+                  } catch (error) {
+                    setSendError(error.message)
+                  }
+                }}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)',
+                  color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700,
                 }}
               >知道了</button>
             </div>

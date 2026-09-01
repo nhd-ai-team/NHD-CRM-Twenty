@@ -199,6 +199,20 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     await loadMessages(convId)
   }
 
+  async function markHandoffNoticeSeen(convId, noticeId) {
+    if (!convId || !noticeId) return
+    await requireAccessToken()
+    const response = await fetch(`/conv-api/conversations/${convId}/handoff-notice/${noticeId}`, {
+      method: 'PATCH',
+      headers: withTwentyAuthHeaders(),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || '通知状态更新失败')
+    setConversations(current => current.map(conv => conv.id === convId
+      ? { ...conv, returnNotice: null }
+      : conv))
+  }
+
   async function closeConversation(convId) {
     if (!convId) return
     await requireAccessToken()
@@ -268,7 +282,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, respondHandoff, closeConversation, renameConversation,
+    sendMessage, setTakeover, respondHandoff, markHandoffNoticeSeen, closeConversation, renameConversation,
     reload: loadConversations,
   }
 }

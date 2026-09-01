@@ -1139,6 +1139,17 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS conversation_handoff_pending_idx
       ON conv.conversation_handoff_requests(status, effective_at);
     ALTER TABLE conv.conversation_handoff_requests ADD COLUMN IF NOT EXISTS decision TEXT;
+    CREATE TABLE IF NOT EXISTS conv.conversation_handoff_notices (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      conversation_id UUID NOT NULL REFERENCES conv.conversations(id) ON DELETE CASCADE,
+      recipient_member_id TEXT NOT NULL,
+      returned_by_member_id TEXT NOT NULL,
+      message TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      seen_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS conversation_handoff_notice_recipient_idx
+      ON conv.conversation_handoff_notices(recipient_member_id, seen_at, created_at DESC);
     -- 会话归属（多账号）：channel_owner=WA号主，owner=当前客户负责人
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
@@ -2472,6 +2483,11 @@ app.get('/api/conversations', async (req, res) => {
       'effectiveAt', pending_handoff.effective_at,
       'requestedByName', pending_handoff.requested_by_name
     ) END AS handoff,
+    CASE WHEN return_notice.id IS NULL THEN NULL ELSE json_build_object(
+      'id', return_notice.id,
+      'message', return_notice.message,
+      'createdAt', return_notice.created_at
+    ) END AS "returnNotice",
     json_build_object('id', ct.id,
       -- 需求一：最终显示名由后端算好（人工名优先 → 渠道原始名 → 手机号/邮箱/外部 ID 兜底），前端不再自行拼接
       'name', COALESCE(NULLIF(ct.display_name, ''), NULLIF(ct.channel_display_name, ''), NULLIF(ct.phone, ''), NULLIF(ct.email, ''), ct.external_id, ''),
@@ -2509,6 +2525,15 @@ app.get('/api/conversations', async (req, res) => {
        WHERE r.conversation_id = c.id AND r.status = 'pending'
        ORDER BY r.requested_at DESC LIMIT 1
     ) pending_handoff ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT n.id, n.message, n.created_at
+        FROM conv.conversation_handoff_notices n
+       WHERE n.conversation_id = c.id
+         AND n.recipient_member_id = $1
+         AND n.seen_at IS NULL
+       ORDER BY n.created_at DESC
+       LIMIT 1
+    ) return_notice ON TRUE
     LEFT JOIN LATERAL (
       SELECT r.id, r.from_agent_id,
              NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS from_agent_name
@@ -3378,6 +3403,13 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
         [`system:${conversation.id}:${Date.now()}:transfer-return`, conversation.id,
           `销售主管已将会话交还给 ${handoff.from_agent_name || '原销售'}`, viewer.userId],
       );
+      await client.query(
+        `INSERT INTO conv.conversation_handoff_notices(
+           conversation_id, recipient_member_id, returned_by_member_id, message)
+         VALUES ($1, $2, $3, $4)`,
+        [conversation.id, handoff.from_agent_id, viewer.workspaceMemberId,
+          `销售主管已将会话交还给你（${handoff.from_agent_name || '原销售'}）`],
+      );
       await client.query('COMMIT');
       syncConversationToHistory(conversation.id, { createIfMissing: false }).catch(() => {});
       return res.json({
@@ -3447,6 +3479,25 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     res.status(502).json({ error: 'status switch failed', detail: error.message });
   } finally {
     client.release();
+  }
+});
+
+app.patch('/api/conversations/:id/handoff-notice/:noticeId', requireSameSite, async (req, res) => {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+  try {
+    const result = await pool.query(
+      `UPDATE conv.conversation_handoff_notices
+          SET seen_at = now()
+        WHERE id = $1 AND conversation_id = $2 AND recipient_member_id = $3 AND seen_at IS NULL
+        RETURNING id`,
+      [req.params.noticeId, req.params.id, viewer.workspaceMemberId],
+    );
+    if (!result.rowCount) return res.status(404).json({ error: '通知不存在或已处理' });
+    return res.json({ id: result.rows[0].id, seen: true });
+  } catch (error) {
+    console.error('[handoff-notice] mark seen failed:', error.message);
+    return res.status(502).json({ error: '通知状态更新失败' });
   }
 });
 
