@@ -2411,9 +2411,11 @@ app.post('/api/conversations/:id/read', async (req, res) => {
   const scopeKey = conversationReadScopeKey(viewer, conversation.channel);
   try {
     const latest = await pool.query(
-      `SELECT id, sent_at AS "sentAt"
+      `SELECT id, now() AS "readAt"
          FROM conv.messages
-        WHERE conversation_id = $1 AND sender_type = 'customer'
+        WHERE conversation_id = $1
+          AND sender_type = 'customer'
+          AND sent_at <= now()
         ORDER BY sent_at DESC
         LIMIT 1`,
       [conversation.id],
@@ -2431,7 +2433,7 @@ app.post('/api/conversations/:id/read', async (req, res) => {
          updated_at = now()
        WHERE conv.conversation_read_states.last_read_at IS NULL
           OR conv.conversation_read_states.last_read_at < EXCLUDED.last_read_at`,
-      [conversation.id, scopeKey, message.sentAt, message.id, viewer.workspaceMemberId],
+      [conversation.id, scopeKey, message.readAt, message.id, viewer.workspaceMemberId],
     );
     res.json({ conversationId: conversation.id, scopeKey, marked: true, readThroughMessageId: message.id, readThroughAt: message.sentAt });
   } catch (error) {
@@ -3202,7 +3204,7 @@ app.patch('/api/conversations/:id/name', requireSameSite, async (req, res) => {
     // 避免跨渠道相同 external_id 或空 conversation_id 误伤其他客户。
     const currentResult = await client.query(
       `SELECT ct.id, ct.display_name, ct.channel_display_name, ct.display_name_source,
-              ct.phone, ct.email, ct.external_id
+              ct.phone, ct.email, ct.external_id, ct.twenty_opportunity_id
          FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
         WHERE c.id = $1 FOR UPDATE OF ct`,
       [req.params.id],
@@ -3224,6 +3226,17 @@ app.patch('/api/conversations/:id/name', requireSameSite, async (req, res) => {
         RETURNING id, display_name, display_name_source, channel_display_name`,
       [contact.id, nextName, nextSource, authenticated.actor.id],
     );
+    // 对话名称代表联系人身份；已关联线索时同步联系人姓名，避免工作台与线索详情不一致。
+    // 不更新 opportunity.name/companyId，防止把联系人名误写为公司名称。
+    if (contact.twenty_opportunity_id) {
+      const schema = await getWorkspaceSchema();
+      await client.query(
+        `UPDATE ${schema}.opportunity
+            SET "lianXiRenXingMing" = $2, "updatedAt" = now()
+          WHERE id = $1 AND "deletedAt" IS NULL`,
+        [contact.twenty_opportunity_id, nextName],
+      );
+    }
     await client.query('COMMIT');
     const row = updated.rows[0];
     recordAuditEvent('conversation.name_changed', {

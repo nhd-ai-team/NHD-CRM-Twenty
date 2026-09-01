@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { waitForTwentyAccessToken, withTwentyAuthHeaders } from '../utils/twentyAuth'
 
 // 两批消息是否等价：条数、末条 id 与送达时间一致即视为没有新内容。
@@ -17,6 +17,8 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const [search, setSearch] = useState('')
   const [selectedId, setSelectedId] = useState(null)
   const [authExpired, setAuthExpired] = useState(false)
+  const listRequestRef = useRef(0)
+  const readInFlightRef = useRef(new Set())
 
   async function requireAccessToken() {
     const token = await waitForTwentyAccessToken()
@@ -29,6 +31,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
 
   async function loadConversations() {
     if (authExpired) return
+    const requestId = ++listRequestRef.current
     await requireAccessToken()
     // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
     const params = new URLSearchParams({ _: String(Date.now()) })
@@ -44,6 +47,8 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     if (!response.ok) throw new Error('无法加载会话')
     // 邮箱是独立板块（见 useEmails），渠道工作台默认不展示 email 会话；只读历史页可按需复用全量接口。
     const list = (await response.json()).filter(c => includeEmail || c.channel !== 'email')
+    // Mark-read-triggered requests supersede older polling responses.
+    if (requestId != listRequestRef.current) return
     setConversations(current => list.map(conv => ({
       ...conv,
       messages: current.find(item => item.id === conv.id)?.messages ?? [],
@@ -81,7 +86,9 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       return { ...conv, messages }
     }))
     // 官网团队已读、WhatsApp 个人已读都以服务端游标为准；页面在前台且消息加载成功后才标记。
-    if (document.visibilityState === 'visible') markRead(convId).catch(error => console.error(error))
+    if (document.visibilityState === 'visible') {
+      await markRead(convId).catch(error => console.error(error))
+    }
   }
 
   useEffect(() => {
@@ -203,15 +210,22 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
 
   async function markRead(convId) {
     if (!convId || document.visibilityState !== 'visible') return
-    await requireAccessToken()
-    const response = await fetch(`/conv-api/conversations/${convId}/read`, {
-      method: 'POST',
-      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
-    })
-    if (!response.ok) throw new Error('标记已读失败')
-    setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, unread: 0, unreadCount: 0 }))
+    if (readInFlightRef.current.has(convId)) return
+    readInFlightRef.current.add(convId)
+    try {
+      await requireAccessToken()
+      const response = await fetch('/conv-api/conversations/' + convId + '/read', {
+        method: 'POST',
+        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+      })
+      if (!response.ok) throw new Error('标记已读失败')
+      setConversations(prev => prev.map(c => c.id !== convId ? c : { ...c, unread: 0, unreadCount: 0 }))
+      // Reconcile with the server cursor before the next polling cycle.
+      await loadConversations()
+    } finally {
+      readInFlightRef.current.delete(convId)
+    }
   }
-
   function selectConversation(id) {
     setSelectedId(id)
   }
