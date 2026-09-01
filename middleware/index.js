@@ -454,6 +454,49 @@ async function resolveConversationViewer(req) {
   };
 }
 
+app.get('/api/presence', async (req, res) => {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+  try {
+    const result = await pool.query(
+      `SELECT status, updated_at AS "updatedAt"
+         FROM conv.agent_presence
+        WHERE workspace_id = $1 AND user_id = $2
+        LIMIT 1`,
+      [viewer.workspaceId, viewer.userId],
+    );
+    return res.json({ status: result.rows[0]?.status || 'offline', updatedAt: result.rows[0]?.updatedAt || null });
+  } catch (error) {
+    console.error('[presence] read failed:', error.message);
+    return res.status(503).json({ error: '无法读取接待状态' });
+  }
+});
+
+app.patch('/api/presence', async (req, res) => {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+  const status = String(req.body?.status || '').trim().toLowerCase();
+  if (!['online', 'offline'].includes(status)) {
+    return res.status(400).json({ error: '接待状态只能是 online 或 offline' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO conv.agent_presence(workspace_id, user_id, workspace_member_id, status, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (workspace_id, user_id) DO UPDATE SET
+         workspace_member_id = EXCLUDED.workspace_member_id,
+         status = EXCLUDED.status,
+         updated_at = now()
+       RETURNING status, updated_at AS "updatedAt"`,
+      [viewer.workspaceId, viewer.userId, viewer.workspaceMemberId, status],
+    );
+    return res.json(result.rows[0]);
+  } catch (error) {
+    console.error('[presence] update failed:', error.message);
+    return res.status(503).json({ error: '接待状态保存失败' });
+  }
+});
+
 async function requireConversationAccess(req, res, options = {}) {
   const id = req.params?.id;
   // 防御：非法 UUID 直接 400，避免 pg 抛未捕获异常导致整进程崩溃
@@ -1050,6 +1093,16 @@ async function ensureSchema() {
       granted_by TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    -- 当前用户的接待状态。状态属于 workspace + user，不与 WhatsApp 绑定状态混用。
+    CREATE TABLE IF NOT EXISTS conv.agent_presence (
+      workspace_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      workspace_member_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online', 'offline')),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (workspace_id, user_id));
+    CREATE INDEX IF NOT EXISTS agent_presence_workspace_status_idx
+      ON conv.agent_presence(workspace_id, status, updated_at DESC);
     -- 会话归属（多账号）：channel_owner=WA号主，owner=当前客户负责人
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
