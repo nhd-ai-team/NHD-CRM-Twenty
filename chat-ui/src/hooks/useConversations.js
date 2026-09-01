@@ -178,8 +178,9 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
         },
       }))
     }
-    // 刷新失败时保留上面的本地会话状态，避免嵌入式工作台因一次列表网络波动变白。
-    loadConversations().catch(error => console.error(error))
+    // 交还成功后不立即全量刷新：当前会话已经在本地更新，后台轮询会完成最终对齐。
+    // 这样不会让宿主 CRM 在交还动作后因列表请求波动重置嵌入式工作台。
+    if (action !== 'return') loadConversations().catch(error => console.error(error))
   }
 
   async function respondHandoff(convId, action) {
