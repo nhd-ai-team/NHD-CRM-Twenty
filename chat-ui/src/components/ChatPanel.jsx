@@ -208,8 +208,8 @@ function ActionBar({ conv, onRequestAction }) {
       ? 'AI 客服未激活，暂不可接入人工'
       : ''
 
-  // AI 关闭：直接隐藏接管/托管按钮（无需接管即可收发）；已关闭：不渲染，避免底部残留空白栏。
-  if (!aiMode) return null
+  // AI 关闭时只隐藏 AI 动作；销售之间的会话转交不依赖 AI 开关。
+  if (!aiMode && !canTransferSales) return null
   if (!canTakeover && !canAiHost && !canTransferSales && isClosed) return null
 
   return (
@@ -219,7 +219,7 @@ function ActionBar({ conv, onRequestAction }) {
       flexShrink: 0,
     }}>
       {/* AI -> 人工：这里不使用「接管销售会话」，避免与销售之间的转交混淆。 */}
-      {!isClosed && !isTakeover && (
+      {aiMode && !isClosed && !isTakeover && (
         <button
           onClick={() => canTakeover && onRequestAction('takeover')}
           disabled={!canTakeover}
@@ -229,7 +229,7 @@ function ActionBar({ conv, onRequestAction }) {
           <UserCheck size={13} /> 接入人工
         </button>
       )}
-      {!isClosed && isTakeover && (
+      {aiMode && !isClosed && isTakeover && (
         <button
           onClick={() => canAiHost && onRequestAction('release')}
           disabled={!canAiHost}
@@ -239,12 +239,11 @@ function ActionBar({ conv, onRequestAction }) {
           <Bot size={13} /> AI托管
         </button>
       )}
-      {!isClosed && isTakeover && (
+      {canTransferSales && (
         <button
-          onClick={() => canTransferSales && onRequestAction('transfer')}
-          disabled={!canTransferSales}
-          title={canTransferSales ? '通知当前销售后，10秒后完成会话转交' : ''}
-          style={btnStyle('accent', !canTransferSales)}
+          onClick={() => onRequestAction('transfer')}
+          title="通知当前销售后，10秒后完成会话转交"
+          style={btnStyle('accent')}
         >
           <UserCheck size={13} /> 接管销售会话
         </button>
@@ -267,13 +266,15 @@ function btnStyle(variant, disabled = false) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggleSidebar, presence }) {
+export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename, layout, onToggleSidebar, presence }) {
   const [input, setInput] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
   const [switching, setSwitching] = useState(false)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
+  const [handoffPromptId, setHandoffPromptId] = useState(null)
+  const [handoffSwitching, setHandoffSwitching] = useState(false)
   const bottomRef = useRef(null)
   const fileInputRef = useRef(null)
   const composingRef = useRef(false)
@@ -281,6 +282,11 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conv?.messages])
+
+  useEffect(() => {
+    const requestId = conv?.permissions?.canRespondHandoff ? conv?.handoff?.id : null
+    setHandoffPromptId(requestId || null)
+  }, [conv?.id, conv?.permissions?.canRespondHandoff, conv?.handoff?.id])
 
   const aiMode = !!(conv?.aiControl || {}).enabled
 
@@ -342,6 +348,20 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
       setSendError(error.message)
     } finally {
       setSwitching(false)
+    }
+  }
+
+  async function respondToHandoff(action) {
+    if (!onRespondHandoff) return
+    setHandoffSwitching(true)
+    try {
+      await onRespondHandoff(action)
+      setHandoffPromptId(null)
+      setSendError('')
+    } catch (error) {
+      setSendError(error.message)
+    } finally {
+      setHandoffSwitching(false)
     }
   }
 
@@ -637,6 +657,52 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggle
               >
                 {switching ? '处理中…' : pendingAction === 'takeover' ? '确认接入人工' : pendingAction === 'transfer' ? '确认接管' : '确认托管'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {handoffPromptId && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed', inset: 0, zIndex: 190, background: 'rgba(0,0,0,.42)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18,
+          }}
+        >
+          <div style={{
+            width: 'min(400px, 100%)', borderRadius: 8, background: 'var(--bg-primary)',
+            border: '1px solid var(--border)', boxShadow: '0 18px 50px rgba(0,0,0,.28)', overflow: 'hidden',
+          }}>
+            <div style={{ padding: '16px 18px 10px' }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>销售主管请求接管会话</div>
+              <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
+                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。接受后将在 10 秒内完成转交，拒绝则保持当前负责人不变。
+              </div>
+            </div>
+            <div style={{
+              display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '12px 18px 16px',
+              borderTop: '1px solid var(--border-soft)',
+            }}>
+              <button
+                onClick={() => respondToHandoff('reject')}
+                disabled={handoffSwitching}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--text-secondary)', cursor: handoffSwitching ? 'default' : 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                }}
+              >拒绝</button>
+              <button
+                onClick={() => respondToHandoff('accept')}
+                disabled={handoffSwitching}
+                style={{
+                  padding: '7px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)',
+                  color: '#fff', cursor: handoffSwitching ? 'default' : 'pointer', opacity: handoffSwitching ? 0.7 : 1,
+                  fontSize: 12, fontWeight: 700,
+                }}
+              >{handoffSwitching ? '处理中…' : '接受'}</button>
             </div>
           </div>
         </div>

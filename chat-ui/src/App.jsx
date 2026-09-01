@@ -196,7 +196,7 @@ export default function App() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, renameConversation, reload: reloadConversations,
+    sendMessage, setTakeover, respondHandoff, renameConversation, reload: reloadConversations,
   } = useConversations()
 
   const aiSettings = useAiSettings()
@@ -279,10 +279,11 @@ export default function App() {
             conv={selected}
             onSend={sendMessage}
             onTakeover={(action) => setTakeover(selected?.id, action)}
-          onRename={renameConversation}
-          layout={layout}
-          onToggleSidebar={() => setSidebarOpen(o => !o)}
-          presence={presence}
+            onRespondHandoff={(action) => respondHandoff(selected?.id, action)}
+            onRename={renameConversation}
+            layout={layout}
+            onToggleSidebar={() => setSidebarOpen(o => !o)}
+            presence={presence}
         />
         </div>
       </div>

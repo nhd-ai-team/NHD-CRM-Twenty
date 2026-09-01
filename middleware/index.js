@@ -1126,6 +1126,7 @@ async function ensureSchema() {
       requested_by_member_id TEXT NOT NULL,
       from_agent_id TEXT,
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+      decision TEXT CHECK (decision IN ('accepted', 'rejected')),
       requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       effective_at TIMESTAMPTZ NOT NULL,
       completed_at TIMESTAMPTZ
@@ -1134,6 +1135,7 @@ async function ensureSchema() {
       ON conv.conversation_handoff_requests(conversation_id) WHERE status = 'pending';
     CREATE INDEX IF NOT EXISTS conversation_handoff_pending_idx
       ON conv.conversation_handoff_requests(status, effective_at);
+    ALTER TABLE conv.conversation_handoff_requests ADD COLUMN IF NOT EXISTS decision TEXT;
     -- 会话归属（多账号）：channel_owner=WA号主，owner=当前客户负责人
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
@@ -2445,11 +2447,15 @@ app.get('/api/conversations', async (req, res) => {
       'canReply', ${canReplyExpression},
       'canTakeover', ${canTakeoverExpression},
       'canTransferSales', ${canTransferExpression},
+      'canRespondHandoff', (pending_handoff.id IS NOT NULL AND pending_handoff.from_agent_id = $1),
       'isAssignedToMe', ${assignedToMeExpression},
       'hasTakenOverBefore', ${takenBeforeExpression}
     ) AS permissions,
     CASE WHEN pending_handoff.id IS NULL THEN NULL ELSE json_build_object(
       'status', pending_handoff.status,
+      'id', pending_handoff.id,
+      'fromAgentId', pending_handoff.from_agent_id,
+      'decision', pending_handoff.decision,
       'requestedAt', pending_handoff.requested_at,
       'effectiveAt', pending_handoff.effective_at,
       'requestedByName', pending_handoff.requested_by_name
@@ -2481,7 +2487,7 @@ app.get('/api/conversations', async (req, res) => {
     LEFT JOIN ${workspaceSchema}.person p ON p."deletedAt" IS NULL AND p.id = COALESCE(o."pointOfContactId", o."linkedPersonId")
     LEFT JOIN ${workspaceSchema}.company co ON co."deletedAt" IS NULL AND co.id = o."companyId"
     LEFT JOIN LATERAL (
-      SELECT r.id, r.status, r.requested_at, r.effective_at,
+      SELECT r.id, r.status, r.from_agent_id, r.decision, r.requested_at, r.effective_at,
              NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS requested_by_name
         FROM conv.conversation_handoff_requests r
         LEFT JOIN ${workspaceSchema}."workspaceMember" wm
@@ -3179,6 +3185,70 @@ app.post('/api/email/sync-now', requireSameSite, async (_req, res) => {
   } catch (error) {
     console.error('[email] manual sync failed:', error.message);
     res.status(502).json({ error: 'email sync failed', detail: error.message });
+  }
+});
+
+app.patch('/api/conversations/:id/handoff', requireSameSite, async (req, res) => {
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  if (!['accept', 'reject'].includes(action)) return res.status(400).json({ error: '接管请求操作无效' });
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const requestResult = await client.query(
+      `SELECT r.id, r.conversation_id, r.requested_by_member_id, r.from_agent_id,
+              c.channel, c.status
+         FROM conv.conversation_handoff_requests r
+         JOIN conv.conversations c ON c.id = r.conversation_id
+        WHERE r.conversation_id = $1 AND r.status = 'pending'
+          AND r.from_agent_id = $2
+        ORDER BY r.requested_at DESC
+        LIMIT 1
+        FOR UPDATE OF r`,
+      [req.params.id, viewer.workspaceMemberId],
+    );
+    const request = requestResult.rows[0];
+    if (!request) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: '没有找到需要处理的接管请求' });
+    }
+    if (action === 'reject') {
+      await client.query(
+        `UPDATE conv.conversation_handoff_requests
+            SET decision = 'rejected', status = 'cancelled', completed_at = now()
+          WHERE id = $1`,
+        [request.id],
+      );
+      await client.query(
+        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+         VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
+        [`system:${request.conversation_id}:${Date.now()}:transfer-rejected`, request.conversation_id,
+          `当前销售已拒绝销售主管的接管请求`, viewer.userId],
+      );
+      await client.query('COMMIT');
+      return res.json({ status: 'cancelled', decision: 'rejected' });
+    }
+    await client.query(
+      `UPDATE conv.conversation_handoff_requests
+          SET decision = 'accepted'
+        WHERE id = $1`,
+      [request.id],
+    );
+    await client.query(
+      `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+       VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
+      [`system:${request.conversation_id}:${Date.now()}:transfer-accepted`, request.conversation_id,
+        `当前销售已接受销售主管的接管请求`, viewer.userId],
+    );
+    await client.query('COMMIT');
+    return res.json({ status: 'pending', decision: 'accepted' });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[handoff] response failed:', error.message);
+    return res.status(502).json({ error: '接管请求处理失败' });
+  } finally {
+    client.release();
   }
 });
 
@@ -5711,7 +5781,7 @@ async function processPendingSalesHandoffs() {
     await client.query('BEGIN');
     const schema = await getWorkspaceSchema();
     const pending = await client.query(
-      `SELECT r.id, r.conversation_id, r.from_agent_id, r.requested_by_member_id,
+      `SELECT r.id, r.conversation_id, r.from_agent_id, r.requested_by_member_id, r.decision,
               wm."userId" AS requested_by_user_id,
               NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS requested_by_name
          FROM conv.conversation_handoff_requests r
@@ -5719,10 +5789,19 @@ async function processPendingSalesHandoffs() {
            ON wm.id::text = r.requested_by_member_id AND wm."deletedAt" IS NULL
         WHERE r.status = 'pending' AND r.effective_at <= now()
         ORDER BY r.effective_at
-        FOR UPDATE OF r SKIP LOCKED
-        LIMIT 20`,
+        LIMIT 20
+        FOR UPDATE OF r SKIP LOCKED`,
     );
     for (const row of pending.rows) {
+      if (row.decision === 'rejected') {
+        await client.query(
+          `UPDATE conv.conversation_handoff_requests
+              SET status = 'cancelled', completed_at = now()
+            WHERE id = $1`,
+          [row.id],
+        );
+        continue;
+      }
       const updated = await client.query(
         `UPDATE conv.conversations
             SET agent_id = $2, taken_over_at = now(), updated_at = now()

@@ -166,6 +166,22 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     await loadConversations()
   }
 
+  async function respondHandoff(convId, action) {
+    if (!convId) return
+    await requireAccessToken()
+    const response = await fetch(`/conv-api/conversations/${convId}/handoff`, {
+      method: 'PATCH',
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ action }),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}))
+      throw new Error(data.error || '接管请求处理失败')
+    }
+    await loadConversations()
+    await loadMessages(convId)
+  }
+
   async function closeConversation(convId) {
     if (!convId) return
     await requireAccessToken()
@@ -235,7 +251,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, closeConversation, renameConversation,
+    sendMessage, setTakeover, respondHandoff, closeConversation, renameConversation,
     reload: loadConversations,
   }
 }
