@@ -4,6 +4,8 @@
 
 ## 一、发布前代码检查
 
+每次推送 GitHub 前先同步文档：README、`docs/22`、本发布清单、端到端业务测试、相关专题文档和当次代码对齐记录。文档同步完成后再进行以下检查。
+
 在仓库根目录执行：
 
 ```bash
@@ -90,6 +92,7 @@ cat /tmp/ai-settings-batch-noauth.txt
 - `/conv-api/health` 返回 `{"status":"ok",...}`。
 - 容器内 `buildAiSettingResponses` 校验输出 `ai-settings-lib-ok`，确认 middleware 运行态加载的是最新 `lib/ai-settings.js`。
 - 未登录调用 `/conv-api/ai-settings/batch` 返回 `401`。
+- 点击销售主管的「交还会话」后，确认弹窗正常显示，确认后工作台不白屏；普通销售不显示主管专用接管/交还入口。
 
 注入层稳定性回归（2026-08-19 起必须手测）：
 
