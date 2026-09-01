@@ -11,7 +11,7 @@ import { installTwentyAuthMessageListener } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
 import { NewWhatsAppConversationModal } from './components/NewWhatsAppConversationModal'
-import { PanelRightOpen, PanelRightClose, Settings, Power } from 'lucide-react'
+import { PanelRightOpen, PanelRightClose, Settings } from 'lucide-react'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -28,6 +28,31 @@ function topIconButtonStyle(active = false) {
     color: active ? 'var(--accent)' : 'var(--text-muted)',
     cursor: 'pointer',
   }
+}
+
+function PresenceSwitch({ status, disabled, onClick }) {
+  const online = status === 'online'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={online ? '当前在线，点击切换为离线' : '当前离线，点击切换为在线'}
+      aria-label={online ? '切换为离线' : '切换为在线'}
+      style={{
+        width: 58, height: 28, padding: 3, border: 'none', borderRadius: 15,
+        display: 'flex', alignItems: 'center', justifyContent: online ? 'flex-end' : 'flex-start',
+        background: online ? '#16a34a' : '#d4d4d8',
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1,
+        transition: 'background .18s ease, opacity .18s ease',
+      }}
+    >
+      <span style={{
+        width: 22, height: 22, borderRadius: '50%', background: '#fff',
+        boxShadow: '0 1px 3px rgba(0,0,0,.24)', display: 'block',
+      }} />
+    </button>
+  )
 }
 
 function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpen, onToggleContact, aiSettings, presence }) {
@@ -81,25 +106,11 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
         flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 4,
         padding: '0 10px', borderLeft: '1px solid var(--border-soft)', position: 'relative',
       }}>
-        <button
-          onClick={() => setPendingPresenceStatus(presence.status === 'online' ? 'offline' : 'online')}
+        <PresenceSwitch
+          status={presence.status}
           disabled={presence.loading || presence.saving}
-          title={presence.error || (presence.status === 'online' ? '当前在线，点击切换为离线' : '当前离线，点击切换为在线')}
-          aria-label={presence.status === 'online' ? '切换为离线' : '切换为在线'}
-          style={{
-            ...topIconButtonStyle(presence.status === 'online'),
-            position: 'relative',
-            color: presence.status === 'online' ? '#16a34a' : 'var(--text-muted)',
-            opacity: presence.loading || presence.saving ? .55 : 1,
-          }}
-        >
-          <Power size={16} />
-          <span style={{
-            position: 'absolute', right: 3, bottom: 3, width: 6, height: 6,
-            borderRadius: '50%', background: presence.status === 'online' ? '#16a34a' : '#a1a1aa',
-            border: '1px solid var(--bg-primary)',
-          }} />
-        </button>
+          onClick={() => setPendingPresenceStatus(presence.status === 'online' ? 'offline' : 'online')}
+        />
         <button
           ref={gearRef}
           onClick={() => setAiOpen(o => !o)}
@@ -196,7 +207,7 @@ export default function App() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, respondHandoff, renameConversation, reload: reloadConversations,
+    sendMessage, setTakeover, renameConversation, reload: reloadConversations,
   } = useConversations()
 
   const aiSettings = useAiSettings()
@@ -279,7 +290,6 @@ export default function App() {
             conv={selected}
             onSend={sendMessage}
             onTakeover={(action) => setTakeover(selected?.id, action)}
-            onRespondHandoff={(action) => respondHandoff(selected?.id, action)}
             onRename={renameConversation}
             layout={layout}
             onToggleSidebar={() => setSidebarOpen(o => !o)}

@@ -496,6 +496,9 @@ app.patch('/api/presence', async (req, res) => {
        RETURNING status, updated_at AS "updatedAt"`,
       [viewer.workspaceId, viewer.userId, viewer.workspaceMemberId, status],
     );
+    if (status === 'offline') {
+      await releaseWebsiteTakeoversForOfflineAgents();
+    }
     return res.json(result.rows[0]);
   } catch (error) {
     console.error('[presence] update failed:', error.message);
@@ -3214,7 +3217,8 @@ app.post('/api/email/sync-now', requireSameSite, async (_req, res) => {
 
 app.patch('/api/conversations/:id/handoff', requireSameSite, async (req, res) => {
   const action = String(req.body?.action || '').trim().toLowerCase();
-  if (!['accept', 'reject'].includes(action)) return res.status(400).json({ error: '接管请求操作无效' });
+  // 销售主管接管销售会话不再允许原销售拒绝；该接口仅兼容旧客户端的确认请求。
+  if (action !== 'accept') return res.status(403).json({ error: '销售主管接管请求无需销售确认或拒绝' });
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
   const client = await pool.connect();
@@ -3236,22 +3240,6 @@ app.patch('/api/conversations/:id/handoff', requireSameSite, async (req, res) =>
     if (!request) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: '没有找到需要处理的接管请求' });
-    }
-    if (action === 'reject') {
-      await client.query(
-        `UPDATE conv.conversation_handoff_requests
-            SET decision = 'rejected', status = 'cancelled', completed_at = now()
-          WHERE id = $1`,
-        [request.id],
-      );
-      await client.query(
-        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
-         VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
-        [`system:${request.conversation_id}:${Date.now()}:transfer-rejected`, request.conversation_id,
-          `当前销售已拒绝销售主管的接管请求`, viewer.userId],
-      );
-      await client.query('COMMIT');
-      return res.json({ status: 'cancelled', decision: 'rejected' });
     }
     await client.query(
       `UPDATE conv.conversation_handoff_requests
@@ -5853,7 +5841,7 @@ async function releaseWebsiteAiTakeover(externalChatId) {
   if (!response.ok) throw new Error(await response.text());
 }
 
-// 销售之间的接管请求：先给原销售 10 秒提示，再在事务内原子转交发送权。
+// 销售之间的接管请求：先给原销售 10 秒提示，截止时自动转交发送权。
 async function processPendingSalesHandoffs() {
   const client = await pool.connect();
   try {
@@ -5872,21 +5860,6 @@ async function processPendingSalesHandoffs() {
         FOR UPDATE OF r SKIP LOCKED`,
     );
     for (const row of pending.rows) {
-      if (row.decision !== 'accepted') {
-        await client.query(
-          `UPDATE conv.conversation_handoff_requests
-              SET decision = 'expired', status = 'cancelled', completed_at = now()
-            WHERE id = $1`,
-          [row.id],
-        );
-        await client.query(
-          `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
-           VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
-          [`system:${row.conversation_id}:${Date.now()}:transfer-expired`, row.conversation_id,
-            '销售主管的接管请求因原销售未在规定时间内确认，已自动失效', row.requested_by_user_id],
-        );
-        continue;
-      }
       const updated = await client.query(
         `UPDATE conv.conversations
             SET agent_id = $2, taken_over_at = now(), updated_at = now()
@@ -5906,7 +5879,7 @@ async function processPendingSalesHandoffs() {
           `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
            VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
           [`system:${row.conversation_id}:${Date.now()}:transfer-complete`, row.conversation_id,
-            `销售会话已由 ${row.requested_by_name || '销售主管'} 接管`, row.requested_by_user_id],
+            `销售会话已由 ${row.requested_by_name || '销售主管'} 自动接管`, row.requested_by_user_id],
         );
         await client.query(
           `UPDATE conv.conversation_handoff_requests
@@ -5940,32 +5913,86 @@ async function processPendingSalesHandoffs() {
 //       因为官网可能未激活 AI 托管功能）；系统消息输出与审计均可审计，不影响业务数据。
 const TAKEOVER_IDLE_MINUTES = Math.max(1, Number(process.env.TAKEOVER_IDLE_MINUTES || 120));
 
+// 离线销售不应继续占用官网人工会话。释放后由官网 AI 继续接待。
+async function releaseWebsiteTakeoversForOfflineAgents() {
+  try {
+    const result = await pool.query(
+      `UPDATE conv.conversations c
+          SET status = 'open', agent_id = NULL, taken_over_at = NULL, updated_at = now()
+        WHERE c.channel = 'website' AND c.status = 'takeover'
+          AND NOT EXISTS (
+            SELECT 1 FROM conv.agent_presence p
+             WHERE p.workspace_member_id = c.agent_id
+               AND p.status = 'online'
+          )
+        RETURNING c.id, c.external_chat_id, c.agent_id AS "releasedAgentId"`,
+      [],
+    );
+    for (const row of result.rows) {
+      await pool.query(
+        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
+         VALUES ($1, $2, 'system', $3, 'system', now())`,
+        [`system:${row.id}:${Date.now()}:offline-ai`, row.id, '当前销售已离线，会话已自动切换为 AI 接管'],
+      );
+      try { await releaseWebsiteAiTakeover(row.external_chat_id); } catch (_error) { /* AI 服务不可用时不阻断状态释放 */ }
+      syncConversationToHistory(row.id, { createIfMissing: false }).catch(() => {});
+    }
+    return result.rows.length;
+  } catch (error) {
+    console.error('[offline-ai] release failed:', error.message);
+    return 0;
+  }
+}
+
 async function releaseIdleTakeovers() {
   if (!TAKEOVER_IDLE_MINUTES) return;
   try {
     const result = await pool.query(
-      `UPDATE conv.conversations c
-       SET status = 'open', agent_id = NULL, taken_over_at = NULL, updated_at = now()
-       WHERE c.channel = 'website'
-         AND c.status = 'takeover'
-         AND c.taken_over_at IS NOT NULL
-         AND c.taken_over_at < now() - ($1::int * INTERVAL '1 minute')
-         AND NOT EXISTS (
-           SELECT 1 FROM conv.messages m
-           WHERE m.conversation_id = c.id AND m.sender_type = 'agent'
-             AND m.sent_at > now() - ($1::int * INTERVAL '1 minute')
-         )
-       RETURNING c.id, c.agent_id, c.external_chat_id`,
+      `WITH idle AS (
+         SELECT c.id, c.agent_id, c.external_chat_id
+           FROM conv.conversations c
+          WHERE c.channel = 'website'
+            AND c.status = 'takeover'
+            AND c.taken_over_at IS NOT NULL
+            AND c.taken_over_at < now() - ($1::int * INTERVAL '1 minute')
+            AND NOT EXISTS (
+              SELECT 1 FROM conv.messages m
+               WHERE m.conversation_id = c.id AND m.sender_type = 'agent'
+                 AND m.sent_at > now() - ($1::int * INTERVAL '1 minute')
+            )
+          FOR UPDATE
+       ), updated AS (
+         UPDATE conv.conversations c
+            SET status = 'open', agent_id = NULL, taken_over_at = NULL, updated_at = now()
+           FROM idle
+          WHERE c.id = idle.id
+         RETURNING c.id, idle.agent_id AS "releasedAgentId", c.external_chat_id
+       )
+       SELECT * FROM updated`,
       [TAKEOVER_IDLE_MINUTES],
     );
     for (const row of result.rows) {
+      if (row.releasedAgentId) {
+        await pool.query(
+          `UPDATE conv.agent_presence
+              SET status = 'offline', updated_at = now()
+            WHERE workspace_member_id = $1 AND status = 'online'
+              AND NOT EXISTS (
+                SELECT 1 FROM conv.conversations c2
+                 WHERE c2.channel = 'website' AND c2.status = 'takeover'
+                   AND c2.agent_id = $1 AND c2.taken_over_at IS NOT NULL
+                   AND c2.taken_over_at >= now() - ($2::int * INTERVAL '1 minute')
+              )`,
+          [row.releasedAgentId, TAKEOVER_IDLE_MINUTES],
+        );
+      }
       // 沟通状态表单：超时自动释放 → 档案「会话状态」回退为进行中。
       syncConversationToHistory(row.id, { createIfMissing: false }).catch(() => {});
       await pool.query(
         `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
          VALUES ($1, $2, 'system', $3, 'system', now())`,
         [`system:${row.id}:${Date.now()}:auto-release`, row.id,
-         `会话因超过${TAKEOVER_IDLE_MINUTES}分钟无人工处理已自动释放`],
+         `超过${TAKEOVER_IDLE_MINUTES}分钟无人回复，销售已自动切换为离线，会话已切换为 AI 接管`],
       );
       // 官网若有 AI 服务且已配置，尝试通知释放（未激活/未配置时自动 no-op，不影响本流程）。
       try { await releaseWebsiteAiTakeover(row.external_chat_id); } catch (e) { /* 忽略 */ }
@@ -6453,6 +6480,9 @@ async function startServer() {
     console.log(`[auto-release] website idle takeover auto-release enabled (idle > ${TAKEOVER_IDLE_MINUTES}min)`);
   }
   setInterval(() => processPendingSalesHandoffs(), 1000);
+  // 启动后及每分钟清理已离线销售仍占用的官网人工会话。
+  releaseWebsiteTakeoversForOfflineAgents().catch(() => {});
+  setInterval(() => releaseWebsiteTakeoversForOfflineAgents().catch(() => {}), 60 * 1000);
 }
 
 if (require.main === module) {

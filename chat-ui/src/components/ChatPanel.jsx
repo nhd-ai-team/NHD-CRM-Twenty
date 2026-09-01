@@ -43,9 +43,9 @@ function validateAttachment(file) {
   return ''
 }
 
-function StatusBadge({ status }) {
+function StatusBadge({ status, aiControl }) {
   const map = {
-    open:     { label: '进行中',   bg: 'var(--green-soft)',   color: 'var(--green)' },
+    open:     { label: aiControl?.enabled ? 'AI 接管' : '进行中', bg: aiControl?.enabled ? 'var(--accent-soft)' : 'var(--green-soft)', color: aiControl?.enabled ? 'var(--accent)' : 'var(--green)' },
     takeover: { label: '人工接待', bg: 'var(--orange-soft)',  color: 'var(--orange)' },
     closed:   { label: '已关闭',   bg: 'var(--bg-active)',    color: 'var(--text-muted)' },
   }
@@ -278,7 +278,7 @@ function btnStyle(variant, disabled = false) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename, layout, onToggleSidebar, presence }) {
+export function ChatPanel({ conv, onSend, onTakeover, onRename, layout, onToggleSidebar, presence }) {
   const [input, setInput] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
@@ -286,7 +286,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [handoffPromptId, setHandoffPromptId] = useState(null)
-  const [handoffSwitching, setHandoffSwitching] = useState(false)
+  const [dismissedHandoffId, setDismissedHandoffId] = useState(null)
   const bottomRef = useRef(null)
   const fileInputRef = useRef(null)
   const composingRef = useRef(false)
@@ -296,9 +296,11 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
   }, [conv?.messages])
 
   useEffect(() => {
-    const requestId = conv?.permissions?.canRespondHandoff ? conv?.handoff?.id : null
+    const requestId = conv?.permissions?.canRespondHandoff && conv?.handoff?.id !== dismissedHandoffId
+      ? conv?.handoff?.id
+      : null
     setHandoffPromptId(requestId || null)
-  }, [conv?.id, conv?.permissions?.canRespondHandoff, conv?.handoff?.id])
+  }, [conv?.id, conv?.permissions?.canRespondHandoff, conv?.handoff?.id, dismissedHandoffId])
 
   const aiMode = !!(conv?.aiControl || {}).enabled
 
@@ -360,20 +362,6 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
       setSendError(error.message)
     } finally {
       setSwitching(false)
-    }
-  }
-
-  async function respondToHandoff(action) {
-    if (!onRespondHandoff) return
-    setHandoffSwitching(true)
-    try {
-      await onRespondHandoff(action)
-      setHandoffPromptId(null)
-      setSendError('')
-    } catch (error) {
-      setSendError(error.message)
-    } finally {
-      setHandoffSwitching(false)
     }
   }
 
@@ -473,7 +461,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
             {conv.contact.phone && (
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{conv.contact.phone}</span>
             )}
-            <StatusBadge status={conv.status} />
+            <StatusBadge status={conv.status} aiControl={conv.aiControl} />
             {conv.status === 'takeover' && conv.permissions?.isSupervisor && conv.currentAgentName && (
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>由 {conv.currentAgentName} 接管</span>
             )}
@@ -697,7 +685,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
             <div style={{ padding: '16px 18px 10px' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>销售主管请求接管会话</div>
               <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。请在 10 秒内选择“接受”或“拒绝”；超时未操作将视为接管失败，会话继续由您负责。
+                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。请知悉：10 秒后会话将自动转交给主管，您无需接受或拒绝。
               </div>
             </div>
             <div style={{
@@ -705,23 +693,16 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
               borderTop: '1px solid var(--border-soft)',
             }}>
               <button
-                onClick={() => respondToHandoff('reject')}
-                disabled={handoffSwitching}
-                style={{
-                  padding: '7px 14px', borderRadius: 6, border: '1px solid var(--border)',
-                  background: 'transparent', color: 'var(--text-secondary)', cursor: handoffSwitching ? 'default' : 'pointer',
-                  fontSize: 12, fontWeight: 600,
+                onClick={() => {
+                  setDismissedHandoffId(handoffPromptId)
+                  setHandoffPromptId(null)
                 }}
-              >拒绝</button>
-              <button
-                onClick={() => respondToHandoff('accept')}
-                disabled={handoffSwitching}
                 style={{
                   padding: '7px 14px', borderRadius: 6, border: 'none', background: 'var(--accent)',
-                  color: '#fff', cursor: handoffSwitching ? 'default' : 'pointer', opacity: handoffSwitching ? 0.7 : 1,
+                  color: '#fff', cursor: 'pointer',
                   fontSize: 12, fontWeight: 700,
                 }}
-              >{handoffSwitching ? '处理中…' : '接受'}</button>
+              >知道了</button>
             </div>
           </div>
         </div>
