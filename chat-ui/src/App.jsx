@@ -40,20 +40,19 @@ function PresenceSwitch({ status, disabled, onClick }) {
       title={online ? '当前在线，点击切换为离线' : '当前离线，点击切换为在线'}
       aria-label={online ? '切换为离线' : '切换为在线'}
       style={{
-        width: 30, height: 30, borderRadius: 6, border: 'none', padding: 0,
+        width: 30, height: 30, borderRadius: 8, border: `2px solid ${online ? '#16a34a' : '#d4d4d8'}`, padding: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
-        background: online ? '#16a34a' : '#f4f4f5',
+        background: online ? '#16a34a' : '#fff',
         color: online ? '#fff' : 'var(--text-muted)',
         cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1,
-        transition: 'background .18s ease, opacity .18s ease',
+        transition: 'background .18s ease, border-color .18s ease, opacity .18s ease',
       }}
     >
       <span style={{
-        position: 'absolute', right: 3, bottom: 3, width: 6, height: 6,
-        borderRadius: '50%', background: online ? '#16a34a' : '#a1a1aa',
-        border: '1px solid var(--bg-primary)',
+        position: 'absolute', right: 2, bottom: 2, width: 7, height: 7,
+        borderRadius: '50%', background: online ? '#fff' : '#a1a1aa',
       }} />
-      <Power size={16} />
+      <Power size={16} strokeWidth={2.4} />
     </button>
   )
 }
