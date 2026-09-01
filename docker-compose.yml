@@ -146,6 +146,10 @@ services:
     build: ./middleware
     ports:
       - "3002:3002"
+    # Docker Desktop 当前默认上游 DNS 不可达；使用 Mac mini 本机局域网解析器，
+    # 保证官网 IP 地理解析、IMAP 等外部域名可以稳定解析。可通过环境变量覆盖。
+    dns:
+      - ${DOCKER_DNS_SERVER:-192.168.118.1}
     environment:
       PORT: 3002
       TWENTY_API_URL: http://server:3000
