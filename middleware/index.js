@@ -2420,7 +2420,9 @@ app.get('/api/conversations', async (req, res) => {
       SELECT 1 FROM conv.conversation_participants cp
       WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
     )` : 'false';
-    const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId", c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
+    const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
+    NULLIF(CONCAT_WS(' ', current_agent."nameFirstName", current_agent."nameLastName"), '') AS "currentAgentName",
+    c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
     COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
@@ -2446,6 +2448,7 @@ app.get('/api/conversations', async (req, res) => {
     ) AS "aiControl",
     json_build_object(
       'viewerRole', ${viewerRole},
+      'isSupervisor', ${viewer.isSupervisor ? 'true' : 'false'},
       'canView', true,
       'canReply', ${canReplyExpression},
       'canTakeover', ${canTakeoverExpression},
@@ -2489,6 +2492,8 @@ app.get('/api/conversations', async (req, res) => {
       'filedStatus', CASE WHEN ct.twenty_opportunity_id IS NOT NULL OR ct.twenty_person_id IS NOT NULL THEN 'lead' ELSE 'unfiled' END) AS contact
     FROM conv.conversations c JOIN conv.contacts ct ON ct.id = c.contact_id
     LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
+    LEFT JOIN ${workspaceSchema}."workspaceMember" current_agent
+      ON current_agent.id::text = c.agent_id AND current_agent."deletedAt" IS NULL
     LEFT JOIN ${workspaceSchema}.opportunity o ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
     LEFT JOIN ${workspaceSchema}.person p ON p."deletedAt" IS NULL AND p.id = COALESCE(o."pointOfContactId", o."linkedPersonId")
     LEFT JOIN ${workspaceSchema}.company co ON co."deletedAt" IS NULL AND co.id = o."companyId"
@@ -5862,12 +5867,18 @@ async function processPendingSalesHandoffs() {
         FOR UPDATE OF r SKIP LOCKED`,
     );
     for (const row of pending.rows) {
-      if (row.decision === 'rejected') {
+      if (row.decision !== 'accepted') {
         await client.query(
           `UPDATE conv.conversation_handoff_requests
-              SET status = 'cancelled', completed_at = now()
+              SET decision = 'expired', status = 'cancelled', completed_at = now()
             WHERE id = $1`,
           [row.id],
+        );
+        await client.query(
+          `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+           VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
+          [`system:${row.conversation_id}:${Date.now()}:transfer-expired`, row.conversation_id,
+            '销售主管的接管请求因原销售未在规定时间内确认，已自动失效', row.requested_by_user_id],
         );
         continue;
       }

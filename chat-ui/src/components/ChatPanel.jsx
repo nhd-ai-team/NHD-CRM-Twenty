@@ -472,6 +472,9 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{conv.contact.phone}</span>
             )}
             <StatusBadge status={conv.status} />
+            {conv.status === 'takeover' && conv.permissions?.isSupervisor && conv.currentAgentName && (
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>由 {conv.currentAgentName} 接管</span>
+            )}
           </div>
             {conv.contact.company && (
               <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{conv.contact.company}</div>
@@ -692,7 +695,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
             <div style={{ padding: '16px 18px 10px' }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>销售主管请求接管会话</div>
               <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
-                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。接受后将在 10 秒内完成转交，拒绝则保持当前负责人不变。
+                {conv.handoff?.requestedByName || '销售主管'} 请求接管当前官网客服会话。请在 10 秒内选择“接受”或“拒绝”；超时未操作将视为接管失败，会话继续由您负责。
               </div>
             </div>
             <div style={{
