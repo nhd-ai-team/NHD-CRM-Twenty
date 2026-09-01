@@ -11,7 +11,7 @@ import { installTwentyAuthMessageListener } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
 import { NewWhatsAppConversationModal } from './components/NewWhatsAppConversationModal'
-import { PanelRightOpen, PanelRightClose, Settings } from 'lucide-react'
+import { PanelRightOpen, PanelRightClose, Settings, Power } from 'lucide-react'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -40,17 +40,20 @@ function PresenceSwitch({ status, disabled, onClick }) {
       title={online ? '当前在线，点击切换为离线' : '当前离线，点击切换为在线'}
       aria-label={online ? '切换为离线' : '切换为在线'}
       style={{
-        width: 58, height: 28, padding: 3, border: 'none', borderRadius: 15,
-        display: 'flex', alignItems: 'center', justifyContent: online ? 'flex-end' : 'flex-start',
-        background: online ? '#16a34a' : '#d4d4d8',
+        width: 30, height: 30, borderRadius: 6, border: 'none', padding: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
+        background: online ? '#dcfce7' : '#f4f4f5',
+        color: online ? '#16a34a' : 'var(--text-muted)',
         cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1,
         transition: 'background .18s ease, opacity .18s ease',
       }}
     >
       <span style={{
-        width: 22, height: 22, borderRadius: '50%', background: '#fff',
-        boxShadow: '0 1px 3px rgba(0,0,0,.24)', display: 'block',
+        position: 'absolute', right: 3, bottom: 3, width: 6, height: 6,
+        borderRadius: '50%', background: online ? '#16a34a' : '#a1a1aa',
+        border: '1px solid var(--bg-primary)',
       }} />
+      <Power size={16} />
     </button>
   )
 }
