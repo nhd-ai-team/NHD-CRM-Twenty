@@ -201,7 +201,7 @@ export default function App() {
 
   const aiSettings = useAiSettings()
   const presence = usePresence()
-  // 保存渠道 AI 配置后立即刷新会话列表，令「接管会话」按钮的灰/亮状态即时联动
+  // 保存渠道 AI 配置后立即刷新会话列表，令「接入人工」按钮的灰/亮状态即时联动
   const handleAiSave = useCallback(async (channel, patch) => {
     const ok = await aiSettings.save(channel, patch)
     if (ok) reloadConversations().catch(() => {})
@@ -279,10 +279,11 @@ export default function App() {
             conv={selected}
             onSend={sendMessage}
             onTakeover={(action) => setTakeover(selected?.id, action)}
-            onRename={renameConversation}
-            layout={layout}
-            onToggleSidebar={() => setSidebarOpen(o => !o)}
-          />
+          onRename={renameConversation}
+          layout={layout}
+          onToggleSidebar={() => setSidebarOpen(o => !o)}
+          presence={presence}
+        />
         </div>
       </div>
 

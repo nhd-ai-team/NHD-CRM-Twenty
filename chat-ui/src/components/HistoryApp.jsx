@@ -5,7 +5,7 @@ import { MessageBubble } from './ChatPanel'
 import { useConversations } from '../hooks/useConversations'
 
 function statusText(status) {
-  if (status === 'takeover') return '人工接管'
+  if (status === 'takeover') return '人工接待'
   if (status === 'closed') return '已关闭'
   return '进行中'
 }

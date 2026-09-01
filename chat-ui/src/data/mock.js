@@ -10,7 +10,7 @@ export const STATUS_FILTERS = [
   { id: 'all',      label: '所有' },
   { id: 'unread',   label: '未读' },
   { id: 'open',     label: '进行中' },
-  { id: 'takeover', label: '人工接管' },
+  { id: 'takeover', label: '人工接待' },
 ]
 
 export const CONVERSATIONS = [

@@ -114,7 +114,7 @@ export function NewWhatsAppConversationModal({ open, onClose, onCreated }) {
             </label>
           </> : <div style={{ padding: '8px 0', display: 'grid', gap: 10 }}>
             <strong style={{ fontSize: 14 }}>确认主动联系该客户？</strong>
-            <p style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>消息将通过当前绑定的 WhatsApp 账号发送至 <strong style={{ color: 'var(--text-primary)' }}>{recipient?.phone || phone}</strong>。发送后会话进入人工接管状态。</p>
+            <p style={{ fontSize: 12.5, color: 'var(--text-secondary)' }}>消息将通过当前绑定的 WhatsApp 账号发送至 <strong style={{ color: 'var(--text-primary)' }}>{recipient?.phone || phone}</strong>。发送后会话进入人工接待状态。</p>
             {recipient?.reused && <p style={{ margin: 0, fontSize: 12.5, color: 'var(--text-secondary)' }}>CRM 已有该号码会话，本次发送会复用原会话。</p>}
             <div style={{ padding: 10, borderRadius: 6, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', maxHeight: 120, overflow: 'auto' }}>{content}</div>
           </div>}

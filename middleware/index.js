@@ -399,6 +399,7 @@ async function resolveConversationViewer(req) {
   // boss 角色 = 仅查看全部（总经理），由前端权限管理界面配置。
   let role = 'sales';
   let scope = 'own';
+  let isSupervisor = false;
   try {
     const roleResult = await pool.query(
       `SELECT ur.role AS conv_role, rs.scope AS conv_scope,
@@ -430,7 +431,11 @@ async function resolveConversationViewer(req) {
         const labels = String(row.native_role_labels || '')
           .split(',')
           .map((s) => s.trim().toLowerCase());
-        if (labels.some((l) => l.includes('总经理')) || labels.some((l) => l.includes('销售主管'))) {
+        if (labels.some((l) => l.includes('销售主管'))) {
+          role = 'manager';
+          scope = 'team';
+          isSupervisor = true;
+        } else if (labels.some((l) => l.includes('总经理'))) {
           role = 'boss';
           scope = 'all';
         } else if (labels.some((l) => l === 'admin')) {
@@ -449,8 +454,9 @@ async function resolveConversationViewer(req) {
     email,
     name: [member.nameFirstName, member.nameLastName].filter(Boolean).join(' ').trim() || email || 'CRM 用户',
     isBoss: role === 'boss',
-    role,
-    scope,
+      role,
+      scope,
+      isSupervisor: isSupervisor || role === 'manager',
   };
 }
 
@@ -535,13 +541,23 @@ async function requireConversationAccess(req, res, options = {}) {
     res.status(403).json({ error: '当前账号无权查看该会话' });
     return null;
   }
-  if (options.write && viewer.role === 'boss') {
+  if (options.write && viewer.role === 'boss' && !viewer.isSupervisor) {
     res.status(403).json({ error: '当前角色仅有查看权限，不能接管或发送消息' });
     return null;
   }
   if (options.reply && conversation.aiEnabled && !(conversation.status === 'takeover' && conversation.agent_id === viewer.workspaceMemberId)) {
     res.status(403).json({ error: '该会话未由当前账号接管，不能发送消息' });
     return null;
+  }
+  if (options.reply && conversation.channel === 'website' && viewer.role !== 'boss') {
+    const presenceResult = await pool.query(
+      `SELECT status FROM conv.agent_presence WHERE workspace_id = $1 AND user_id = $2 LIMIT 1`,
+      [viewer.workspaceId, viewer.userId],
+    );
+    if (presenceResult.rows[0]?.status !== 'online') {
+      res.status(409).json({ error: '请先切换为在线状态，再回复官网客户' });
+      return null;
+    }
   }
   return { viewer, conversation };
 }
@@ -978,8 +994,9 @@ async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS conv.messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(), external_msg_id TEXT UNIQUE,
       conversation_id UUID REFERENCES conv.conversations(id), sender_type TEXT NOT NULL,
-      content TEXT, content_type TEXT DEFAULT 'text', media_url TEXT, sent_at TIMESTAMPTZ NOT NULL,
+      content TEXT, content_type TEXT DEFAULT 'text', media_url TEXT, sender_role TEXT NOT NULL DEFAULT 'sales', sent_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ DEFAULT now());
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS sender_role TEXT NOT NULL DEFAULT 'sales';
     ALTER TABLE conv.contacts ADD COLUMN IF NOT EXISTS twenty_opportunity_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS lead_draft JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS ai_enabled BOOLEAN;
@@ -1103,6 +1120,20 @@ async function ensureSchema() {
       PRIMARY KEY (workspace_id, user_id));
     CREATE INDEX IF NOT EXISTS agent_presence_workspace_status_idx
       ON conv.agent_presence(workspace_id, status, updated_at DESC);
+    CREATE TABLE IF NOT EXISTS conv.conversation_handoff_requests (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      conversation_id UUID NOT NULL REFERENCES conv.conversations(id) ON DELETE CASCADE,
+      requested_by_member_id TEXT NOT NULL,
+      from_agent_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'cancelled')),
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      effective_at TIMESTAMPTZ NOT NULL,
+      completed_at TIMESTAMPTZ
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS conversation_handoff_one_pending_idx
+      ON conv.conversation_handoff_requests(conversation_id) WHERE status = 'pending';
+    CREATE INDEX IF NOT EXISTS conversation_handoff_pending_idx
+      ON conv.conversation_handoff_requests(status, effective_at);
     -- 会话归属（多账号）：channel_owner=WA号主，owner=当前客户负责人
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
@@ -2372,10 +2403,13 @@ app.get('/api/conversations', async (req, res) => {
     const viewerRole = viewer.isBoss ? "'boss'" : `'${viewer.role || 'sales'}'`;
     // AI 模式（ai_enabled 为真）下：仅接管自己的会话可回复；AI 关闭时：非关闭会话销售均可直接回复，无需先接管。
     const aiEnabledExpr = `(COALESCE(c.ai_enabled, cs.ai_enabled, c.channel = 'website'))`;
-    const canReplyExpression = viewer.isBoss
+    const canReplyExpression = viewer.isBoss && !viewer.isSupervisor
       ? 'false'
       : `((${aiEnabledExpr} AND c.status = 'takeover' AND c.agent_id = $1) OR (NOT ${aiEnabledExpr} AND c.status <> 'closed'))`;
-    const canTakeoverExpression = viewer.isBoss ? 'false' : `(c.status = 'open')`;
+    const canTakeoverExpression = viewer.isBoss && !viewer.isSupervisor ? 'false' : `(c.status = 'open')`;
+    const canTransferExpression = viewer.isSupervisor
+      ? `(c.channel = 'website' AND c.status = 'takeover' AND c.agent_id IS NOT NULL AND c.agent_id <> $1 AND pending_handoff.id IS NULL)`
+      : 'false';
     const assignedToMeExpression = !viewer.isBoss ? `(c.agent_id = $1)` : 'false';
     const takenBeforeExpression = !viewer.isBoss ? `EXISTS (
       SELECT 1 FROM conv.conversation_participants cp
@@ -2410,9 +2444,16 @@ app.get('/api/conversations', async (req, res) => {
       'canView', true,
       'canReply', ${canReplyExpression},
       'canTakeover', ${canTakeoverExpression},
+      'canTransferSales', ${canTransferExpression},
       'isAssignedToMe', ${assignedToMeExpression},
       'hasTakenOverBefore', ${takenBeforeExpression}
     ) AS permissions,
+    CASE WHEN pending_handoff.id IS NULL THEN NULL ELSE json_build_object(
+      'status', pending_handoff.status,
+      'requestedAt', pending_handoff.requested_at,
+      'effectiveAt', pending_handoff.effective_at,
+      'requestedByName', pending_handoff.requested_by_name
+    ) END AS handoff,
     json_build_object('id', ct.id,
       -- 需求一：最终显示名由后端算好（人工名优先 → 渠道原始名 → 手机号/邮箱/外部 ID 兜底），前端不再自行拼接
       'name', COALESCE(NULLIF(ct.display_name, ''), NULLIF(ct.channel_display_name, ''), NULLIF(ct.phone, ''), NULLIF(ct.email, ''), ct.external_id, ''),
@@ -2439,6 +2480,15 @@ app.get('/api/conversations', async (req, res) => {
     LEFT JOIN ${workspaceSchema}.opportunity o ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
     LEFT JOIN ${workspaceSchema}.person p ON p."deletedAt" IS NULL AND p.id = COALESCE(o."pointOfContactId", o."linkedPersonId")
     LEFT JOIN ${workspaceSchema}.company co ON co."deletedAt" IS NULL AND co.id = o."companyId"
+    LEFT JOIN LATERAL (
+      SELECT r.id, r.status, r.requested_at, r.effective_at,
+             NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS requested_by_name
+        FROM conv.conversation_handoff_requests r
+        LEFT JOIN ${workspaceSchema}."workspaceMember" wm
+          ON wm.id::text = r.requested_by_member_id AND wm."deletedAt" IS NULL
+       WHERE r.conversation_id = c.id AND r.status = 'pending'
+       ORDER BY r.requested_at DESC LIMIT 1
+    ) pending_handoff ON TRUE
     LEFT JOIN conv.conversation_read_states read_state
       ON read_state.conversation_id = c.id AND read_state.scope_key = ${readScopeSql}
     LEFT JOIN LATERAL (
@@ -2500,7 +2550,7 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const access = await requireConversationAccess(req, res, { historyView });
   if (!access) return;
   const workspaceSchema = await getWorkspaceSchema();
-  const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments, m.sent_at AS "sentAt",
+  const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments, m.sent_at AS "sentAt",
       m.raw_message_type AS "rawMessageType", m.message_summary AS "messageSummary",
       CASE WHEN m.sender_type = 'agent' THEN COALESCE(
         NULLIF(CONCAT_WS(' ', sender_member."nameFirstName", sender_member."nameLastName"), ''),
@@ -3134,12 +3184,12 @@ app.post('/api/email/sync-now', requireSameSite, async (_req, res) => {
 
 app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => {
   const action = String(req.body?.action || '').trim();
-  if (!['takeover', 'release', 'close'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
+  if (!['takeover', 'release', 'close', 'transfer'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(403).json({ error: '当前账号没有工作区成员权限' });
-  if (viewer.isBoss) return res.status(403).json({ error: 'Boss 当前仅有查看权限，不能接管或释放会话' });
+  if (viewer.isBoss && !viewer.isSupervisor) return res.status(403).json({ error: '当前角色仅有查看权限，不能接管或释放会话' });
 
   const client = await pool.connect();
   try {
@@ -3170,6 +3220,36 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
     }
     // 人工接管/释放不再受 AI 排班时段限制：排班只决定 AI 是否自动回复，不该卡住人。
     // 仅当会话本身未开启 AI 托管模式（aiEnabled=false，如普通非官网会话）时才拦截。
+    if (action === 'transfer') {
+      if (!viewer.isSupervisor || conversation.channel !== 'website' || conversation.status !== 'takeover' || !conversation.agent_id || conversation.agent_id === viewer.workspaceMemberId) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: '仅销售主管可以接管其他销售正在沟通的官网会话' });
+      }
+      const pending = await client.query(
+        `INSERT INTO conv.conversation_handoff_requests(
+           conversation_id, requested_by_member_id, from_agent_id, effective_at)
+         VALUES ($1, $2, $3, now() + interval '10 seconds')
+         ON CONFLICT DO NOTHING
+         RETURNING id, requested_at AS "requestedAt", effective_at AS "effectiveAt"`,
+        [conversation.id, viewer.workspaceMemberId, conversation.agent_id],
+      );
+      if (!pending.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: '该会话已有接管请求，请等待 10 秒后再操作' });
+      }
+      await client.query(
+        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+         VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
+        [`system:${conversation.id}:${Date.now()}:transfer-request`, conversation.id,
+          `销售主管 ${viewer.name} 请求接管此销售会话，10秒后完成转交`, viewer.userId],
+      );
+      await client.query('COMMIT');
+      return res.status(202).json({
+        status: 'pending',
+        requestedAt: pending.rows[0].requestedAt,
+        effectiveAt: pending.rows[0].effectiveAt,
+      });
+    }
     if (action !== 'close' && !conversation.aiEnabled) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'AI客服未激活，暂不可人工接管' });
@@ -5576,13 +5656,14 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
 async function recordAgentMessage(conversationId, content, externalId, options = {}) {
   // 需求二：出站消息落库即带状态。渠道 API 返回成功 = sent；调用失败 = failed（带错误摘要）。
   const deliveryStatus = options.deliveryStatus || 'sent';
-  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at, owner_id,
+  const inserted = await pool.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, sender_role, content, content_type, media_url, attachments, sent_at, owner_id,
       delivery_status, delivery_status_at, failed_at, status_detail)
-    VALUES ($1, $2, 'agent', $3, $4, $5, $6, now(), $7, $8, now(),
-      CASE WHEN $8 = 'failed' THEN now() ELSE NULL END, $9) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+    VALUES ($1, $2, 'agent', $3, $4, $5, $6, $7, now(), $8, $9, now(),
+      CASE WHEN $9 = 'failed' THEN now() ELSE NULL END, $10) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
     [
       externalId || null,
       conversationId,
+      options.senderRole || 'sales',
       content,
       options.contentType || 'text',
       options.mediaUrl || null,
@@ -5621,6 +5702,70 @@ async function releaseWebsiteAiTakeover(externalChatId) {
     body: JSON.stringify({}),
   });
   if (!response.ok) throw new Error(await response.text());
+}
+
+// 销售之间的接管请求：先给原销售 10 秒提示，再在事务内原子转交发送权。
+async function processPendingSalesHandoffs() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const schema = await getWorkspaceSchema();
+    const pending = await client.query(
+      `SELECT r.id, r.conversation_id, r.from_agent_id, r.requested_by_member_id,
+              wm."userId" AS requested_by_user_id,
+              NULLIF(CONCAT_WS(' ', wm."nameFirstName", wm."nameLastName"), '') AS requested_by_name
+         FROM conv.conversation_handoff_requests r
+         LEFT JOIN ${schema}."workspaceMember" wm
+           ON wm.id::text = r.requested_by_member_id AND wm."deletedAt" IS NULL
+        WHERE r.status = 'pending' AND r.effective_at <= now()
+        ORDER BY r.effective_at
+        FOR UPDATE OF r SKIP LOCKED
+        LIMIT 20`,
+    );
+    for (const row of pending.rows) {
+      const updated = await client.query(
+        `UPDATE conv.conversations
+            SET agent_id = $2, taken_over_at = now(), updated_at = now()
+          WHERE id = $1 AND channel = 'website' AND status = 'takeover' AND agent_id = $3
+          RETURNING id`,
+        [row.conversation_id, row.requested_by_member_id, row.from_agent_id],
+      );
+      if (updated.rowCount) {
+        await client.query(
+          `INSERT INTO conv.conversation_participants(conversation_id, workspace_member_id, user_id, role, first_joined_at, last_joined_at)
+           VALUES ($1, $2, $3, 'takeover', now(), now())
+           ON CONFLICT(conversation_id, workspace_member_id)
+           DO UPDATE SET last_joined_at = now(), user_id = EXCLUDED.user_id, role = EXCLUDED.role`,
+          [row.conversation_id, row.requested_by_member_id, row.requested_by_user_id],
+        );
+        await client.query(
+          `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+           VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
+          [`system:${row.conversation_id}:${Date.now()}:transfer-complete`, row.conversation_id,
+            `销售会话已由 ${row.requested_by_name || '销售主管'} 接管`, row.requested_by_user_id],
+        );
+        await client.query(
+          `UPDATE conv.conversation_handoff_requests
+              SET status = 'completed', completed_at = now()
+            WHERE id = $1`,
+          [row.id],
+        );
+      } else {
+        await client.query(
+          `UPDATE conv.conversation_handoff_requests
+              SET status = 'cancelled', completed_at = now()
+            WHERE id = $1`,
+          [row.id],
+        );
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('[handoff] process failed:', error.message);
+  } finally {
+    client.release();
+  }
 }
 
 // ── 官网接管超时自动释放 ──────────────────────────────────────────────────────
@@ -5763,6 +5908,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         const sent = await sendWhatsAppFile(conversation, uploadedFile, content, conversation.waha_session || WAHA_SESSION);
         const messageId = await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
           ownerId: access.viewer.userId,
+          senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales',
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
@@ -5780,6 +5926,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         // 需求二：附件与文本共用同一状态模型，失败同样落 failed 并留痕。
         const failedId = await recordAgentMessage(req.params.id, displayContent, null, {
           ownerId: access.viewer.userId,
+          senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales',
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
@@ -5804,6 +5951,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         const sent = await sendWebsiteAgentMessage(conversation, displayContent, idempotencyKey, attachment);
         const messageId = await recordAgentMessage(req.params.id, displayContent, `web:agent:${sent?.messageId || idempotencyKey}`, {
           ownerId: access.viewer.userId,
+          senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales',
           contentType: messageType,
           mediaUrl,
           attachments: [attachment],
@@ -5832,6 +5980,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       const detail = await response.text();
       const failedId = await recordAgentMessage(req.params.id, content, null, {
         ownerId: access.viewer.userId,
+        senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales',
         deliveryStatus: 'failed',
         statusDetail: `WAHA sendText ${response.status}: ${detail}`,
       });
@@ -5846,7 +5995,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       return res.status(502).json({ error: 'WhatsApp send failed', detail });
     }
     const sent = await response.json();
-    const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized, { ownerId: access.viewer.userId });
+        const messageId = await recordAgentMessage(req.params.id, content, sent?.id?._serialized || sent?._data?.id?._serialized, { ownerId: access.viewer.userId, senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales' });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -5867,7 +6016,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     });
     if (!response.ok) return res.status(502).json({ error: 'Instagram send failed', detail: await response.text() });
     const sent = await response.json();
-    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id, { ownerId: access.viewer.userId });
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id, { ownerId: access.viewer.userId, senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales' });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -5888,7 +6037,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     });
     if (!response.ok) return res.status(502).json({ error: 'Facebook send failed', detail: await response.text() });
     const sent = await response.json();
-    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id, { ownerId: access.viewer.userId });
+    const messageId = await recordAgentMessage(req.params.id, content, sent?.message_id, { ownerId: access.viewer.userId, senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales' });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -5909,7 +6058,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     } catch (error) {
       return res.status(502).json({ error: 'Website send failed', detail: error.message });
     }
-    const messageId = await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`, { ownerId: access.viewer.userId });
+    const messageId = await recordAgentMessage(req.params.id, content, `web:agent:${sent?.messageId || idempotencyKey}`, { ownerId: access.viewer.userId, senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales' });
     await recordAuditEvent('message.sent', {
       channel: conversation.channel,
       conversationId: req.params.id,
@@ -6139,6 +6288,7 @@ async function startServer() {
     setInterval(releaseIdleTakeovers, 60 * 1000);
     console.log(`[auto-release] website idle takeover auto-release enabled (idle > ${TAKEOVER_IDLE_MINUTES}min)`);
   }
+  setInterval(() => processPendingSalesHandoffs(), 1000);
 }
 
 if (require.main === module) {
