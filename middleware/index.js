@@ -3392,7 +3392,12 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
       );
       await client.query('COMMIT');
       syncConversationToHistory(conversation.id, { createIfMissing: false }).catch(() => {});
-      return res.json({ id: conversation.id, status: conversation.status, agentId: handoff.from_agent_id });
+      return res.json({
+        id: conversation.id,
+        status: conversation.status,
+        agentId: handoff.from_agent_id,
+        agentName: handoff.from_agent_name || '原销售',
+      });
     }
     if (action !== 'close' && !conversation.aiEnabled) {
       await client.query('ROLLBACK');

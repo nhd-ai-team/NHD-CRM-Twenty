@@ -242,7 +242,8 @@ function ActionBar({ conv, onRequestAction }) {
       )}
       {canTransferSales && (
         <button
-          onClick={() => onRequestAction('transfer')}
+          type="button"
+          onClick={(event) => { event.preventDefault(); event.stopPropagation(); onRequestAction('transfer') }}
           title="通知当前销售后，10秒后完成会话转交"
           style={btnStyle('accent')}
         >
@@ -251,7 +252,8 @@ function ActionBar({ conv, onRequestAction }) {
       )}
       {canReturnSales && (
         <button
-          onClick={() => onRequestAction('return')}
+          type="button"
+          onClick={(event) => { event.preventDefault(); event.stopPropagation(); onRequestAction('return') }}
           title="将会话发送权限交还给原销售"
           style={btnStyle('green')}
         >

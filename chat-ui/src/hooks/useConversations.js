@@ -159,11 +159,27 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ action }),
     })
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const data = await response.json().catch(() => ({}))
       throw new Error(data.error || '会话状态切换失败')
     }
-    await loadConversations()
+    if (action === 'return' && data.agentId) {
+      setConversations(current => current.map(conv => conv.id !== convId ? conv : {
+        ...conv,
+        agentId: data.agentId,
+        currentAgentName: data.agentName || conv.currentAgentName,
+        permissions: {
+          ...conv.permissions,
+          canReturnSales: false,
+          canTransferSales: true,
+          canReply: true,
+          returnAgentId: null,
+          returnAgentName: null,
+        },
+      }))
+    }
+    // 刷新失败时保留上面的本地会话状态，避免嵌入式工作台因一次列表网络波动变白。
+    loadConversations().catch(error => console.error(error))
   }
 
   async function respondHandoff(convId, action) {
