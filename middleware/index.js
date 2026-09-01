@@ -2412,6 +2412,9 @@ app.get('/api/conversations', async (req, res) => {
     const canTransferExpression = viewer.isSupervisor
       ? `(c.channel = 'website' AND c.status = 'takeover' AND c.agent_id IS NOT NULL AND c.agent_id <> $1 AND pending_handoff.id IS NULL)`
       : 'false';
+    const canReturnExpression = viewer.isSupervisor
+      ? `(c.channel = 'website' AND c.status = 'takeover' AND c.agent_id = $1 AND latest_sales_handoff.id IS NOT NULL)`
+      : 'false';
     const assignedToMeExpression = !viewer.isBoss ? `(c.agent_id = $1)` : 'false';
     const takenBeforeExpression = !viewer.isBoss ? `EXISTS (
       SELECT 1 FROM conv.conversation_participants cp
@@ -2447,6 +2450,8 @@ app.get('/api/conversations', async (req, res) => {
       'canReply', ${canReplyExpression},
       'canTakeover', ${canTakeoverExpression},
       'canTransferSales', ${canTransferExpression},
+      'canReturnSales', ${canReturnExpression},
+      'returnAgentId', CASE WHEN ${canReturnExpression} THEN latest_sales_handoff.from_agent_id ELSE NULL END,
       'canRespondHandoff', (pending_handoff.id IS NOT NULL AND pending_handoff.from_agent_id = $1),
       'isAssignedToMe', ${assignedToMeExpression},
       'hasTakenOverBefore', ${takenBeforeExpression}
@@ -2495,6 +2500,16 @@ app.get('/api/conversations', async (req, res) => {
        WHERE r.conversation_id = c.id AND r.status = 'pending'
        ORDER BY r.requested_at DESC LIMIT 1
     ) pending_handoff ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT r.id, r.from_agent_id
+        FROM conv.conversation_handoff_requests r
+       WHERE r.conversation_id = c.id
+         AND r.status = 'completed'
+         AND r.requested_by_member_id = $1
+         AND c.agent_id = $1
+       ORDER BY r.completed_at DESC NULLS LAST, r.requested_at DESC
+       LIMIT 1
+    ) latest_sales_handoff ON TRUE
     LEFT JOIN conv.conversation_read_states read_state
       ON read_state.conversation_id = c.id AND read_state.scope_key = ${readScopeSql}
     LEFT JOIN LATERAL (
@@ -3254,7 +3269,7 @@ app.patch('/api/conversations/:id/handoff', requireSameSite, async (req, res) =>
 
 app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => {
   const action = String(req.body?.action || '').trim();
-  if (!['takeover', 'release', 'close', 'transfer'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
+  if (!['takeover', 'release', 'close', 'transfer', 'return'].includes(action)) return res.status(400).json({ error: 'unsupported status action' });
   const authenticated = await requireAuthenticatedTwentyUser(req, res);
   if (!authenticated) return;
   const viewer = await resolveConversationViewer(req);
@@ -3319,6 +3334,53 @@ app.patch('/api/conversations/:id/status', requireSameSite, async (req, res) => 
         requestedAt: pending.rows[0].requestedAt,
         effectiveAt: pending.rows[0].effectiveAt,
       });
+    }
+    if (action === 'return') {
+      if (!viewer.isSupervisor || conversation.channel !== 'website' || conversation.status !== 'takeover' || conversation.agent_id !== viewer.workspaceMemberId) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: '仅当前接管该会话的销售主管可以交还销售' });
+      }
+      const handoffResult = await client.query(
+        `SELECT r.id, r.from_agent_id
+           FROM conv.conversation_handoff_requests r
+          WHERE r.conversation_id = $1
+            AND r.status = 'completed'
+            AND r.requested_by_member_id = $2
+          ORDER BY r.completed_at DESC NULLS LAST, r.requested_at DESC
+          LIMIT 1
+          FOR UPDATE OF r`,
+        [conversation.id, viewer.workspaceMemberId],
+      );
+      const handoff = handoffResult.rows[0];
+      if (!handoff?.from_agent_id) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: '未找到可交还的原销售' });
+      }
+      await client.query(
+        `UPDATE conv.conversations
+            SET agent_id = $2, taken_over_at = now(), updated_at = now()
+          WHERE id = $1 AND agent_id = $3
+          RETURNING id`,
+        [conversation.id, handoff.from_agent_id, viewer.workspaceMemberId],
+      );
+      await client.query(
+        `INSERT INTO conv.conversation_participants(conversation_id, workspace_member_id, user_id, role, first_joined_at, last_joined_at)
+         SELECT $1, wm.id, wm."userId", 'takeover', now(), now()
+           FROM ${workspaceSchema}."workspaceMember" wm
+          WHERE wm.id::text = $2 AND wm."deletedAt" IS NULL
+         ON CONFLICT(conversation_id, workspace_member_id)
+         DO UPDATE SET last_joined_at = now(), user_id = EXCLUDED.user_id, role = EXCLUDED.role`,
+        [conversation.id, handoff.from_agent_id],
+      );
+      await client.query(
+        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+         VALUES ($1, $2, 'system', $3, 'system', now(), $4)`,
+        [`system:${conversation.id}:${Date.now()}:transfer-return`, conversation.id,
+          `销售主管已将会话交还给原销售`, viewer.userId],
+      );
+      await client.query('COMMIT');
+      syncConversationToHistory(conversation.id, { createIfMissing: false }).catch(() => {});
+      return res.json({ id: conversation.id, status: conversation.status, agentId: handoff.from_agent_id });
     }
     if (action !== 'close' && !conversation.aiEnabled) {
       await client.query('ROLLBACK');

@@ -202,6 +202,7 @@ function ActionBar({ conv, onRequestAction }) {
   const canTakeover = !isClosed && !isTakeover && aiMode && permissions.canTakeover !== false
   const canAiHost = !isClosed && isTakeover && aiMode && permissions.canReply !== false
   const canTransferSales = !isClosed && isTakeover && permissions.canTransferSales === true
+  const canReturnSales = !isClosed && isTakeover && permissions.canReturnSales === true
   const disabledReason = permissions.viewerRole === 'boss'
     ? 'Boss 当前仅有查看权限'
     : !aiControl.enabled
@@ -209,8 +210,8 @@ function ActionBar({ conv, onRequestAction }) {
       : ''
 
   // AI 关闭时只隐藏 AI 动作；销售之间的会话转交不依赖 AI 开关。
-  if (!aiMode && !canTransferSales) return null
-  if (!canTakeover && !canAiHost && !canTransferSales && isClosed) return null
+  if (!aiMode && !canTransferSales && !canReturnSales) return null
+  if (!canTakeover && !canAiHost && !canTransferSales && !canReturnSales && isClosed) return null
 
   return (
     <div style={{
@@ -246,6 +247,15 @@ function ActionBar({ conv, onRequestAction }) {
           style={btnStyle('accent')}
         >
           <UserCheck size={13} /> 接管销售会话
+        </button>
+      )}
+      {canReturnSales && (
+        <button
+          onClick={() => onRequestAction('return')}
+          title="将会话发送权限交还给原销售"
+          style={btnStyle('green')}
+        >
+          <UserCheck size={13} /> 交还销售
         </button>
       )}
     </div>
@@ -406,11 +416,15 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
     ? '确认接入人工？'
     : pendingAction === 'transfer'
       ? '确认接管销售会话？'
+      : pendingAction === 'return'
+        ? '确认交还销售？'
       : '确认 AI 托管？'
   const confirmBody = pendingAction === 'takeover'
     ? '确认后销售可以在工作台回复客户，AI 客服将暂停处理此会话。'
     : pendingAction === 'transfer'
       ? '当前销售会收到接管提示，10 秒后本会话将转交给您。转交完成后，原销售将不能继续发送消息。'
+      : pendingAction === 'return'
+        ? '确认后会话发送权限将交还给原销售，主管仍可查看完整沟通记录。'
       : '确认后此会话将重新交给 AI 客服托管，销售需要再次接入人工后才能回复。'
   // 需求三：会话详情（客户资料上下文）展示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示）；官网渠道带真实 IP，WhatsApp/邮件不显示伪造 IP
   const contactInfo = conv.contact || {}
@@ -650,12 +664,12 @@ export function ChatPanel({ conv, onSend, onTakeover, onRespondHandoff, onRename
                 disabled={switching}
                 style={{
                   padding: '7px 14px', borderRadius: 6, border: 'none',
-                  background: pendingAction === 'takeover' || pendingAction === 'transfer' ? 'var(--accent)' : 'var(--orange)',
+                  background: pendingAction === 'takeover' || pendingAction === 'transfer' ? 'var(--accent)' : pendingAction === 'return' ? 'var(--green)' : 'var(--orange)',
                   color: '#fff', cursor: switching ? 'default' : 'pointer',
                   opacity: switching ? 0.7 : 1, fontSize: 12, fontWeight: 700,
                 }}
               >
-                {switching ? '处理中…' : pendingAction === 'takeover' ? '确认接入人工' : pendingAction === 'transfer' ? '确认接管' : '确认托管'}
+                {switching ? '处理中…' : pendingAction === 'takeover' ? '确认接入人工' : pendingAction === 'transfer' ? '确认接管' : pendingAction === 'return' ? '确认交还' : '确认托管'}
               </button>
             </div>
           </div>
