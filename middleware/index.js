@@ -1154,6 +1154,9 @@ async function ensureSchema() {
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS channel_owner_id TEXT;
     ALTER TABLE conv.conversations ADD COLUMN IF NOT EXISTS waha_session TEXT;
+    ALTER TABLE conv.conversations DROP CONSTRAINT IF EXISTS conversations_channel_external_chat_id_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS conversations_channel_scope_external_chat_id_key
+      ON conv.conversations(channel, (COALESCE(waha_session, '')), external_chat_id);
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS owner_id TEXT;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS raw_message_type TEXT;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS message_summary TEXT;
@@ -1514,7 +1517,7 @@ async function persistWhatsAppMessage(payload, session) {
       [chatKey, displayName, phone ? `+${phone}` : null, ownerUserId, channelName]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id, owner_id, channel_owner_id, waha_session)
-      VALUES ('whatsapp', $1, $2, $3, $3, $4) ON CONFLICT(channel, external_chat_id)
+      VALUES ('whatsapp', $1, $2, $3, $3, $4) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now(),
         owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
         channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
@@ -2005,7 +2008,7 @@ async function persistWebsiteMessage(body, clientIp) {
        websiteContext.utmCampaign, websiteContext.utmTerm, websiteContext.utmContent]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
-      VALUES ('website', $1, $2) ON CONFLICT(channel, external_chat_id)
+      VALUES ('website', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [sessionId, contact.id]);
     const conversation = conversationResult.rows[0];
     // 按发送方给 external_msg_id 加前缀，避免访客/AI 消息 id 撞车导致漏存。
@@ -2264,7 +2267,7 @@ async function persistInstagramMessage(senderId, messageEvent) {
         updated_at = now() RETURNING *`, [senderId, `Instagram ${senderId.slice(-6)}`]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
-      VALUES ('instagram', $1, $2) ON CONFLICT(channel, external_chat_id)
+      VALUES ('instagram', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [senderId, contact.id]);
     const conversation = conversationResult.rows[0];
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
@@ -2350,7 +2353,7 @@ async function persistFacebookMessage(messagingEvent) {
         updated_at = now() RETURNING *`, [counterpartyId, `Facebook ${counterpartyId.slice(-6)}`]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
-      VALUES ('facebook', $1, $2) ON CONFLICT(channel, external_chat_id)
+      VALUES ('facebook', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [counterpartyId, contact.id]);
     const conversation = conversationResult.rows[0];
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at)
@@ -3031,6 +3034,7 @@ async function checkWhatsAppRecipientForUser(authenticated, phone) {
        FROM conv.conversations c
        LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
       WHERE c.channel = 'whatsapp'
+        AND c.waha_session = $4
         AND (
           c.external_chat_id = $1
           OR c.external_chat_id = $2
@@ -3038,7 +3042,7 @@ async function checkWhatsAppRecipientForUser(authenticated, phone) {
         )
       ORDER BY CASE WHEN c.external_chat_id = $1 THEN 0 ELSE 1 END, c.updated_at DESC
       LIMIT 1`,
-    [canonicalChatId, providerChatId, `+${phone}`],
+    [canonicalChatId, providerChatId, `+${phone}`, sessionName],
   );
   return {
     phone: `+${phone}`,
@@ -3136,9 +3140,10 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
            FROM conv.conversations c
            LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
           WHERE c.channel = 'whatsapp'
+            AND c.waha_session = $4
             AND (c.external_chat_id = $1 OR c.external_chat_id = $2 OR ct.phone = $3)
           LIMIT 1`,
-        [chatId, providerChatId, `+${phone}`],
+        [chatId, providerChatId, `+${phone}`, sessionName],
       );
       reused = existing.rowCount > 0;
       const contactResult = await client.query(
@@ -3153,7 +3158,7 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
       const conversationResult = await client.query(
         `INSERT INTO conv.conversations(channel, external_chat_id, contact_id, status, agent_id, owner_id, channel_owner_id, waha_session)
          VALUES ('whatsapp', $1, $2, 'takeover', $3, $4, $4, $5)
-         ON CONFLICT(channel, external_chat_id) DO UPDATE SET
+         ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id) DO UPDATE SET
            status = 'takeover', agent_id = COALESCE(EXCLUDED.agent_id, conv.conversations.agent_id),
            owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
            channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
@@ -6387,7 +6392,7 @@ async function persistEmailMessage({ fromAddress, fromName, subject, body, attac
       [addr, displayName]);
     const contact = contactResult.rows[0];
     const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id)
-      VALUES ('email', $1, $2) ON CONFLICT(channel, external_chat_id)
+      VALUES ('email', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [addr, contact.id]);
     const conversation = conversationResult.rows[0];
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, subject, attachments, sent_at)
