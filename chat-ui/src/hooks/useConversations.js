@@ -94,7 +94,8 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   useEffect(() => {
     if (authExpired) return undefined
     loadConversations().catch(error => console.error(error))
-    const timer = setInterval(() => loadConversations().catch(() => {}), 10000)
+    // SSE 是主通道；轮询只作为网络切换、代理断流时的兜底，避免每个标签页持续打列表查询。
+    const timer = setInterval(() => loadConversations().catch(() => {}), 30000)
     return () => clearInterval(timer)
   }, [includeEmail, view, authExpired])
 
@@ -104,9 +105,63 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     if (!selectedId) return undefined
     // 列表轮询只刷新会话摘要，且刻意保留旧 messages；当前打开的会话必须单独轮询，
     // 否则官网访客新消息和 AI 回复要等销售切走再切回来才显示。
-    const timer = setInterval(() => loadMessages(selectedId).catch(() => {}), 5000)
+    const timer = setInterval(() => loadMessages(selectedId).catch(() => {}), 15000)
     return () => clearInterval(timer)
   }, [selectedId, view, authExpired])
+
+  useEffect(() => {
+    if (authExpired) return undefined
+    const controller = new AbortController()
+    let stopped = false
+    let retryTimer = null
+
+    // 解析 SSE 的最小实现：只关心 conversation 事件，连接断开时自动重连；
+    // 事件本身不携带正文，刷新仍走现有 API，因此不会扩大数据可见范围。
+    async function connect() {
+      try {
+        const token = await requireAccessToken()
+        if (!token || stopped) return
+        const response = await fetch('/conv-api/events', {
+          cache: 'no-store',
+          headers: withTwentyAuthHeaders({ Accept: 'text/event-stream' }),
+          signal: controller.signal,
+        })
+        if (!response.ok || !response.body) throw new Error(`实时通道 ${response.status}`)
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!stopped) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const blocks = buffer.split(/\r?\n\r?\n/)
+          buffer = blocks.pop() || ''
+          for (const block of blocks) {
+            const line = block.split(/\r?\n/).find(item => item.startsWith('data:'))
+            if (!line) continue
+            try {
+              const event = JSON.parse(line.slice(5).trim())
+              if (event.type !== 'ready') {
+                await loadConversations()
+                if (selectedId && (!event.conversationId || event.conversationId === selectedId)) {
+                  await loadMessages(selectedId)
+                }
+              }
+            } catch (error) { console.error('[conversation-events] refresh failed:', error) }
+          }
+        }
+      } catch (error) {
+        if (!stopped && error.name !== 'AbortError') console.warn('[conversation-events] disconnected:', error.message)
+      }
+      if (!stopped) retryTimer = window.setTimeout(connect, 1500)
+    }
+    connect()
+    return () => {
+      stopped = true
+      controller.abort()
+      if (retryTimer) window.clearTimeout(retryTimer)
+    }
+  }, [selectedId, authExpired, includeEmail, view])
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {

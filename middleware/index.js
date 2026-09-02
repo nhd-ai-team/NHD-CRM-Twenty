@@ -102,6 +102,22 @@ const uploadFileAllowed = createUploadFileAllowed({
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 let workspaceSchemaCache = null;
 
+// 对话工作台的轻量实时通知总线。只广播“需要刷新”的元数据，不广播消息正文；
+// 浏览器收到通知后仍通过已鉴权的 conversations API 读取数据，继续沿用服务端可见性规则。
+const conversationEventClients = new Set();
+function publishConversationEvent(event) {
+  const payload = `event: conversation\ndata: ${JSON.stringify({
+    type: event.type || 'updated',
+    channel: event.channel || null,
+    conversationId: event.conversationId || null,
+    messageId: event.messageId || null,
+    at: new Date().toISOString(),
+  })}\n\n`;
+  for (const client of conversationEventClients) {
+    try { client.res.write(payload); } catch { conversationEventClients.delete(client); }
+  }
+}
+
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({
@@ -1548,6 +1564,12 @@ async function persistWhatsAppMessage(payload, session) {
         .catch(error => console.error('[ai] auto reply failed:', error.message));
     }
     if (inserted.rowCount) {
+      publishConversationEvent({
+        type: fromMe ? 'message.sent' : 'message.received',
+        channel: 'whatsapp',
+        conversationId: conversation.id,
+        messageId: inserted.rows[0].id,
+      });
       recordAuditEvent('message.ingested', {
         channel: 'whatsapp',
         conversationId: conversation.id,
@@ -2041,6 +2063,12 @@ async function persistWebsiteMessage(body, clientIp) {
         .catch(error => console.error('[ai] website auto reply failed:', error.message));
     }
     if (inserted.rowCount) {
+      publishConversationEvent({
+        type: 'message.received',
+        channel: 'website',
+        conversationId: conversation.id,
+        messageId: inserted.rows[0].id,
+      });
       recordAuditEvent('message.ingested', {
         channel: 'website',
         conversationId: conversation.id,
@@ -2565,6 +2593,37 @@ app.get('/api/conversations', async (req, res) => {
   } catch (error) {
     console.error('[conversations] list failed:', error.message);
     res.status(502).json({ error: '无法加载会话', detail: error.message });
+  }
+});
+
+// 工作台实时刷新通知。使用 fetch 流而不是 EventSource，前端可以继续携带 Twenty JWT。
+app.get('/api/events', async (req, res) => {
+  try {
+    const viewer = await resolveConversationViewer(req);
+    if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+    res.status(200);
+    res.set({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.flushHeaders?.();
+    const client = { res, viewerId: viewer.userId };
+    conversationEventClients.add(client);
+    res.write(`event: ready\ndata: ${JSON.stringify({ at: new Date().toISOString() })}\n\n`);
+    const heartbeat = setInterval(() => {
+      try { res.write(': heartbeat\n\n'); } catch { clearInterval(heartbeat); }
+    }, 25000);
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      conversationEventClients.delete(client);
+    };
+    req.on('close', cleanup);
+    res.on('error', cleanup);
+  } catch (error) {
+    console.error('[events] stream failed:', error.message);
+    if (!res.headersSent) res.status(502).json({ error: '实时通道建立失败' });
   }
 });
 
@@ -5866,6 +5925,13 @@ async function recordAgentMessage(conversationId, content, externalId, options =
       options.statusDetail ? String(options.statusDetail).slice(0, 500) : null,
     ]);
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
+  if (inserted.rows[0]?.id) {
+    publishConversationEvent({
+      type: 'message.sent',
+      conversationId,
+      messageId: inserted.rows[0].id,
+    });
+  }
   return inserted.rows[0]?.id || null;
 }
 

@@ -1,6 +1,6 @@
 # CRM 开发计划
 
-> 最后更新：2026-08-07（校正 WhatsApp 渠道层：实际运行用 WAHA，非 Evolution API）
+> 最后更新：2026-09-02（对话工作台加入 SSE 实时刷新，轮询作为断线兜底）
 > 当前分支：main
 
 > ⚠️ **文档校正（2026-08-07）**：本计划原始版本以 **Evolution API** 撰写 WhatsApp 渠道层，但**实际运行中的 middleware 已切换为 WAHA**（`WAHA_API_URL` / `WAHA_SESSION`，监听 :3003，全局 `default` session）。多账号绑定方案以 **WAHA 多 Session** 为准。下文涉及 "Evolution API" 的章节（尤其 §3-A）为历史方案描述，落地时请以 WAHA 为准；详细多账号设计见 `docs/12-WhatsApp多账号绑定与RBAC设计方案.md`。
@@ -616,7 +616,7 @@ index.css                     ← Twenty 兼容 CSS 变量（亮/暗双主题）
 - 数据来自 `mock.js`，刷新后重置
 - 发送的消息不会真正送出到 WhatsApp / 官网
 - 「转为线索」不会在 Twenty 创建联系人
-- 无 SSE 实时推送（新消息不自动出现）
+- 已接入 SSE 实时推送（消息入库后通知工作台刷新；断线时由轮询兜底）
 
 ### Phase 3 后需补充的 API 对接工作
 
@@ -707,7 +707,7 @@ location /chat/ {
 - [x] Twenty 侧边栏出现「对话工作台」入口
 - [x] `localhost:3000/chat/` 通过 nginx 访问正常
 - [ ] 接真实 API（Phase 3 完成后）
-- [ ] SSE 实时推送（Phase 3 完成后）
+- [x] SSE 实时推送（middleware `/api/events`；chat-ui 鉴权订阅）
 - [ ] Twenty 联系人页链接跳转到对应会话（Phase 3 完成后）
 
 ---

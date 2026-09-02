@@ -31,6 +31,14 @@ node --check index.js
 npm test
 ```
 
+实时消息检查：
+
+```bash
+curl -i http://127.0.0.1:3000/conv-api/events
+```
+
+登录态下应返回 `text/event-stream`；未登录应返回 `401`。发布后还需从 WhatsApp 和官网 Widget 各发送一条测试消息，确认工作台即时刷新。`/conv-api/` 必须保持 `proxy_buffering off`，否则 SSE 会被代理缓存。
+
 Nginx 检查：
 
 ```bash
