@@ -4672,7 +4672,12 @@ app.delete('/api/channel-accounts/whatsapp', requireSameSite, async (req, res) =
     await pool.query(
       `UPDATE conv.channel_accounts
        SET status = 'unbound',
-           metadata = metadata || jsonb_build_object('unboundAt', now(), 'unboundBy', $2),
+           -- 保留 session 以便以后重新绑定，但清掉当前账号展示用的旧号码/名称。
+           -- 历史 conv.conversations 不改，继续保留原来的渠道归属和权限边界。
+           external_account_id = NULL,
+           display_name = NULL,
+           metadata = (COALESCE(metadata, '{}'::jsonb) - 'phone' - 'engine')
+             || jsonb_build_object('unboundAt', now(), 'unboundBy', $2),
            updated_at = now()
        WHERE id = $1`,
       [binding.id, authenticated.userId],
