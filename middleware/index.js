@@ -574,7 +574,7 @@ async function requireConversationAccess(req, res, options = {}) {
       [viewer.workspaceId, viewer.userId],
     );
     if (presenceResult.rows[0]?.status !== 'online') {
-      res.status(409).json({ error: '请先切换为在线状态，再回复官网客户' });
+      res.status(409).json({ error: '请先切换为「在岗」，再回复官网客户' });
       return null;
     }
   }
@@ -1443,11 +1443,11 @@ async function sendAiReplyToChannel(policy, content, idempotencyKey, ai) {
 }
 
 // AI 客服只保留「回复 / 不回复」两种实际动作：允许时直接回复客户并落库，不再生成 ai_suggestion 草稿。
-async function requestAiReplyIfAllowed(conversation, customerMessageId, message) {
+async function requestAiReplyIfAllowed(conversation, customerMessageId, message, options = {}) {
   if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY || !message?.trim()) return;
   const policy = await loadAiPolicy(conversation.id);
   if (!policy || !AI_AUTO_REPLY_CHANNELS.has(policy.channel)) return;
-  if (!policy.aiEnabled || !policy.inAiWindow || policy.status === 'takeover' || policy.status === 'closed') return;
+  if (!policy.aiEnabled || !policy.inAiWindow || (policy.status === 'takeover' && !options.allowDuringTakeover) || policy.status === 'closed') return;
 
   const aiExternalId = `ai:auto:${customerMessageId}`;
   // 幂等：webhook 可能重复投递，已自动回复过则跳过。
@@ -1496,6 +1496,13 @@ async function persistWhatsAppMessage(payload, session) {
   const ownerUserId = binding.user_id;
   const data = payload.payload || payload;
   const fromMe = Boolean(data.fromMe);
+  const rawType = whatsappRawMessageType(data);
+  // WAHA/WhatsApp 会为端到端加密和通知模板推送协议事件。这些不是客户消息，
+  // 不能进入 CRM 对话，否则会显示为两条“暂不支持”的自动消息。
+  if (['e2e_notification', 'notification_template'].includes(rawType)) {
+    console.log('[whatsapp] ignore protocol event:', rawType, data.id || '');
+    return;
+  }
   // `_data.id.remote` 始终是对方（客户），与收发方向无关；据此把双向消息归入同一会话。
   const counterpartyJid = data._data?.id?.remote || (fromMe ? data.to : data.from);
   if (!counterpartyJid || counterpartyJid.endsWith('@g.us') || counterpartyJid === 'status@broadcast') return;
@@ -6059,7 +6066,7 @@ async function releaseWebsiteTakeoversForOfflineAgents() {
       await pool.query(
         `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
          VALUES ($1, $2, 'system', $3, 'system', now())`,
-        [`system:${row.id}:${Date.now()}:offline-ai`, row.id, '当前销售已离线，会话已自动切换为 AI 接管'],
+        [`system:${row.id}:${Date.now()}:offline-ai`, row.id, '当前销售已离岗，会话已自动切换为 AI 接管'],
       );
       try { await releaseWebsiteAiTakeover(row.external_chat_id); } catch (_error) { /* AI 服务不可用时不阻断状态释放 */ }
       syncConversationToHistory(row.id, { createIfMissing: false }).catch(() => {});
@@ -6074,59 +6081,61 @@ async function releaseWebsiteTakeoversForOfflineAgents() {
 async function releaseIdleTakeovers() {
   if (!TAKEOVER_IDLE_MINUTES) return;
   try {
+    // 以销售最后一次发送消息为准，而不是单个会话的接管时间；同一销售一旦超时，
+    // 其全部官网人工会话一起交还 AI，避免销售已离线但仍占用其他会话。
     const result = await pool.query(
-      `WITH idle AS (
-         SELECT c.id, c.agent_id, c.external_chat_id
+      `WITH pending AS (
+         SELECT c.agent_id,
+                MAX(customer_msg.sent_at) AS last_customer_at,
+                MAX(agent_msg.sent_at) AS last_agent_at
            FROM conv.conversations c
-          WHERE c.channel = 'website'
-            AND c.status = 'takeover'
-            AND c.taken_over_at IS NOT NULL
-            AND c.taken_over_at < now() - ($1::int * INTERVAL '1 minute')
-            AND NOT EXISTS (
-              SELECT 1 FROM conv.messages m
-               WHERE m.conversation_id = c.id AND m.sender_type = 'agent'
-                 AND m.sent_at > now() - ($1::int * INTERVAL '1 minute')
-            )
-          FOR UPDATE
+           LEFT JOIN LATERAL (
+             SELECT m.sent_at
+               FROM conv.messages m
+              WHERE m.conversation_id = c.id AND m.sender_type = 'customer'
+              ORDER BY m.sent_at DESC LIMIT 1
+           ) customer_msg ON TRUE
+           LEFT JOIN LATERAL (
+             SELECT m.sent_at
+               FROM conv.messages m
+              WHERE m.conversation_id = c.id AND m.sender_type = 'agent'
+              ORDER BY m.sent_at DESC LIMIT 1
+           ) agent_msg ON TRUE
+          WHERE c.channel = 'website' AND c.status = 'takeover' AND c.agent_id IS NOT NULL
+          GROUP BY c.agent_id
+         HAVING MAX(customer_msg.sent_at) IS NOT NULL
+            AND MAX(customer_msg.sent_at) > COALESCE(MAX(agent_msg.sent_at), '-infinity'::timestamptz)
+            AND COALESCE(MAX(agent_msg.sent_at), '-infinity'::timestamptz) < now() - ($1::int * INTERVAL '1 minute')
        ), updated AS (
          UPDATE conv.conversations c
             SET status = 'open', agent_id = NULL, taken_over_at = NULL, updated_at = now()
-           FROM idle
-          WHERE c.id = idle.id
-         RETURNING c.id, idle.agent_id AS "releasedAgentId", c.external_chat_id
+           FROM pending
+          WHERE c.channel = 'website' AND c.status = 'takeover' AND c.agent_id = pending.agent_id
+         RETURNING c.id, pending.agent_id AS "releasedAgentId", c.external_chat_id
        )
        SELECT * FROM updated`,
       [TAKEOVER_IDLE_MINUTES],
     );
     for (const row of result.rows) {
-      if (row.releasedAgentId) {
-        await pool.query(
-          `UPDATE conv.agent_presence
-              SET status = 'offline', updated_at = now()
-            WHERE workspace_member_id = $1 AND status = 'online'
-              AND NOT EXISTS (
-                SELECT 1 FROM conv.conversations c2
-                 WHERE c2.channel = 'website' AND c2.status = 'takeover'
-                   AND c2.agent_id = $1 AND c2.taken_over_at IS NOT NULL
-                   AND c2.taken_over_at >= now() - ($2::int * INTERVAL '1 minute')
-              )`,
-          [row.releasedAgentId, TAKEOVER_IDLE_MINUTES],
-        );
-      }
+      if (row.releasedAgentId) await pool.query(
+        `UPDATE conv.agent_presence SET status = 'offline', updated_at = now()
+          WHERE workspace_member_id = $1 AND status = 'online'`,
+        [row.releasedAgentId],
+      );
       // 沟通状态表单：超时自动释放 → 档案「会话状态」回退为进行中。
       syncConversationToHistory(row.id, { createIfMissing: false }).catch(() => {});
       await pool.query(
         `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at)
          VALUES ($1, $2, 'system', $3, 'system', now())`,
         [`system:${row.id}:${Date.now()}:auto-release`, row.id,
-         `超过${TAKEOVER_IDLE_MINUTES}分钟无人回复，销售已自动切换为离线，会话已切换为 AI 接管`],
+         `超过${TAKEOVER_IDLE_MINUTES}分钟无人回复，销售已自动切换为离岗，会话已切换为 AI 接管`],
       );
       // 官网若有 AI 服务且已配置，尝试通知释放（未激活/未配置时自动 no-op，不影响本流程）。
       try { await releaseWebsiteAiTakeover(row.external_chat_id); } catch (e) { /* 忽略 */ }
       recordAuditEvent('conversation.auto_released', {
         channel: 'website',
         conversationId: row.id,
-        payload: { reason: 'idle_timeout', idleMinutes: TAKEOVER_IDLE_MINUTES, releasedAgentId: row.agent_id },
+        payload: { reason: 'idle_timeout', idleMinutes: TAKEOVER_IDLE_MINUTES, releasedAgentId: row.releasedAgentId },
       });
     }
     if (result.rows.length) {
@@ -6134,6 +6143,58 @@ async function releaseIdleTakeovers() {
     }
   } catch (error) {
     console.error('[auto-release] scan failed:', error.message);
+  }
+}
+
+// 官网人工接管后的短时 AI 兜底：销售仍保持在线，但客户消息超过 1 分钟无人回复时，
+// 允许 AI 回复该条消息；会话仍保留 takeover，销售可以继续接手。
+const TAKEOVER_AI_FALLBACK_MINUTES = Math.max(1, Number(process.env.TAKEOVER_AI_FALLBACK_MINUTES || 1));
+let takeoverAiFallbackRunning = false;
+
+async function replyToIdleWebsiteTakeovers() {
+  if (takeoverAiFallbackRunning) return;
+  takeoverAiFallbackRunning = true;
+  try {
+    const result = await pool.query(
+      `SELECT c.id, c.channel, c.status, c.external_chat_id,
+              customer_msg.id AS "customerMessageId", customer_msg.content
+         FROM conv.conversations c
+         JOIN LATERAL (
+           SELECT m.id, m.content, m.sent_at
+             FROM conv.messages m
+            WHERE m.conversation_id = c.id AND m.sender_type = 'customer'
+            ORDER BY m.sent_at DESC LIMIT 1
+         ) customer_msg ON TRUE
+         LEFT JOIN LATERAL (
+           SELECT m.sent_at
+             FROM conv.messages m
+            WHERE m.conversation_id = c.id AND m.sender_type = 'agent'
+            ORDER BY m.sent_at DESC LIMIT 1
+         ) agent_msg ON TRUE
+        WHERE c.channel = 'website' AND c.status = 'takeover' AND c.agent_id IS NOT NULL
+          AND EXISTS (
+            SELECT 1
+              FROM conv.agent_presence p
+             WHERE p.workspace_member_id = c.agent_id AND p.status = 'online'
+          )
+          AND customer_msg.sent_at < now() - ($1::int * INTERVAL '1 minute')
+          AND customer_msg.sent_at > COALESCE(agent_msg.sent_at, '-infinity'::timestamptz)
+          AND customer_msg.content IS NOT NULL
+          AND trim(customer_msg.content) <> ''
+          AND NOT EXISTS (
+            SELECT 1
+              FROM conv.messages ai_msg
+             WHERE ai_msg.external_msg_id = 'ai:auto:' || customer_msg.id
+          )`,
+      [TAKEOVER_AI_FALLBACK_MINUTES],
+    );
+    for (const row of result.rows) {
+      await requestAiReplyIfAllowed(row, row.customerMessageId, row.content, { allowDuringTakeover: true });
+    }
+  } catch (error) {
+    console.error('[ai-fallback] website idle scan failed:', error.message);
+  } finally {
+    takeoverAiFallbackRunning = false;
   }
 }
 
@@ -6606,6 +6667,12 @@ async function startServer() {
     setInterval(releaseIdleTakeovers, 60 * 1000);
     console.log(`[auto-release] website idle takeover auto-release enabled (idle > ${TAKEOVER_IDLE_MINUTES}min)`);
   }
+  const runTakeoverAiFallback = () => replyToIdleWebsiteTakeovers().catch((error) => {
+    console.error('[ai-fallback] website idle reply cycle failed:', error.message);
+  });
+  runTakeoverAiFallback();
+  setInterval(runTakeoverAiFallback, 10 * 1000);
+  console.log(`[ai-fallback] website idle reply enabled (after ${TAKEOVER_AI_FALLBACK_MINUTES}min while sales are online)`);
   setInterval(() => processPendingSalesHandoffs(), 1000);
   // 启动后及每分钟清理已离线销售仍占用的官网人工会话。
   releaseWebsiteTakeoversForOfflineAgents().catch(() => {});
