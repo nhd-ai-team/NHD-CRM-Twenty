@@ -14,7 +14,8 @@ export function usePresence() {
       if (!token) throw new Error('登录状态已失效，请刷新 CRM 后重试')
       const response = await fetch('/conv-api/presence', {
         cache: 'no-store',
-        headers: withTwentyAuthHeaders(),
+        credentials: 'same-origin',
+        headers: withTwentyAuthHeaders({}, token),
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || '无法读取接待状态')
@@ -37,7 +38,8 @@ export function usePresence() {
       if (!token) throw new Error('登录状态已失效，请刷新 CRM 后重试')
       const response = await fetch('/conv-api/presence', {
         method: 'PATCH',
-        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'same-origin',
+        headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }, token),
         body: JSON.stringify({ status: nextStatus }),
       })
       const data = await response.json().catch(() => ({}))

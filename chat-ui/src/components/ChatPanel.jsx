@@ -159,7 +159,9 @@ export function MessageBubble({ msg, channel }) {
         {isAI && (
           <span style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>AI 自动回复</span>
         )}
-        {!isCustomer && !isAI && msg.senderRole === 'supervisor' && msg.senderName && (
+        {/* 每条人工消息都标出是谁回复的（此前只有主管的消息显示名字，销售之间互相看不出谁回的）。
+            senderName 由后端统一给出，取不到成员名时兜底为「未识别成员」。 */}
+        {!isCustomer && !isAI && msg.senderName && (
           <span style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>{msg.senderName}</span>
         )}
         <div style={{
@@ -333,7 +335,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
       return
     }
     if (conv.channel === 'website' && presence?.status !== 'online') {
-      setSendError('请先切换为在线状态，再回复官网客户')
+      setSendError('请先切换为「在岗」，再回复官网客户')
       return
     }
     setSendError('')
@@ -411,7 +413,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
       return
     }
     if (conv.channel === 'website' && presence?.status !== 'online') {
-      setSendError('请先切换为在线状态，再发送附件')
+      setSendError('请先切换为「在岗」，再发送附件')
       return
     }
     fileInputRef.current?.click()
@@ -587,7 +589,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
           onKeyDown={handleKeyDown}
           onCompositionStart={() => { composingRef.current = true }}
           onCompositionEnd={() => { composingRef.current = false }}
-          placeholder={(aiMode && conv.status !== 'takeover') ? '请先点击「接入人工」后再回复客户' : (conv.channel === 'website' && presence?.status !== 'online') ? '请先切换为在线状态后回复客户' : '请输入即将发送的内容……'}
+          placeholder={(aiMode && conv.status !== 'takeover') ? '请先点击「接入人工」后再回复客户' : (conv.channel === 'website' && presence?.status !== 'online') ? '请先切换为「在岗」后回复客户' : '请输入即将发送的内容……'}
           style={{
             width: '100%', minHeight: 80, maxHeight: 160, padding: '12px 16px',
             border: 'none', outline: 'none', resize: 'none',

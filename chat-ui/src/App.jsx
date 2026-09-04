@@ -11,7 +11,7 @@ import { installTwentyAuthMessageListener } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
 import { NewWhatsAppConversationModal } from './components/NewWhatsAppConversationModal'
-import { PanelRightOpen, PanelRightClose, Settings, Power } from 'lucide-react'
+import { PanelRightOpen, PanelRightClose, Settings } from 'lucide-react'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -30,6 +30,8 @@ function topIconButtonStyle(active = false) {
   }
 }
 
+// 销售的官网接待状态。用「在岗/离岗」文字药丸而非图标：状态和可点击方向一眼可见，
+// 不需要 hover 才知道当前是什么状态、点下去会变成什么。
 function PresenceSwitch({ status, disabled, onClick }) {
   const online = status === 'online'
   return (
@@ -37,22 +39,24 @@ function PresenceSwitch({ status, disabled, onClick }) {
       type="button"
       onClick={onClick}
       disabled={disabled}
-      title={online ? '当前在线，点击切换为离线' : '当前离线，点击切换为在线'}
-      aria-label={online ? '切换为离线' : '切换为在线'}
+      title={online ? '当前在岗，可接待官网客户。点击切换为离岗' : '当前离岗，不接待官网客户。点击切换为在岗'}
+      aria-label={online ? '当前在岗，切换为离岗' : '当前离岗，切换为在岗'}
       style={{
-        width: 30, height: 30, borderRadius: 8, border: `2px solid ${online ? '#16a34a' : '#d4d4d8'}`, padding: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
-        background: online ? '#16a34a' : '#fff',
-        color: online ? '#fff' : 'var(--text-muted)',
+        height: 26, padding: '0 10px', borderRadius: 999,
+        border: `1px solid ${online ? '#86efac' : 'var(--border)'}`,
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        background: online ? '#dcfce7' : 'var(--bg-active)',
+        color: online ? '#15803d' : 'var(--text-secondary)',
         cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .55 : 1,
+        fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap',
         transition: 'background .18s ease, border-color .18s ease, opacity .18s ease',
       }}
     >
       <span style={{
-        position: 'absolute', right: 2, bottom: 2, width: 7, height: 7,
-        borderRadius: '50%', background: online ? '#fff' : '#a1a1aa',
+        width: 7, height: 7, borderRadius: '50%', flex: '0 0 auto',
+        background: online ? '#16a34a' : 'var(--text-muted)',
       }} />
-      <Power size={16} strokeWidth={2.4} />
+      {online ? '在岗' : '离岗'}
     </button>
   )
 }
@@ -162,12 +166,12 @@ function ChannelBar({ conversations, activeChannel, setActiveChannel, contactOpe
           >
             <div style={{ padding: '16px 18px 10px' }}>
               <div id="presence-confirm-title" style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
-                确认切换为{pendingPresenceStatus === 'online' ? '在线' : '离线'}？
+                确认切换为{pendingPresenceStatus === 'online' ? '在岗' : '离岗'}？
               </div>
               <div style={{ marginTop: 8, fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-secondary)' }}>
                 {pendingPresenceStatus === 'online'
-                  ? '上线后，您将进入官网客户的人工接待范围。'
-                  : '离线后，您将不再作为在线销售接收新的接待通知。'}
+                  ? '在岗后，官网客户会分配给你，你也才能回复官网会话。'
+                  : '离岗后不再分配新的官网客户，你正在接待的官网会话会交还 AI。WhatsApp、邮件不受影响。'}
               </div>
             </div>
             <div style={{

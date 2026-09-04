@@ -105,8 +105,8 @@ export function waitForTwentyAccessToken(timeoutMs = 5000) {
   })
 }
 
-export function withTwentyAuthHeaders(headers = {}) {
-  const token = getTwentyAccessToken()
+export function withTwentyAuthHeaders(headers = {}, explicitToken = '') {
+  const token = explicitToken || getTwentyAccessToken()
   const baseHeaders = { ...headers, 'X-Chat-Ui-Version': '20260730-auth-2' }
   if (!token) return baseHeaders
   const userId = decodeJwtPayload(token)?.sub || ''
