@@ -33,6 +33,7 @@ export function InlineNameEditor({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const inputRef = useRef(null)
+  const editorRef = useRef(null)
 
   // 非编辑态跟随后端最新名称；编辑态保留用户输入（含保存失败的输入）。
   useEffect(() => { if (!editing) setDraft(name || '') }, [name, editing])
@@ -89,6 +90,7 @@ export function InlineNameEditor({
 
   return (
     <span
+      ref={editorRef}
       onClick={event => event.stopPropagation()}
       style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, flex: 1, maxWidth }}
     >
@@ -99,6 +101,10 @@ export function InlineNameEditor({
         disabled={saving}
         maxLength={NAME_MAX_LENGTH}
         onChange={event => setDraft(event.target.value)}
+        onBlur={event => {
+          // 点击保存/取消按钮时保持按钮自己的语义；点击编辑区外则自动保存。
+          if (!editorRef.current?.contains(event.relatedTarget)) submit(event)
+        }}
         onKeyDown={event => {
           if (event.key === 'Enter') submit(event)
           if (event.key === 'Escape') cancel(event)
