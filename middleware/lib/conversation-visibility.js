@@ -10,14 +10,8 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
         AND ca.provider = 'waha'
         AND ca.status <> 'unbound'
         AND ca.user_id = ${userParam}
-        AND (
-          ${alias}.owner_id = ca.user_id
-          OR ${alias}.channel_owner_id = ca.user_id
-          OR (
-            ca.provider_session IS NOT NULL
-            AND ${alias}.waha_session = ca.provider_session
-          )
-        )
+        AND ca.provider_session IS NOT NULL
+        AND ${alias}.waha_session = ca.provider_session
     )`;
 
   if (
@@ -30,7 +24,8 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
     };
   }
 
-  // WhatsApp 是个人渠道：不管 admin/boss/sales，都只能看到自己绑定账号下的会话。
+  // WhatsApp 是个人渠道：不管 admin/boss/sales，都只能看到自己绑定 Session 下的会话。
+  // 不使用 owner_id/channel_owner_id 兜底，避免历史负责人字段错配造成跨账号串看。
   // 其他渠道仍保留 v2.1 角色规则：admin/boss 可看全部，销售按归属/接管关系看。
   if (viewer.role === 'admin' || viewer.role === 'boss') {
     // (${memberParam}::text IS NOT NULL OR TRUE) 恒真，仅用于给 $memberParam 指定类型，

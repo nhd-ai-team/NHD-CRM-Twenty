@@ -161,7 +161,7 @@
 
   function getCachedStatus() {
     try {
-      var cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null');
+      var cached = JSON.parse(sessionStorage.getItem(getCacheKey()) || 'null');
       if (cached && cached.data && Date.now() - cached.at < CACHE_TTL_MS) return cached.data;
     } catch (e) {}
     return null;
@@ -169,12 +169,36 @@
 
   function setCachedStatus(data) {
     try {
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), data: data }));
+      sessionStorage.setItem(getCacheKey(), JSON.stringify({ at: Date.now(), data: data }));
     } catch (e) {}
   }
 
   function clearCachedStatus() {
-    try { sessionStorage.removeItem(CACHE_KEY); } catch (e) {}
+    try {
+      sessionStorage.removeItem(CACHE_KEY);
+      sessionStorage.removeItem(getCacheKey());
+    } catch (e) {}
+  }
+
+  function getCacheKey() {
+    var token = getTwentyAccessToken();
+    var payload = token ? decodeJwtPayload(token) : null;
+    return CACHE_KEY + ':' + ((payload && (payload.sub || payload.userId)) || 'anonymous');
+  }
+
+  function clearRenderedStatus(root) {
+    var status = root.querySelector('[data-wa-status]');
+    var binding = root.querySelector('[data-wa-binding]');
+    if (status) { status.textContent = '状态未知'; status.style.background = '#f4f4f5'; status.style.color = '#52525b'; }
+    ['[data-wa-phone]', '[data-wa-name]', '[data-wa-account-id]'].forEach(function (selector) {
+      var field = root.querySelector(selector);
+      if (field) field.textContent = '-';
+    });
+    if (binding) binding.textContent = '暂无法确认，请点击刷新状态';
+    var qrBox = root.querySelector('[data-wa-qr-box]');
+    if (qrBox) qrBox.style.display = 'none';
+    var unbindButton = root.querySelector('[data-wa-unbind]');
+    if (unbindButton) { unbindButton.disabled = true; unbindButton.setAttribute('data-connected-disabled', '1'); }
   }
 
   function setButtonBusy(root, selector, busyText, isBusy) {
@@ -324,6 +348,8 @@
         return data;
       })
       .catch(function (error) {
+        clearCachedStatus();
+        clearRenderedStatus(root);
         root.querySelector('[data-wa-error]').textContent = error.message || '状态加载失败';
       })
       .finally(function () { statusInFlight = null; });
