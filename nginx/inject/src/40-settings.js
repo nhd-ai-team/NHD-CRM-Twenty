@@ -54,6 +54,19 @@
     });
   }
 
+  function clearRenderedWhatsAppStatus(root) {
+    var status = root.querySelector('[data-wa-status]');
+    var binding = root.querySelector('[data-wa-binding]');
+    if (status) { status.textContent = '状态未知'; status.style.background = '#f4f4f5'; status.style.color = '#52525b'; }
+    ['[data-wa-phone]', '[data-wa-name]', '[data-wa-account-id]'].forEach(function (selector) {
+      var field = root.querySelector(selector);
+      if (field) field.textContent = '-';
+    });
+    if (binding) binding.textContent = '暂无法确认，请点击刷新状态';
+    var qrBox = root.querySelector('[data-wa-qr-box]');
+    if (qrBox) qrBox.style.display = 'none';
+  }
+
   function renderWhatsAppStatus(root, state) {
     var connected = state && state.connected;
     var binding = state && state.binding || {};
@@ -157,6 +170,7 @@
       .then(function (response) { return readChannelApiResponse(response, '状态加载失败'); })
       .then(function (data) { renderWhatsAppStatus(root, data); })
       .catch(function (error) {
+        clearRenderedWhatsAppStatus(root);
         root.querySelector('[data-wa-error]').textContent = error.message || '状态加载失败';
       });
   }
