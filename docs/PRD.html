@@ -451,7 +451,7 @@ td.muted{color:var(--text-tertiary);}
         <div class="sub-title-sm">④ AI 智能客服（全渠道 · 可配置）</div>
         <ul class="plainlist">
           <li>AI 智能客服接入官网客服链路；其他渠道具备中间层接入基础，按渠道开关和生效时间段控制是否自动回复</li>
-          <li>v1.0 AI 状态仅保留两类：自动回复开启 / 自动回复关闭；不保留 AI suggestion / 建议模式</li>
+          <li>v1.0 AI 状态仅保留两类：自动回复开启 / 自动回复关闭；不保留 AI suggestion / 建议模式；官网人工接管后的短时 AI 兜底等待时长可在工作台配置</li>
           <li>人工接管前必须点击「接管会话」并二次确认；接管后 AI 停止对该会话自动回复</li>
           <li>所有 AI 回复记录可在 CRM 查看和审计</li>
         </ul>
@@ -1050,6 +1050,7 @@ td.muted{color:var(--text-tertiary);}
             <tr><td><strong>WhatsApp 绑定</strong></td><td>支持二维码连接、手机号配对码、绑定到当前 CRM 账号、解绑；同一个 WhatsApp ID 同一时间只能绑定一个 CRM 账号。当前 v1.0 仍使用 WAHA default session；多销售并行多号码的独立 session 升级方案见第 14 节（v2.1 多账号绑定与权限隔离）。</td></tr>
             <tr><td><strong>AI 渠道开关</strong></td><td>每个渠道独立配置是否允许 AI 自动回复，实时生效</td></tr>
             <tr><td><strong>AI 生效时间段</strong></td><td>每个渠道可配置全天或每日开始/结束时间，支持跨天时间段；不在生效时间内不会调用 AI 回复</td></tr>
+            <tr><td><strong>人工未回复 AI 延迟</strong></td><td>官网人工接管且销售在线时，客户消息超过配置的 1~120 分钟未获人工回复，AI 回复该条消息但不改变人工接管和销售在线状态；默认 1 分钟</td></tr>
             <tr><td><strong>复杂 AI 配置</strong></td><td>兜底话术、知识库范围、允许回答的问题类型后续在设置页补齐</td></tr>
           </tbody>
         </table><br></div>

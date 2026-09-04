@@ -6,6 +6,7 @@ const {
   formatTimeValue,
   normalizeAiSettingPayload,
   normalizeTimeValue,
+  normalizeTakeoverAiFallbackMinutes,
   serializeAiSettingRow,
 } = require('../lib/ai-settings');
 const { conversationVisibilityWhere } = require('../lib/conversation-visibility');
@@ -40,6 +41,7 @@ test('normalizeAiSettingPayload validates channel and schedule contract', () => 
       scheduleStart: '18:00',
       scheduleEnd: '09:00',
       timezone: 'Asia/Shanghai',
+      takeoverAiFallbackMinutes: 1,
     },
   });
 
@@ -55,6 +57,13 @@ test('normalizeAiSettingPayload validates channel and schedule contract', () => 
     enabled: true,
     scheduleStart: '99:00',
   }).error, 'scheduleStart must be HH:mm');
+  assert.equal(normalizeTakeoverAiFallbackMinutes(1), 1);
+  assert.equal(normalizeTakeoverAiFallbackMinutes(120), 120);
+  assert.equal(normalizeTakeoverAiFallbackMinutes(0), null);
+  assert.equal(normalizeTakeoverAiFallbackMinutes(121), null);
+  assert.equal(normalizeAiSettingPayload({
+    channel: 'website', enabled: true, takeoverAiFallbackMinutes: 5,
+  }).setting.takeoverAiFallbackMinutes, 5);
 });
 
 test('serializeAiSettingRow normalizes response shape', () => {
@@ -73,6 +82,7 @@ test('serializeAiSettingRow normalizes response shape', () => {
     scheduleStart: '09:00',
     scheduleEnd: '18:30',
     timezone: 'Asia/Shanghai',
+    takeoverAiFallbackMinutes: 1,
     activeNow: true,
   });
 });
@@ -94,6 +104,7 @@ test('buildAiSettingResponses keeps stable channel defaults without endpoint-onl
       scheduleStart: null,
       scheduleEnd: null,
       timezone: 'Asia/Shanghai',
+      takeoverAiFallbackMinutes: 1,
       activeNow: true,
     },
     {
@@ -103,6 +114,7 @@ test('buildAiSettingResponses keeps stable channel defaults without endpoint-onl
       scheduleStart: '18:00',
       scheduleEnd: '09:00',
       timezone: 'Asia/Shanghai',
+      takeoverAiFallbackMinutes: 1,
       activeNow: false,
     },
     {
@@ -112,6 +124,7 @@ test('buildAiSettingResponses keeps stable channel defaults without endpoint-onl
       scheduleStart: null,
       scheduleEnd: null,
       timezone: 'Asia/Shanghai',
+      takeoverAiFallbackMinutes: 1,
       activeNow: true,
     },
     {
@@ -121,6 +134,7 @@ test('buildAiSettingResponses keeps stable channel defaults without endpoint-onl
       scheduleStart: null,
       scheduleEnd: null,
       timezone: 'Asia/Shanghai',
+      takeoverAiFallbackMinutes: 1,
       activeNow: true,
     },
   ]);

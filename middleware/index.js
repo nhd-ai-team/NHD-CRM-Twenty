@@ -1041,11 +1041,13 @@ async function ensureSchema() {
       ai_schedule_start TIME,
       ai_schedule_end TIME,
       ai_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+      takeover_ai_fallback_minutes INTEGER NOT NULL DEFAULT 1,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
     ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_schedule_enabled BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_schedule_start TIME;
     ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_schedule_end TIME;
     ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS ai_timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai';
+    ALTER TABLE conv.channel_settings ADD COLUMN IF NOT EXISTS takeover_ai_fallback_minutes INTEGER NOT NULL DEFAULT 1;
     INSERT INTO conv.channel_settings(channel, ai_enabled) VALUES
       ('website', true), ('whatsapp', false), ('instagram', false), ('facebook', false)
       ON CONFLICT (channel) DO NOTHING;
@@ -1317,18 +1319,20 @@ function composeAiReplyContent(ai) {
 async function saveAiSetting(client, setting) {
   const saved = await client.query(
     `INSERT INTO conv.channel_settings(
-       channel, ai_enabled, ai_schedule_enabled, ai_schedule_start, ai_schedule_end, ai_timezone, updated_at
-     ) VALUES ($1, $2, $3, $4::time, $5::time, $6, now())
+       channel, ai_enabled, ai_schedule_enabled, ai_schedule_start, ai_schedule_end, ai_timezone, takeover_ai_fallback_minutes, updated_at
+     ) VALUES ($1, $2, $3, $4::time, $5::time, $6, $7, now())
      ON CONFLICT (channel) DO UPDATE SET
        ai_enabled = EXCLUDED.ai_enabled,
        ai_schedule_enabled = EXCLUDED.ai_schedule_enabled,
        ai_schedule_start = EXCLUDED.ai_schedule_start,
        ai_schedule_end = EXCLUDED.ai_schedule_end,
        ai_timezone = EXCLUDED.ai_timezone,
+       takeover_ai_fallback_minutes = EXCLUDED.takeover_ai_fallback_minutes,
        updated_at = now()
      RETURNING channel, ai_enabled AS "enabled", ai_schedule_enabled AS "scheduleEnabled",
                ai_schedule_start AS "scheduleStart", ai_schedule_end AS "scheduleEnd",
-               ai_timezone AS "timezone", ${aiScheduleActiveExpression('')} AS "activeNow"`,
+               ai_timezone AS "timezone", takeover_ai_fallback_minutes AS "takeoverAiFallbackMinutes",
+               ${aiScheduleActiveExpression('')} AS "activeNow"`,
     [
       setting.channel,
       setting.enabled,
@@ -1336,6 +1340,7 @@ async function saveAiSetting(client, setting) {
       setting.scheduleStart,
       setting.scheduleEnd,
       setting.timezone,
+      setting.takeoverAiFallbackMinutes,
     ],
   );
   return serializeAiSettingRow(saved.rows[0]);
@@ -3674,6 +3679,7 @@ app.get('/api/ai-settings', async (req, res) => {
               ai_schedule_start AS "scheduleStart",
               ai_schedule_end AS "scheduleEnd",
               ai_timezone AS "timezone",
+              takeover_ai_fallback_minutes AS "takeoverAiFallbackMinutes",
               ${scheduleActive} AS "activeNow"
          FROM conv.channel_settings cs
         ORDER BY channel`,
@@ -6146,9 +6152,8 @@ async function releaseIdleTakeovers() {
   }
 }
 
-// 官网人工接管后的短时 AI 兜底：销售仍保持在线，但客户消息超过 1 分钟无人回复时，
+// 官网人工接管后的短时 AI 兜底：销售仍保持在线，但客户消息超过配置时长无人回复时，
 // 允许 AI 回复该条消息；会话仍保留 takeover，销售可以继续接手。
-const TAKEOVER_AI_FALLBACK_MINUTES = Math.max(1, Number(process.env.TAKEOVER_AI_FALLBACK_MINUTES || 1));
 let takeoverAiFallbackRunning = false;
 
 async function replyToIdleWebsiteTakeovers() {
@@ -6159,6 +6164,7 @@ async function replyToIdleWebsiteTakeovers() {
       `SELECT c.id, c.channel, c.status, c.external_chat_id,
               customer_msg.id AS "customerMessageId", customer_msg.content
          FROM conv.conversations c
+         LEFT JOIN conv.channel_settings cs ON cs.channel = c.channel
          JOIN LATERAL (
            SELECT m.id, m.content, m.sent_at
              FROM conv.messages m
@@ -6177,7 +6183,7 @@ async function replyToIdleWebsiteTakeovers() {
               FROM conv.agent_presence p
              WHERE p.workspace_member_id = c.agent_id AND p.status = 'online'
           )
-          AND customer_msg.sent_at < now() - ($1::int * INTERVAL '1 minute')
+          AND customer_msg.sent_at < now() - (COALESCE(cs.takeover_ai_fallback_minutes, 1)::int * INTERVAL '1 minute')
           AND customer_msg.sent_at > COALESCE(agent_msg.sent_at, '-infinity'::timestamptz)
           AND customer_msg.content IS NOT NULL
           AND trim(customer_msg.content) <> ''
@@ -6186,7 +6192,7 @@ async function replyToIdleWebsiteTakeovers() {
               FROM conv.messages ai_msg
              WHERE ai_msg.external_msg_id = 'ai:auto:' || customer_msg.id
           )`,
-      [TAKEOVER_AI_FALLBACK_MINUTES],
+      [],
     );
     for (const row of result.rows) {
       await requestAiReplyIfAllowed(row, row.customerMessageId, row.content, { allowDuringTakeover: true });
@@ -6672,7 +6678,7 @@ async function startServer() {
   });
   runTakeoverAiFallback();
   setInterval(runTakeoverAiFallback, 10 * 1000);
-  console.log(`[ai-fallback] website idle reply enabled (after ${TAKEOVER_AI_FALLBACK_MINUTES}min while sales are online)`);
+  console.log('[ai-fallback] website idle reply enabled (per-channel delay while sales are online)');
   setInterval(() => processPendingSalesHandoffs(), 1000);
   // 启动后及每分钟清理已离线销售仍占用的官网人工会话。
   releaseWebsiteTakeoversForOfflineAgents().catch(() => {});

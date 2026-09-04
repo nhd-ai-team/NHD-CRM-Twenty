@@ -1,6 +1,9 @@
 const AI_SETTING_CHANNELS = ['website', 'whatsapp', 'instagram', 'facebook'];
 const TIME_VALUE_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const DEFAULT_AI_TIMEZONE = 'Asia/Shanghai';
+const DEFAULT_TAKEOVER_AI_FALLBACK_MINUTES = 1;
+const MIN_TAKEOVER_AI_FALLBACK_MINUTES = 1;
+const MAX_TAKEOVER_AI_FALLBACK_MINUTES = 120;
 
 function aiScheduleActiveExpression(alias = 'cs') {
   const prefix = alias ? `${alias}.` : '';
@@ -31,6 +34,12 @@ function formatTimeValue(value) {
   return String(value).slice(0, 5);
 }
 
+function normalizeTakeoverAiFallbackMinutes(value) {
+  const minutes = Number(value);
+  if (!Number.isInteger(minutes) || minutes < MIN_TAKEOVER_AI_FALLBACK_MINUTES || minutes > MAX_TAKEOVER_AI_FALLBACK_MINUTES) return null;
+  return minutes;
+}
+
 function normalizeAiSettingPayload(value = {}) {
   const channel = String(value.channel || '').trim();
   const enabled = value.enabled;
@@ -38,6 +47,9 @@ function normalizeAiSettingPayload(value = {}) {
   const scheduleStart = normalizeTimeValue(value.scheduleStart);
   const scheduleEnd = normalizeTimeValue(value.scheduleEnd);
   const timezone = String(value.timezone || DEFAULT_AI_TIMEZONE).trim() || DEFAULT_AI_TIMEZONE;
+  const takeoverAiFallbackMinutes = value.takeoverAiFallbackMinutes === undefined
+    ? DEFAULT_TAKEOVER_AI_FALLBACK_MINUTES
+    : normalizeTakeoverAiFallbackMinutes(value.takeoverAiFallbackMinutes);
   if (!AI_SETTING_CHANNELS.includes(channel)) return { error: 'unsupported channel' };
   if (typeof enabled !== 'boolean') return { error: 'enabled must be boolean' };
   if (typeof scheduleEnabled !== 'boolean') return { error: 'scheduleEnabled must be boolean' };
@@ -46,7 +58,8 @@ function normalizeAiSettingPayload(value = {}) {
   if (scheduleEnabled && (!scheduleStart || !scheduleEnd)) {
     return { error: 'scheduleStart and scheduleEnd are required when schedule is enabled' };
   }
-  return { setting: { channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone } };
+  if (takeoverAiFallbackMinutes == null) return { error: 'takeoverAiFallbackMinutes must be an integer between 1 and 120' };
+  return { setting: { channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone, takeoverAiFallbackMinutes } };
 }
 
 function serializeAiSettingRow(row = {}) {
@@ -57,6 +70,7 @@ function serializeAiSettingRow(row = {}) {
     scheduleStart: formatTimeValue(row.scheduleStart),
     scheduleEnd: formatTimeValue(row.scheduleEnd),
     timezone: row.timezone || DEFAULT_AI_TIMEZONE,
+    takeoverAiFallbackMinutes: normalizeTakeoverAiFallbackMinutes(row.takeoverAiFallbackMinutes) || DEFAULT_TAKEOVER_AI_FALLBACK_MINUTES,
     activeNow: row.activeNow,
   };
 }
@@ -73,6 +87,7 @@ function buildAiSettingResponses(rows = []) {
         scheduleStart: null,
         scheduleEnd: null,
         timezone: DEFAULT_AI_TIMEZONE,
+        takeoverAiFallbackMinutes: DEFAULT_TAKEOVER_AI_FALLBACK_MINUTES,
         activeNow: true,
       };
     }
@@ -83,10 +98,12 @@ function buildAiSettingResponses(rows = []) {
 module.exports = {
   AI_SETTING_CHANNELS,
   DEFAULT_AI_TIMEZONE,
+  DEFAULT_TAKEOVER_AI_FALLBACK_MINUTES,
   aiScheduleActiveExpression,
   buildAiSettingResponses,
   formatTimeValue,
   normalizeAiSettingPayload,
   normalizeTimeValue,
+  normalizeTakeoverAiFallbackMinutes,
   serializeAiSettingRow,
 };

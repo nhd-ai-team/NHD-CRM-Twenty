@@ -3,7 +3,7 @@ import { waitForTwentyAccessToken, withTwentyAuthHeaders } from '../utils/twenty
 
 // 渠道级 AI 自动回复配置（工作台齿轮的「生效范围」）
 export function useAiSettings() {
-  const [settings, setSettings] = useState([]) // [{ channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone }]
+  const [settings, setSettings] = useState([]) // [{ channel, enabled, scheduleEnabled, scheduleStart, scheduleEnd, timezone, takeoverAiFallbackMinutes }]
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -47,6 +47,7 @@ export function useAiSettings() {
           scheduleStart: next.scheduleStart || null,
           scheduleEnd: next.scheduleEnd || null,
           timezone: next.timezone || 'Asia/Shanghai',
+          takeoverAiFallbackMinutes: Number(next.takeoverAiFallbackMinutes) || 1,
         }),
       })
       if (!response.ok) {
@@ -86,6 +87,7 @@ export function useAiSettings() {
             scheduleStart: item.scheduleStart || null,
             scheduleEnd: item.scheduleEnd || null,
             timezone: item.timezone || 'Asia/Shanghai',
+            takeoverAiFallbackMinutes: Number(item.takeoverAiFallbackMinutes) || 1,
           })),
         }),
       })

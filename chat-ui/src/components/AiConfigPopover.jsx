@@ -48,6 +48,14 @@ function timeInputStyle(disabled) {
   }
 }
 
+function numberInputStyle(disabled) {
+  return {
+    height: 30, width: 70, borderRadius: 6, border: '1px solid var(--border)',
+    background: disabled ? 'var(--bg-secondary)' : 'var(--bg-primary)',
+    color: 'var(--text-primary)', padding: '0 8px', fontSize: 12,
+  }
+}
+
 function activeLabel(setting) {
   if (!setting?.enabled) return '已关闭'
   if (setting.scheduleEnabled && !setting.activeNow) return '非生效时间'
@@ -61,6 +69,7 @@ function normalizeSetting(setting) {
     scheduleStart: setting.scheduleStart || '09:00',
     scheduleEnd: setting.scheduleEnd || '18:00',
     timezone: setting.timezone || 'Asia/Shanghai',
+    takeoverAiFallbackMinutes: Number(setting.takeoverAiFallbackMinutes) || 1,
   }
 }
 
@@ -69,7 +78,8 @@ function settingsEqual(a, b) {
     a.scheduleEnabled === b.scheduleEnabled &&
     a.scheduleStart === b.scheduleStart &&
     a.scheduleEnd === b.scheduleEnd &&
-    a.timezone === b.timezone
+    a.timezone === b.timezone &&
+    a.takeoverAiFallbackMinutes === b.takeoverAiFallbackMinutes
 }
 
 export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, onClose }) {
@@ -107,6 +117,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
     scheduleStart: '09:00',
     scheduleEnd: '18:00',
     timezone: 'Asia/Shanghai',
+    takeoverAiFallbackMinutes: 1,
   }
 
   const draftOf = (id) => drafts[id] || normalizeSetting(settingOf(id))
@@ -230,22 +241,40 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                     </button>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
-                    <input
-                      type="time"
-                      value={draft.scheduleStart}
-                      disabled={disabled || !draft.scheduleEnabled}
-                      onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
-                      style={timeInputStyle(disabled || !draft.scheduleEnabled)}
-                    />
-                    <span>至</span>
-                    <input
-                      type="time"
-                      value={draft.scheduleEnd}
-                      disabled={disabled || !draft.scheduleEnabled}
-                      onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
-                      style={timeInputStyle(disabled || !draft.scheduleEnabled)}
-                    />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, color: 'var(--text-muted)', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="time"
+                        value={draft.scheduleStart}
+                        disabled={disabled || !draft.scheduleEnabled}
+                        onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
+                        style={timeInputStyle(disabled || !draft.scheduleEnabled)}
+                      />
+                      <span>至</span>
+                      <input
+                        type="time"
+                        value={draft.scheduleEnd}
+                        disabled={disabled || !draft.scheduleEnabled}
+                        onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
+                        style={timeInputStyle(disabled || !draft.scheduleEnabled)}
+                      />
+                    </div>
+                    {ch.id === 'website' && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <span>人工未回复</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="120"
+                          step="1"
+                          value={draft.takeoverAiFallbackMinutes}
+                          disabled={disabled}
+                          onChange={e => patchDraft(ch.id, { takeoverAiFallbackMinutes: Number(e.target.value) })}
+                          style={numberInputStyle(disabled)}
+                        />
+                        <span>分钟后 AI 回复</span>
+                      </label>
+                    )}
                   </div>
                 </div>
               )
