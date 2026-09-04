@@ -202,7 +202,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
               <div key={ch.id} style={{
                 display: 'grid',
                 gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, .8fr) minmax(320px, 1.3fr)',
-                alignItems: 'center', gap: 14, minHeight: 74,
+                alignItems: 'center', gap: 14, minHeight: ch.id === 'website' ? 128 : 74,
                 borderBottom: '1px solid var(--border-soft)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
@@ -224,7 +224,8 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', flexDirection: ch.id === 'website' ? 'column' : 'row', alignItems: ch.id === 'website' ? 'flex-start' : 'center', gap: 7 }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
                     <button
                       disabled={disabled}
                       onClick={() => patchDraft(ch.id, { scheduleEnabled: false })}
@@ -239,9 +240,31 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                     >
                       按时段
                     </button>
+                    </div>
+                    {ch.id === 'website' && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
+                        <span>生效时间</span>
+                        <input
+                          type="time"
+                          value={draft.scheduleStart}
+                          disabled={disabled || !draft.scheduleEnabled}
+                          onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
+                          style={timeInputStyle(disabled || !draft.scheduleEnabled)}
+                        />
+                        <span>至</span>
+                        <input
+                          type="time"
+                          value={draft.scheduleEnd}
+                          disabled={disabled || !draft.scheduleEnabled}
+                          onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
+                          style={timeInputStyle(disabled || !draft.scheduleEnabled)}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 7, color: 'var(--text-muted)', fontSize: 12 }}>
+                    {ch.id !== 'website' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <input
                         type="time"
@@ -259,6 +282,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                         style={timeInputStyle(disabled || !draft.scheduleEnabled)}
                       />
                     </div>
+                    )}
                     {ch.id === 'website' && (
                       <div style={{
                         display: 'flex', flexDirection: 'column', gap: 7,
