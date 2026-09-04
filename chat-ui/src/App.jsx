@@ -236,7 +236,12 @@ export default function App() {
   const [newWhatsAppOpen, setNewWhatsAppOpen] = useState(false)
 
   // 右侧「资料」草稿 + 转线索：抽到 useLeadForm，与邮箱视图共用。
-  const leadForm = useLeadForm({ selected, selectedId, onConverted: reloadConversations })
+  const leadForm = useLeadForm({
+    selected,
+    selectedId,
+    onConverted: reloadConversations,
+    onNameChanged: renameConversation,
+  })
 
   useEffect(() => {
     function onResize() {

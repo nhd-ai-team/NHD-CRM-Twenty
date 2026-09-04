@@ -1,14 +1,19 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { withTwentyAuthHeaders } from '../utils/twentyAuth'
 import { buildDraft, applyContactMethodStage } from '../utils/leadDraft'
 
 // 右侧「资料」草稿：编辑就地进行、失焦自动暂存(jsonb)，「转为线索」一键写 Opportunity。
 // 渠道工作台与邮箱视图共用同一套逻辑。
-export function useLeadForm({ selected, selectedId, onConverted }) {
+export function useLeadForm({ selected, selectedId, onConverted, onNameChanged }) {
   const [draft, setDraft] = useState({})
   const [converting, setConverting] = useState(false)
   const [convertConfirmOpen, setConvertConfirmOpen] = useState(false)
   const [toast, setToast] = useState(null) // { type: 'ok' | 'err', msg }
+  const nameDirtyRef = useRef(false)
+
+  useEffect(() => {
+    nameDirtyRef.current = false
+  }, [selectedId])
 
   const crmDraftKey = selected?.crmLeadDraft ? JSON.stringify(selected.crmLeadDraft) : ''
 
@@ -22,6 +27,7 @@ export function useLeadForm({ selected, selectedId, onConverted }) {
   }, [toast])
 
   const setField = useCallback((k, v) => setDraft((d) => {
+    if (k === 'name') nameDirtyRef.current = true
     const next = { ...d, [k]: v }
     return (k === 'phone' || k === 'email' || k === 'source') ? applyContactMethodStage(next) : next
   }), [])
@@ -33,9 +39,15 @@ export function useLeadForm({ selected, selectedId, onConverted }) {
         method: 'PUT', headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(next),
       })
     } catch { /* 暂存失败不打扰用户，下次失焦会重试 */ }
-  }, [selectedId])
+    if (!nameDirtyRef.current || typeof next.name !== 'string' || !onNameChanged) return
+    try {
+      await onNameChanged(selectedId, next.name.trim())
+      nameDirtyRef.current = false
+    } catch { /* 姓名同步失败时保留 dirty 状态，后续失焦可重试 */ }
+  }, [selectedId, onNameChanged])
 
   const setFields = useCallback((patch, save = false) => {
+    if (Object.prototype.hasOwnProperty.call(patch, 'name')) nameDirtyRef.current = true
     setDraft((d) => {
       const next = applyContactMethodStage({ ...d, ...patch })
       if (save) saveDraft(next)
