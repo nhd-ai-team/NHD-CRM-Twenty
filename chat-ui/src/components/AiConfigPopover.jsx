@@ -260,20 +260,27 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                       />
                     </div>
                     {ch.id === 'website' && (
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                        <span>人工未回复</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="120"
-                          step="1"
-                          value={draft.takeoverAiFallbackMinutes}
-                          disabled={disabled}
-                          onChange={e => patchDraft(ch.id, { takeoverAiFallbackMinutes: Number(e.target.value) })}
-                          style={numberInputStyle(disabled)}
-                        />
-                        <span>分钟后 AI 回复</span>
-                      </label>
+                      <div style={{
+                        display: 'flex', flexDirection: 'column', gap: 7,
+                        border: '1px solid var(--border)', borderRadius: 6,
+                        padding: '8px 10px', background: 'var(--bg-secondary)',
+                      }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>人工接管兜底</div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                          <span>销售未回复</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="120"
+                            step="1"
+                            value={draft.takeoverAiFallbackMinutes}
+                            disabled={disabled}
+                            onChange={e => patchDraft(ch.id, { takeoverAiFallbackMinutes: Number(e.target.value) })}
+                            style={numberInputStyle(disabled)}
+                          />
+                          <span>分钟后由 AI 回复</span>
+                        </label>
+                      </div>
                     )}
                   </div>
                 </div>
