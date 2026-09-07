@@ -1027,8 +1027,19 @@ async function ensureSchema() {
       channel TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'processing',
       result JSONB,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TIMESTAMPTZ,
+      last_error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+    ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS last_error TEXT;
+    CREATE INDEX IF NOT EXISTS outbound_requests_retry_idx
+      ON conv.outbound_requests(channel, status, next_attempt_at)
+      WHERE status = 'retry_pending';
     UPDATE conv.conversations SET ai_enabled = (channel = 'website') WHERE ai_enabled IS NULL;
     CREATE INDEX IF NOT EXISTS conversation_participants_member_idx
       ON conv.conversation_participants(workspace_member_id, last_joined_at DESC);
@@ -3202,6 +3213,126 @@ app.get('/api/conversations/whatsapp/check', requireSameSite, async (req, res) =
   }
 });
 
+const OUTBOUND_RETRY_MAX_ATTEMPTS = Math.max(Number.parseInt(process.env.OUTBOUND_RETRY_MAX_ATTEMPTS || '3', 10) || 3, 1);
+const OUTBOUND_RETRY_BASE_SECONDS = Math.max(Number.parseInt(process.env.OUTBOUND_RETRY_BASE_SECONDS || '15', 10) || 15, 5);
+
+async function persistOutboundWhatsAppConversation(request, externalMessageId) {
+  const payload = request.payload || {};
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const existing = await client.query(
+      `SELECT id FROM conv.conversations
+        WHERE channel = 'whatsapp'
+          AND waha_session = $1
+          AND external_chat_id IN ($2, $3)
+        LIMIT 1`,
+      [payload.sessionName, payload.chatId, payload.providerChatId],
+    );
+    const contactResult = await client.query(
+      `INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name, phone)
+       VALUES ('whatsapp', $1, $2, $2, $3)
+       ON CONFLICT(channel, external_id) DO UPDATE SET
+         channel_display_name = COALESCE(conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
+         phone = COALESCE(conv.contacts.phone, EXCLUDED.phone), updated_at = now()
+       RETURNING id`,
+      [payload.chatId, payload.phone, payload.phone],
+    );
+    const conversationResult = await client.query(
+      `INSERT INTO conv.conversations(channel, external_chat_id, contact_id, status, agent_id, owner_id, channel_owner_id, waha_session)
+       VALUES ('whatsapp', $1, $2, 'takeover', $3, $4, $4, $5)
+       ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id) DO UPDATE SET
+         status = 'takeover', agent_id = COALESCE(EXCLUDED.agent_id, conv.conversations.agent_id),
+         owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
+         channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
+         updated_at = now()
+       RETURNING id, channel, status, external_chat_id AS "externalChatId"`,
+      [payload.chatId, contactResult.rows[0].id, payload.userId, payload.userId, payload.sessionName],
+    );
+    const conversation = conversationResult.rows[0];
+    await client.query(
+      `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, sent_at)
+       VALUES ($1, $2, 'agent', $3, now()) ON CONFLICT(external_msg_id) DO NOTHING`,
+      [externalMessageId, conversation.id, payload.content],
+    );
+    await client.query(
+      `UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`,
+      [conversation.id, payload.content],
+    );
+    await client.query('COMMIT');
+    syncConversationToHistory(conversation.id, { createIfMissing: true }).catch(() => {});
+    return { conversation, reused: existing.rowCount > 0 };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function attemptOutboundWhatsAppRequest(request) {
+  const payload = request.payload || {};
+  const sentResponse = await fetchWaha('/api/sendText', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: payload.sessionName, chatId: payload.providerChatId || payload.chatId, text: payload.content }),
+  });
+  const sent = await sentResponse.json().catch(() => ({}));
+  if (!sentResponse.ok) throw new Error(sent.message || `WhatsApp 消息发送失败（${sentResponse.status}）`);
+  const externalMessageId = sent?.id?._serialized || sent?._data?.id?._serialized || `crm:outbound:${request.idempotency_key}`;
+  const persisted = await persistOutboundWhatsAppConversation(request, externalMessageId);
+  const result = { conversationId: persisted.conversation.id, reused: persisted.reused, phone: payload.phone, status: persisted.conversation.status };
+  await pool.query(
+    `UPDATE conv.outbound_requests
+        SET status = 'completed', result = $2, last_error = NULL, updated_at = now()
+      WHERE idempotency_key = $1`,
+    [request.idempotency_key, JSON.stringify(result)],
+  );
+  return result;
+}
+
+async function scheduleOutboundWhatsAppRetry(request, error) {
+  const attempts = Number(request.attempts || 0) + 1;
+  const exhausted = attempts >= OUTBOUND_RETRY_MAX_ATTEMPTS;
+  const delaySeconds = OUTBOUND_RETRY_BASE_SECONDS * (2 ** Math.max(attempts - 1, 0));
+  await pool.query(
+    `UPDATE conv.outbound_requests
+        SET status = $2, attempts = $3,
+            next_attempt_at = CASE WHEN $4 THEN NULL ELSE now() + ($5::int * INTERVAL '1 second') END,
+            last_error = $6, updated_at = now()
+      WHERE idempotency_key = $1`,
+    [request.idempotency_key, exhausted ? 'failed' : 'retry_pending', attempts, exhausted, delaySeconds, String(error.message || error).slice(0, 1000)],
+  );
+  return { attempts, exhausted, retryInSeconds: exhausted ? null : delaySeconds };
+}
+
+let outboundRetryRunning = false;
+async function processPendingOutboundWhatsApp() {
+  if (outboundRetryRunning) return;
+  outboundRetryRunning = true;
+  try {
+    const pending = await pool.query(
+      `UPDATE conv.outbound_requests
+          SET status = 'processing', updated_at = now()
+        WHERE channel = 'whatsapp' AND status = 'retry_pending'
+          AND next_attempt_at <= now()
+        RETURNING *`,
+    );
+    for (const request of pending.rows) {
+      try {
+        await attemptOutboundWhatsAppRequest(request);
+      } catch (error) {
+        await scheduleOutboundWhatsAppRetry(request, error);
+        console.error('[whatsapp-outbound-retry] attempt failed:', request.idempotency_key, error.message);
+      }
+    }
+  } catch (error) {
+    console.error('[whatsapp-outbound-retry] scan failed:', error.message);
+  } finally {
+    outboundRetryRunning = false;
+  }
+}
+
 app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
   const phone = normalizeOutboundWhatsAppPhone(req.body?.phone);
   const content = String(req.body?.content || '').trim();
@@ -3239,89 +3370,38 @@ app.post('/api/conversations/whatsapp', requireSameSite, async (req, res) => {
     const sessionName = recipient.fromAccount.session;
     const chatId = recipient.chatId;
     const providerChatId = recipient.providerChatId || recipient.chatId;
-    const sentResponse = await fetchWaha('/api/sendText', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: sessionName, chatId: providerChatId, text: content }),
-    });
-    const sent = await sentResponse.json().catch(() => ({}));
-    if (!sentResponse.ok) throw new Error(sent.message || 'WhatsApp 消息发送失败');
-
-    const externalMessageId = sent?.id?._serialized || sent?._data?.id?._serialized || null;
+    const request = {
+      idempotency_key: idempotencyKey,
+      attempts: 0,
+      payload: {
+        phone: `+${phone}`,
+        content,
+        sessionName,
+        chatId,
+        providerChatId,
+        userId: authenticated.userId,
+      },
+    };
     await pool.query(
-      `UPDATE conv.outbound_requests SET status = 'sent', result = $2, updated_at = now() WHERE idempotency_key = $1`,
-      [idempotencyKey, JSON.stringify({ phone: `+${phone}`, chatId, providerChatId, externalMessageId })],
+      `UPDATE conv.outbound_requests SET payload = $2, attempts = 1, updated_at = now() WHERE idempotency_key = $1`,
+      [idempotencyKey, JSON.stringify(request.payload)],
     );
-    const actorId = authenticated.userId;
-    const client = await pool.connect();
-    let conversation;
-    let reused = false;
     try {
-      await client.query('BEGIN');
-      const existing = await client.query(
-        `SELECT c.id
-           FROM conv.conversations c
-           LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
-          WHERE c.channel = 'whatsapp'
-            AND c.waha_session = $4
-            AND (c.external_chat_id = $1 OR c.external_chat_id = $2 OR ct.phone = $3)
-          LIMIT 1`,
-        [chatId, providerChatId, `+${phone}`, sessionName],
-      );
-      reused = existing.rowCount > 0;
-      const contactResult = await client.query(
-        `INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name, phone)
-         VALUES ('whatsapp', $1, $2, $2, $3)
-         ON CONFLICT(channel, external_id) DO UPDATE SET
-           channel_display_name = COALESCE(conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
-           phone = COALESCE(conv.contacts.phone, EXCLUDED.phone), updated_at = now()
-         RETURNING id, display_name, phone`,
-        [chatId, `+${phone}`, `+${phone}`],
-      );
-      const conversationResult = await client.query(
-        `INSERT INTO conv.conversations(channel, external_chat_id, contact_id, status, agent_id, owner_id, channel_owner_id, waha_session)
-         VALUES ('whatsapp', $1, $2, 'takeover', $3, $4, $4, $5)
-         ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id) DO UPDATE SET
-           status = 'takeover', agent_id = COALESCE(EXCLUDED.agent_id, conv.conversations.agent_id),
-           owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
-           channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
-           waha_session = COALESCE(conv.conversations.waha_session, EXCLUDED.waha_session),
-           updated_at = now()
-         RETURNING id, channel, status, external_chat_id AS "externalChatId"`,
-        [chatId, contactResult.rows[0].id, actorId, authenticated.userId, sessionName],
-      );
-      conversation = conversationResult.rows[0];
-      await client.query(
-        `INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, sent_at)
-         VALUES ($1, $2, 'agent', $3, now()) ON CONFLICT(external_msg_id) DO NOTHING`,
-        [externalMessageId, conversation.id, content],
-      );
-      await client.query(
-        `UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`,
-        [conversation.id, content],
-      );
-      await client.query('COMMIT');
-      // 沟通状态表单：销售主动发起的会话也落 duiHuaLiShi 档案（幂等；仅上线后新会话）。
-      syncConversationToHistory(conversation.id, { createIfMissing: true }).catch(() => {});
+      const result = await attemptOutboundWhatsAppRequest(request);
+      return res.status(result.reused ? 200 : 201).json(result);
     } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
+      const retry = await scheduleOutboundWhatsAppRetry(request, error);
+      if (!retry.exhausted) {
+        return res.status(202).json({ queued: true, requestId: idempotencyKey, status: 'retry_pending', attempts: retry.attempts, retryInSeconds: retry.retryInSeconds });
+      }
+      return res.status(502).json({ error: 'WhatsApp 消息发送失败，已达到自动重试上限', detail: error.message, requestId: idempotencyKey });
     }
-
-    const result = { conversationId: conversation.id, reused, phone: `+${phone}`, status: conversation.status };
-    await pool.query(
-      `UPDATE conv.outbound_requests SET status = 'completed', result = $2, updated_at = now() WHERE idempotency_key = $1`,
-      [idempotencyKey, JSON.stringify(result)],
-    );
-    return res.status(reused ? 200 : 201).json(result);
   } catch (error) {
     console.error('[whatsapp] start conversation failed:', error.message);
     return res.status(error.status || 502).json({ error: error.status ? error.message : '无法发起 WhatsApp 会话', detail: error.status ? error.detail : error.message });
   } finally {
     await pool.query(
-      `DELETE FROM conv.outbound_requests WHERE idempotency_key = $1 AND status = 'processing'`,
+      `DELETE FROM conv.outbound_requests WHERE idempotency_key = $1 AND status = 'processing' AND payload = '{}'::jsonb`,
       [idempotencyKey],
     ).catch(() => {});
   }
@@ -6732,6 +6812,8 @@ async function startServer() {
   setInterval(runTakeoverAiFallback, 10 * 1000);
   console.log('[ai-fallback] website idle reply enabled (per-channel delay while sales are online)');
   setInterval(() => processPendingSalesHandoffs(), 1000);
+  // 主动 WhatsApp 外发失败补偿：短退避重试，最终失败保留记录供审计/人工处理。
+  setInterval(() => processPendingOutboundWhatsApp(), 5000);
   // 启动后及每分钟清理已离线销售仍占用的官网人工会话。
   releaseWebsiteTakeoversForOfflineAgents().catch(() => {});
   setInterval(() => releaseWebsiteTakeoversForOfflineAgents().catch(() => {}), 60 * 1000);

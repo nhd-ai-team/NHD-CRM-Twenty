@@ -72,6 +72,11 @@ export function NewWhatsAppConversationModal({ open, onClose, onCreated }) {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error([data.error, data.detail].filter(Boolean).join('：') || '会话创建失败')
+      if (data.queued) {
+        setError(`发送暂时失败，已进入后台自动重试（约 ${data.retryInSeconds} 秒后重试）`)
+        setConfirming(false)
+        return
+      }
       onCreated(data.conversationId).catch((refreshError) => console.error('会话已创建，但列表刷新失败', refreshError))
       onClose()
     } catch (submitError) {
