@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { format } from 'date-fns'
-import { Search, Paperclip } from 'lucide-react'
+import { Search, Paperclip, Star } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
@@ -64,7 +64,7 @@ function EmailListItem({ conv, active, onClick }) {
   )
 }
 
-function EmailCard({ msg, fromLabel, directionOverride, quoted = false }) {
+function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggleFlag }) {
   const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
   const outbound = (directionOverride || msg.mailDirection) === 'outbound'
   const directionLabel = quoted ? `引用历史（${outbound ? '发件' : '收件'}）` : (outbound ? '发件邮件' : '收件邮件')
@@ -82,6 +82,11 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false }) {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: directionColor, flexShrink: 0 }}>{directionLabel}</span>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
+          {!quoted && onToggleFlag && (
+            <button type="button" title={msg.isFlagged ? '取消重点' : '标记为重点'} onClick={() => onToggleFlag(msg)} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', padding: 2, color: msg.isFlagged ? '#e0a400' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
+              <Star size={16} fill={msg.isFlagged ? 'currentColor' : 'none'} />
+            </button>
+          )}
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 7, lineHeight: 1.55 }}>
           <div><strong style={{ color: 'var(--text-secondary)' }}>发件人</strong>：{from || '未知'}</div>
@@ -120,7 +125,7 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false }) {
 }
 
 export function MailApp() {
-  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, loadMore, hasMore, loadingMore, totalCount } = useEmails()
+  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, loadMore, hasMore, loadingMore, totalCount } = useEmails()
   const leadForm = useLeadForm({ selected, selectedId })
   const bottomRef = useRef(null)
   const listBottomRef = useRef(null)
@@ -159,7 +164,7 @@ export function MailApp() {
             />
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            {[['inbox', '收件箱'], ['outbound', '发件箱'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
+            {[['inbox', '收件箱'], ['outbound', '发件箱'], ['flagged', '重点邮件'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
               <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{label}</button>
             ))}
           </div>
@@ -196,6 +201,7 @@ export function MailApp() {
                     fromLabel={fromLabel}
                     directionOverride={part.direction}
                     quoted={part.quoted}
+                    onToggleFlag={part.quoted ? null : (target) => toggleFlag(selected.id, target.id, !target.isFlagged)}
                   />
                 ))
               ))}

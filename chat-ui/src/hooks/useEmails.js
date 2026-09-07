@@ -83,6 +83,26 @@ export function useEmails() {
     setEmails(current => current.map(conv => conv.id === convId ? { ...conv, messages } : conv))
   }, [authExpired, requireAccessToken])
 
+  const toggleFlag = useCallback(async (convId, messageId, flagged) => {
+    await requireAccessToken()
+    const response = await fetch(`/conv-api/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}/flag`, {
+      method: 'POST', cache: 'no-store',
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ flagged }),
+    })
+    if (response.status === 401) {
+      setAuthExpired(true)
+      notifyTwentyAuthExpired()
+      throw new Error('登录状态已失效，请刷新 CRM 后重试')
+    }
+    if (!response.ok) throw new Error('重点标记失败')
+    const result = await response.json()
+    setEmails(current => current.map(conv => conv.id === convId
+      ? { ...conv, messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, isFlagged: result.isFlagged } : msg) }
+      : conv))
+    return result
+  }, [authExpired, requireAccessToken])
+
   useEffect(() => {
     if (authExpired) return undefined
     load().catch(error => console.error(error))
@@ -108,5 +128,5 @@ export function useEmails() {
 
   const selected = emails.find(c => c.id === selectedId) ?? null
 
-  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount }
+  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount }
 }

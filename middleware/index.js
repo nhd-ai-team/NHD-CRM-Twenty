@@ -1077,6 +1077,7 @@ async function ensureSchema() {
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_flags JSONB;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_is_junk BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_is_flagged BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS crm_is_flagged BOOLEAN NOT NULL DEFAULT false;
     UPDATE conv.messages m SET source_mailbox = 'INBOX'
       FROM conv.conversations c
      WHERE c.id = m.conversation_id AND c.channel = 'email' AND m.source_mailbox IS NULL;
@@ -2538,7 +2539,7 @@ app.get('/api/conversations', async (req, res) => {
     const channelScopeSql = requestedChannel
       ? `AND c.channel = '${requestedChannel}'`
       : includeEmail ? '' : `AND c.channel <> 'email'`;
-    const emailCategory = ['inbox', 'outbound', 'junk', 'all'].includes(String(req.query?.emailCategory || '').trim())
+    const emailCategory = ['inbox', 'outbound', 'flagged', 'junk', 'all'].includes(String(req.query?.emailCategory || '').trim())
       ? String(req.query.emailCategory).trim()
       : 'inbox';
     const emailCategorySql = requestedChannel === 'email' && emailCategory !== 'all'
@@ -2546,6 +2547,8 @@ app.get('/api/conversations', async (req, res) => {
         ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.source_is_junk, false) = true)`
         : emailCategory === 'outbound'
           ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) = 'outbound')`
+          : emailCategory === 'flagged'
+            ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND (COALESCE(m.crm_is_flagged, false) = true OR COALESCE(m.source_is_flagged, false) = true))`
           : `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id
             AND COALESCE(m.source_is_junk, false) = false
             AND COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) = 'inbound')`
@@ -2564,7 +2567,7 @@ app.get('/api/conversations', async (req, res) => {
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
       CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
     CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.source_is_junk, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsJunk",
-    CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.source_is_flagged, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsFlagged",
+    CASE WHEN c.channel = 'email' THEN (SELECT (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false)) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsFlagged",
     COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
@@ -2790,7 +2793,7 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments,
       CASE WHEN c.channel = 'email' THEN COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) ELSE NULL END AS "mailDirection",
       m.from_address AS "fromAddress", m.to_addresses AS "toAddresses", m.cc_addresses AS "ccAddresses", m.sent_at AS "sentAt",
-      m.source_mailbox AS "sourceMailbox", m.source_uid AS "sourceUid", m.source_uid_validity AS "sourceUidValidity", m.source_flags AS "sourceFlags", m.source_is_junk AS "sourceIsJunk", m.source_is_flagged AS "sourceIsFlagged",
+      m.source_mailbox AS "sourceMailbox", m.source_uid AS "sourceUid", m.source_uid_validity AS "sourceUidValidity", m.source_flags AS "sourceFlags", m.source_is_junk AS "sourceIsJunk", m.source_is_flagged AS "sourceIsFlagged", (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false)) AS "isFlagged",
       m.raw_message_type AS "rawMessageType", m.message_summary AS "messageSummary",
       CASE WHEN m.sender_type = 'agent' THEN COALESCE(
         NULLIF(CONCAT_WS(' ', sender_member."nameFirstName", sender_member."nameLastName"), ''),
@@ -2814,6 +2817,25 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
       ON owner_member.id::text = c.agent_id AND owner_member."deletedAt" IS NULL
     WHERE m.conversation_id = $1 ORDER BY m.sent_at`, [req.params.id]);
   res.json(result.rows);
+});
+
+app.post('/api/conversations/:id/messages/:messageId/flag', requireSameSite, async (req, res) => {
+  const access = await requireConversationAccess(req, res, { write: true });
+  if (!access) return;
+  if (access.conversation.channel !== 'email') return res.status(400).json({ error: '仅支持标记邮件' });
+  const flagged = req.body?.flagged === true;
+  const result = await pool.query(
+    `UPDATE conv.messages SET crm_is_flagged = $1
+      WHERE id = $2 AND conversation_id = $3 AND content_type = 'email'
+      RETURNING id, (COALESCE(source_is_flagged, false) OR COALESCE(crm_is_flagged, false)) AS "isFlagged"`,
+    [flagged, req.params.messageId, req.params.id],
+  );
+  if (!result.rowCount) return res.status(404).json({ error: '邮件不存在' });
+  await recordAuditEvent(flagged ? 'email.flagged' : 'email.unflagged', {
+    channel: 'email', conversationId: req.params.id, messageId: req.params.messageId,
+    actor: access.viewer, requestSummary: auditRequestSummary(req), payload: { flagged },
+  });
+  res.json(result.rows[0]);
 });
 
 app.get('/api/follow-ups', async (req, res) => {
