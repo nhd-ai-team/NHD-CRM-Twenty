@@ -114,16 +114,17 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
 
 export function ConversationSidebar({ conversations, selectedId, onSelect, onNewWhatsApp, activeStatus, setActiveStatus, search, setSearch, showNewWhatsApp = true, onRename, onLoadMore, hasMore, loadingMore }) {
   const listRef = useRef(null)
+  const loadMoreRef = useRef(null)
   useEffect(() => {
     const list = listRef.current
-    if (!list || !onLoadMore) return undefined
-    const onScroll = () => {
-      if (list.scrollTop + list.clientHeight >= list.scrollHeight - 160) onLoadMore()
-    }
-    list.addEventListener('scroll', onScroll, { passive: true })
-    onScroll()
-    return () => list.removeEventListener('scroll', onScroll)
-  }, [onLoadMore, conversations.length])
+    const target = loadMoreRef.current
+    if (!list || !target || !onLoadMore || !hasMore) return undefined
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(entry => entry.isIntersecting)) onLoadMore()
+    }, { root: list, rootMargin: '160px 0px' })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [onLoadMore, hasMore, conversations.length])
   return (
     <div style={{
       width: 280, flexShrink: 0, borderRight: '1px solid var(--border)',
@@ -193,6 +194,7 @@ export function ConversationSidebar({ conversations, selectedId, onSelect, onNew
         )}
         {loadingMore && <div style={{ padding: '10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>加载更多…</div>}
         {!loadingMore && hasMore && conversations.length > 0 && <div style={{ padding: '8px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>下拉加载更多</div>}
+        {hasMore && <div ref={loadMoreRef} aria-hidden="true" style={{ height: 1 }} />}
       </div>
     </div>
   )

@@ -2468,7 +2468,8 @@ app.get('/api/conversations', async (req, res) => {
       workspaceSchema,
       allowPrivilegedAllChannels: historyView,
     });
-    const listParams = [...visibility.params, viewer.workspaceId, viewer.userId];
+    const visibilityParams = [...visibility.params, viewer.workspaceId, viewer.userId];
+    const listParams = [...visibilityParams];
     const readScopeSql = `(CASE WHEN c.channel = 'website'
       THEN 'website:workspace:' || $3::text
       ELSE c.channel || ':user:' || $4::text END)`;
@@ -2499,6 +2500,12 @@ app.get('/api/conversations', async (req, res) => {
         )`
       : '';
     if (cursor) listParams.push(cursor.lastMessageAt, cursor.id);
+    const countPromise = pool.query(
+      `SELECT COUNT(*)::int AS total
+         FROM conv.conversations c
+        WHERE ${visibility.sql}`,
+      visibility.params,
+    );
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
     NULLIF(CONCAT_WS(' ', current_agent."nameFirstName", current_agent."nameLastName"), '') AS "currentAgentName",
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
@@ -2625,6 +2632,8 @@ app.get('/api/conversations', async (req, res) => {
     ${cursorSql}
     ORDER BY c.last_message_at DESC NULLS LAST, c.id::text DESC
     LIMIT ${pageSize + 1}`, listParams);
+    const countResult = await countPromise;
+    const totalCount = Number(countResult.rows[0]?.total || 0);
     const hasMore = result.rows.length > pageSize;
     const rows = hasMore ? result.rows.slice(0, pageSize) : result.rows;
     const last = rows[rows.length - 1];
@@ -2633,6 +2642,7 @@ app.get('/api/conversations', async (req, res) => {
       ? Buffer.from(JSON.stringify({ lastMessageAt, id: last.id })).toString('base64url')
       : '';
     res.set({
+      'X-Conversation-Total-Count': String(totalCount),
       'X-Conversation-Has-More': String(hasMore),
       'X-Conversation-Next-Cursor': nextCursor,
     });

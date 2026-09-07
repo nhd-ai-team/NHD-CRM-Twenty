@@ -24,6 +24,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const loadingMoreRef = useRef(false)
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
 
   async function requireAccessToken() {
     const token = await waitForTwentyAccessToken()
@@ -62,11 +63,13 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       const page = (await response.json()).filter(c => includeEmail || c.channel !== 'email')
       const hasMore = response.headers.get('X-Conversation-Has-More') === 'true'
       const nextCursor = response.headers.get('X-Conversation-Next-Cursor') || ''
+      const responseTotalCount = Number(response.headers.get('X-Conversation-Total-Count'))
       // Mark-read-triggered requests supersede older polling responses.
       if (requestId != listRequestRef.current) return
       nextCursorRef.current = nextCursor
       hasMoreRef.current = hasMore
       setHasMore(hasMore)
+      if (Number.isFinite(responseTotalCount)) setTotalCount(responseTotalCount)
       setConversations(current => {
         const withMessages = page.map(conv => ({
           ...conv,
@@ -390,5 +393,6 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     loadMore: () => loadConversations({ append: true }),
     hasMore,
     loadingMore,
+    totalCount,
   }
 }

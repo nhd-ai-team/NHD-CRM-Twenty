@@ -37,7 +37,7 @@ npm test
 curl -i http://127.0.0.1:3000/conv-api/events
 ```
 
-对话清单分页检查：首次打开工作台请求应带 `limit=30`；滚动到清单底部后使用 `X-Conversation-Next-Cursor` 追加下一批，不得重复加载全部历史会话。权限过滤必须在服务端分页前执行。
+对话清单分页检查：首次打开工作台请求应带 `limit=30`；顶部「全部」数量应来自 `X-Conversation-Total-Count` 的完整可见总数；滚动到清单底部后使用 `X-Conversation-Next-Cursor` 追加下一批，不得重复加载全部历史会话。权限过滤必须在服务端分页前执行。
 
 登录态下应返回 `text/event-stream`；未登录应返回 `401`。发布后还需从 WhatsApp 和官网 Widget 各发送一条测试消息，确认工作台即时刷新。`/conv-api/` 必须保持 `proxy_buffering off`，否则 SSE 会被代理缓存。
 
