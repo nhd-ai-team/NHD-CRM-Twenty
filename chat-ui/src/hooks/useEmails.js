@@ -21,7 +21,7 @@ export function useEmails() {
   const load = useCallback(async () => {
     if (authExpired) return
     await requireAccessToken()
-    const response = await fetch(`/conv-api/conversations?_=${Date.now()}`, {
+    const response = await fetch(`/conv-api/conversations?_=${Date.now()}&includeEmail=true`, {
       cache: 'no-store',
       headers: withTwentyAuthHeaders(),
     })
