@@ -108,7 +108,7 @@ function EmailCard({ msg, fromLabel }) {
 }
 
 export function MailApp() {
-  const { filtered, selected, selectedId, setSelectedId, search, setSearch, loadMore, hasMore, loadingMore, totalCount } = useEmails()
+  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, loadMore, hasMore, loadingMore, totalCount } = useEmails()
   const leadForm = useLeadForm({ selected, selectedId })
   const bottomRef = useRef(null)
   const listBottomRef = useRef(null)
@@ -145,6 +145,11 @@ export function MailApp() {
               placeholder="搜索发件人、邮箱、主题…"
               style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-primary)', width: '100%' }}
             />
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            {[['inbox', '收件箱'], ['flagged', '重点'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
+              <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{label}</button>
+            ))}
           </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>

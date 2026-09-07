@@ -76,6 +76,8 @@ const IMAP_TLS = String(process.env.IMAP_TLS ?? 'true').toLowerCase() !== 'false
 const IMAP_USER = process.env.IMAP_USER || '';
 const IMAP_PASSWORD = process.env.IMAP_PASSWORD || '';
 const IMAP_MAILBOX = process.env.IMAP_MAILBOX || 'INBOX';
+const IMAP_SYNC_MAILBOXES = String(process.env.IMAP_SYNC_MAILBOXES || `${IMAP_MAILBOX},已发送,垃圾邮件`)
+  .split(',').map(item => item.trim()).filter(Boolean);
 const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 60));
 const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
 const UPLOAD_DIR = process.env.CONVERSATION_UPLOAD_DIR || '/app/uploads/conversation-files';
@@ -1069,6 +1071,15 @@ async function ensureSchema() {
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS from_address TEXT;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS to_addresses JSONB;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS cc_addresses JSONB;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_mailbox TEXT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_uid BIGINT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_uid_validity BIGINT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_flags JSONB;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_is_junk BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_is_flagged BOOLEAN NOT NULL DEFAULT false;
+    UPDATE conv.messages m SET source_mailbox = 'INBOX'
+      FROM conv.conversations c
+     WHERE c.id = m.conversation_id AND c.channel = 'email' AND m.source_mailbox IS NULL;
     UPDATE conv.messages m SET mail_direction = CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END
       FROM conv.conversations c
      WHERE c.id = m.conversation_id AND c.channel = 'email'
@@ -2527,18 +2538,27 @@ app.get('/api/conversations', async (req, res) => {
     const channelScopeSql = requestedChannel
       ? `AND c.channel = '${requestedChannel}'`
       : includeEmail ? '' : `AND c.channel <> 'email'`;
+    const emailCategory = ['inbox', 'junk', 'flagged', 'all'].includes(String(req.query?.emailCategory || '').trim())
+      ? String(req.query.emailCategory).trim()
+      : 'inbox';
+    const emailCategorySql = requestedChannel === 'email' && emailCategory !== 'all'
+      ? `AND COALESCE((SELECT m.source_is_junk FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = ${emailCategory === 'junk' ? 'true' : 'false'}${emailCategory === 'flagged' ? ` AND COALESCE((SELECT m.source_is_flagged FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = true` : ''}`
+      : '';
     const countPromise = pool.query(
       `SELECT c.channel, COUNT(*)::int AS total
          FROM conv.conversations c
         WHERE ${visibility.sql}
           ${channelScopeSql}
+          ${emailCategorySql}
         GROUP BY c.channel`,
       visibility.params,
     );
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
     NULLIF(CONCAT_WS(' ', current_agent."nameFirstName", current_agent."nameLastName"), '') AS "currentAgentName",
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
-    CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
+      CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
+    CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.source_is_junk, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsJunk",
+    CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.source_is_flagged, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsFlagged",
     COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
@@ -2660,6 +2680,7 @@ app.get('/api/conversations', async (req, res) => {
     ) unread ON TRUE
     WHERE ${visibility.sql}
     ${channelScopeSql}
+    ${emailCategorySql}
     ${cursorSql}
     ORDER BY c.last_message_at DESC NULLS LAST, c.id::text DESC
     LIMIT ${pageSize + 1}`, listParams);
@@ -2763,6 +2784,7 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments,
       CASE WHEN c.channel = 'email' THEN COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) ELSE NULL END AS "mailDirection",
       m.from_address AS "fromAddress", m.to_addresses AS "toAddresses", m.cc_addresses AS "ccAddresses", m.sent_at AS "sentAt",
+      m.source_mailbox AS "sourceMailbox", m.source_uid AS "sourceUid", m.source_uid_validity AS "sourceUidValidity", m.source_flags AS "sourceFlags", m.source_is_junk AS "sourceIsJunk", m.source_is_flagged AS "sourceIsFlagged",
       m.raw_message_type AS "rawMessageType", m.message_summary AS "messageSummary",
       CASE WHEN m.sender_type = 'agent' THEN COALESCE(
         NULLIF(CONCAT_WS(' ', sender_member."nameFirstName", sender_member."nameLastName"), ''),
@@ -6664,10 +6686,15 @@ async function saveBufferToLocalFile(buffer, filenameHint, mimetype) {
   return `/conv-api/uploads/conversation-files/${encodeURIComponent(storedName)}${suffix}`;
 }
 
-async function persistEmailMessage({ fromAddress, fromName, toAddresses, ccAddresses, subject, body, attachments, messageId, sentAt }) {
-  const addr = String(fromAddress || '').trim().toLowerCase();
+async function persistEmailMessage({ fromAddress, fromName, toAddresses, ccAddresses, direction = 'inbound', sourceMailbox, sourceUid, sourceUidValidity, sourceFlags, sourceIsJunk = false, sourceIsFlagged = false, subject, body, attachments, messageId, sentAt }) {
+  const mailboxUser = String(IMAP_USER || '').trim().toLowerCase();
+  const normalizedDirection = direction === 'outbound' ? 'outbound' : 'inbound';
+  const counterparty = normalizedDirection === 'outbound'
+    ? (toAddresses || []).find(item => String(item.address || '').trim().toLowerCase() !== mailboxUser)
+    : { address: fromAddress, name: fromName };
+  const addr = String(counterparty?.address || '').trim().toLowerCase();
   if (!addr) return false;
-  const displayName = (fromName && fromName.trim()) || addr;
+  const displayName = (counterparty?.name && counterparty.name.trim()) || addr;
   const preview = (subject && subject.trim()) || String(body || '').slice(0, 80);
   const when = sentAt || new Date();
   const client = await pool.connect();
@@ -6686,13 +6713,20 @@ async function persistEmailMessage({ fromAddress, fromName, toAddresses, ccAddre
       VALUES ('email', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [addr, contact.id]);
     const conversation = conversationResult.rows[0];
-    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, subject, attachments, mail_direction, from_address, to_addresses, cc_addresses, sent_at)
-      VALUES ($1, $2, 'customer', $3, 'email', $4, $5, 'inbound', $6, $7, $8, $9) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
-      [messageId, conversation.id, body || '', subject || null,
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, subject, attachments, mail_direction, from_address, to_addresses, cc_addresses, source_mailbox, source_uid, source_uid_validity, source_flags, source_is_junk, source_is_flagged, sent_at)
+      VALUES ($1, $2, $3, $4, 'email', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [messageId, conversation.id, normalizedDirection === 'outbound' ? 'agent' : 'customer', body || '', subject || null,
         attachments && attachments.length ? JSON.stringify(attachments) : null,
-        addr,
+        normalizedDirection,
+        fromAddress || null,
         toAddresses && toAddresses.length ? JSON.stringify(toAddresses) : null,
         ccAddresses && ccAddresses.length ? JSON.stringify(ccAddresses) : null,
+        sourceMailbox || null,
+        sourceUid || null,
+        sourceUidValidity || null,
+        sourceFlags && sourceFlags.length ? JSON.stringify(sourceFlags) : null,
+        Boolean(sourceIsJunk),
+        Boolean(sourceIsFlagged),
         when]);
     // 邮件按时间沉淀，last_message_at 取邮件发送时间（可能早于/晚于现有值）
     if (inserted.rowCount) await client.query(
@@ -6724,6 +6758,58 @@ function getInitialStartUid(uidNext) {
 }
 
 let emailPolling = false;
+async function syncEmailMailbox(client, mailbox) {
+  const lock = await client.getMailboxLock(mailbox);
+  try {
+    const uidValidity = client.mailbox.uidValidity ? Number(client.mailbox.uidValidity) : null;
+    const uidNext = client.mailbox.uidNext ? Number(client.mailbox.uidNext) : null;
+    const syncKey = `${IMAP_USER || 'default'}:${mailbox}`;
+    const sync = await getEmailSync(syncKey);
+    const firstRun = sync.uidValidity == null && Number(sync.lastUid) === 0;
+    let startUid = Number(sync.lastUid) || 0;
+    if (sync.uidValidity != null && uidValidity != null && Number(sync.uidValidity) !== uidValidity) startUid = getInitialStartUid(uidNext);
+    if (firstRun && uidNext) startUid = getInitialStartUid(uidNext);
+    const outbound = /sent|已发送/i.test(mailbox);
+    const junk = /junk|垃圾|spam|广告/i.test(mailbox);
+    let maxUid = startUid, fetchedCount = 0, insertedCount = 0;
+    for await (const msg of client.fetch(`${startUid + 1}:*`, { uid: true, source: true, flags: true }, { uid: true })) {
+      if (msg.uid <= startUid) continue;
+      maxUid = Math.max(maxUid, msg.uid);
+      fetchedCount++;
+      try {
+        const parsed = await simpleParser(msg.source);
+        const from = (parsed.from?.value && parsed.from.value[0]) || {};
+        const toAddresses = (parsed.to?.value || []).map(item => ({ name: item.name || '', address: item.address || '' })).filter(item => item.address);
+        const ccAddresses = (parsed.cc?.value || []).map(item => ({ name: item.name || '', address: item.address || '' })).filter(item => item.address);
+        const attachments = [];
+        for (const a of (parsed.attachments || [])) {
+          const filename = a.filename || '(未命名)';
+          const size = a.size || (a.content ? a.content.length : 0);
+          let url = null;
+          if (a.content && a.content.length && a.content.length <= MAX_UPLOAD_BYTES) {
+            try { url = await saveBufferToLocalFile(a.content, filename, a.contentType); } catch (err) { console.error('[email] save attachment failed:', filename, err.message); }
+          }
+          attachments.push({ filename, size, contentType: a.contentType || '', url });
+        }
+        const sourceFlags = msg.flags ? Array.from(msg.flags) : [];
+        const body = (parsed.text || '').trim() || htmlToText(parsed.html || '');
+        const inserted = await persistEmailMessage({
+          fromAddress: from.address, fromName: from.name, toAddresses, ccAddresses,
+          direction: outbound ? 'outbound' : 'inbound', sourceMailbox: mailbox,
+          sourceUid: msg.uid, sourceUidValidity: uidValidity, sourceFlags,
+          sourceIsJunk: junk, sourceIsFlagged: sourceFlags.includes('\\Flagged'),
+          subject: parsed.subject || '(无主题)', body, attachments,
+          messageId: parsed.messageId || `email:${uidValidity}:${mailbox}:${msg.uid}`,
+          sentAt: parsed.date || new Date(),
+        });
+        if (inserted) insertedCount++;
+      } catch (error) { console.error('[email] parse/persist failed mailbox/uid', mailbox, msg.uid, error.message); }
+    }
+    if (maxUid > startUid) await setEmailSync(syncKey, uidValidity, maxUid);
+    return { mailbox, fetched: fetchedCount, inserted: insertedCount, lastUid: maxUid };
+  } finally { lock.release(); }
+}
+
 async function pollEmailsOnce() {
   if (emailPolling) return { skipped: true, reason: 'poll already running' };
   emailPolling = true;
@@ -6736,64 +6822,12 @@ async function pollEmailsOnce() {
   });
   try {
     await client.connect();
-    const lock = await client.getMailboxLock(IMAP_MAILBOX);
-    try {
-      const uidValidity = client.mailbox.uidValidity ? Number(client.mailbox.uidValidity) : null;
-      const uidNext = client.mailbox.uidNext ? Number(client.mailbox.uidNext) : null;
-      const syncKey = getEmailSyncKey();
-      const sync = await getEmailSync(syncKey);
-      const firstRun = sync.uidValidity == null && Number(sync.lastUid) === 0;
-      let startUid = Number(sync.lastUid) || 0;
-      // uidValidity 变化：旧 UID 失效，从头（去重仍靠 Message-ID）
-      if (sync.uidValidity != null && uidValidity != null && Number(sync.uidValidity) !== uidValidity) {
-        startUid = getInitialStartUid(uidNext);
-        console.log(`[email] uidValidity changed, backfilling recent uid>${startUid}`);
-      }
-      // 首次接入回拉最近一小批邮件，便于验证链路；之后只增量同步新邮件
-      if (firstRun && uidNext) {
-        startUid = getInitialStartUid(uidNext);
-        console.log(`[email] first run: backfilling up to ${IMAP_INITIAL_FETCH_LIMIT} recent mail(s), uid>${startUid}`);
-      }
-      let maxUid = startUid, fetchedCount = 0, insertedCount = 0;
-      for await (const msg of client.fetch(`${startUid + 1}:*`, { uid: true, source: true }, { uid: true })) {
-        if (msg.uid <= startUid) continue; // 'N:*' 在无新邮件时会回最后一封，需过滤
-        maxUid = Math.max(maxUid, msg.uid);
-        fetchedCount++;
-        try {
-          const parsed = await simpleParser(msg.source);
-          const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
-          const toAddresses = (parsed.to?.value || []).map(item => ({ name: item.name || '', address: item.address || '' })).filter(item => item.address);
-          const ccAddresses = (parsed.cc?.value || []).map(item => ({ name: item.name || '', address: item.address || '' })).filter(item => item.address);
-          const attachments = [];
-          for (const a of (parsed.attachments || [])) {
-            const filename = a.filename || '(未命名)';
-            const size = a.size || (a.content ? a.content.length : 0);
-            let url = null;
-            // 落盘附件内容以支持下载；超过上限则只保留元数据（不落盘、不可下载）。
-            if (a.content && a.content.length && a.content.length <= MAX_UPLOAD_BYTES) {
-              try {
-                url = await saveBufferToLocalFile(a.content, filename, a.contentType);
-              } catch (err) {
-                console.error('[email] save attachment failed:', filename, err.message);
-              }
-            }
-            attachments.push({ filename, size, contentType: a.contentType || '', url });
-          }
-          const body = (parsed.text || '').trim() || htmlToText(parsed.html || '');
-          const inserted = await persistEmailMessage({
-            fromAddress: from.address, fromName: from.name,
-            toAddresses, ccAddresses,
-            subject: parsed.subject || '(无主题)', body, attachments,
-            messageId: parsed.messageId || `email:${uidValidity}:${msg.uid}`,
-            sentAt: parsed.date || new Date(),
-          });
-          if (inserted) insertedCount++;
-        } catch (e) { console.error('[email] parse/persist failed uid', msg.uid, e.message); }
-      }
-      if (maxUid > startUid) await setEmailSync(syncKey, uidValidity, maxUid);
-      if (fetchedCount || insertedCount) console.log(`[email] fetched ${fetchedCount}, inserted ${insertedCount}, lastUid=${maxUid}`);
-      return { skipped: false, fetched: fetchedCount, inserted: insertedCount, lastUid: maxUid };
-    } finally { lock.release(); }
+    const results = [];
+    for (const mailbox of IMAP_SYNC_MAILBOXES) {
+      try { results.push(await syncEmailMailbox(client, mailbox)); }
+      catch (error) { console.error(`[email] mailbox ${mailbox} failed:`, error.message); }
+    }
+    return { skipped: false, mailboxes: results, fetched: results.reduce((sum, item) => sum + item.fetched, 0), inserted: results.reduce((sum, item) => sum + item.inserted, 0) };
   } finally {
     try { await client.logout(); } catch (e) {}
     emailPolling = false;

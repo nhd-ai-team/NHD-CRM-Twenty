@@ -6,6 +6,7 @@ export function useEmails() {
   const [emails, setEmails] = useState([]) // 会话（按发件人归集），带 messages
   const [selectedId, setSelectedId] = useState(null)
   const [search, setSearch] = useState('')
+  const [emailCategory, setEmailCategory] = useState('inbox')
   const [authExpired, setAuthExpired] = useState(false)
   const nextCursorRef = useRef('')
   const hasMoreRef = useRef(true)
@@ -30,7 +31,7 @@ export function useEmails() {
     if (append) { loadingMoreRef.current = true; setLoadingMore(true) }
     try {
       await requireAccessToken()
-      const params = new URLSearchParams({ _: String(Date.now()), includeEmail: 'true', channel: 'email', limit: '30' })
+      const params = new URLSearchParams({ _: String(Date.now()), includeEmail: 'true', channel: 'email', emailCategory, limit: '30' })
       if (append && nextCursorRef.current) params.set('cursor', nextCursorRef.current)
       const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
         cache: 'no-store',
@@ -59,7 +60,7 @@ export function useEmails() {
     } finally {
       if (append) { loadingMoreRef.current = false; setLoadingMore(false) }
     }
-  }, [authExpired, requireAccessToken])
+  }, [authExpired, emailCategory, requireAccessToken])
 
   const loadMessages = useCallback(async (convId) => {
     if (!convId || authExpired) return
@@ -103,5 +104,5 @@ export function useEmails() {
 
   const selected = emails.find(c => c.id === selectedId) ?? null
 
-  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount }
+  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount }
 }
