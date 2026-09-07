@@ -3272,6 +3272,10 @@ async function persistOutboundWhatsAppConversation(request, externalMessageId) {
 
 async function attemptOutboundWhatsAppRequest(request) {
   const payload = request.payload || {};
+  const binding = await getActiveWhatsAppBindingBySession(payload.sessionName);
+  if (!binding || binding.user_id !== payload.userId) {
+    throw new Error('WhatsApp 绑定关系已变化，已停止补偿发送');
+  }
   const sentResponse = await fetchWaha('/api/sendText', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
