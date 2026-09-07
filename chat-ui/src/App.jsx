@@ -61,7 +61,7 @@ function PresenceSwitch({ status, disabled, onClick }) {
   )
 }
 
-function ChannelBar({ conversations, totalCount, activeChannel, setActiveChannel, contactOpen, onToggleContact, aiSettings, presence }) {
+function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, setActiveChannel, contactOpen, onToggleContact, aiSettings, presence }) {
   const [aiOpen, setAiOpen] = useState(false)
   const [pendingPresenceStatus, setPendingPresenceStatus] = useState(null)
   const gearRef = useRef(null)
@@ -78,7 +78,7 @@ function ChannelBar({ conversations, totalCount, activeChannel, setActiveChannel
     }}>
       {CHANNELS.map((ch) => {
         const active = activeChannel === ch.id
-        const count = ch.id === 'all' ? totalCount : conversations.filter(c => c.channel === ch.id).length
+        const count = ch.id === 'all' ? totalCount : (channelCounts[ch.id] ?? 0)
         const unreadCount = ch.id === 'all'
           ? conversations.reduce((sum, conversation) => sum + (conversation.unread || 0), 0)
           : conversations.filter(c => c.channel === ch.id).reduce((sum, conversation) => sum + (conversation.unread || 0), 0)
@@ -214,7 +214,7 @@ export default function App() {
     activeStatus, setActiveStatus,
     search, setSearch,
     sendMessage, setTakeover, markHandoffNoticeSeen, renameConversation, reload: reloadConversations,
-    loadMore: loadMoreConversations, hasMore, loadingMore, totalCount,
+    loadMore: loadMoreConversations, hasMore, loadingMore, totalCount, channelCounts,
   } = useConversations()
 
   const aiSettings = useAiSettings()
@@ -266,6 +266,7 @@ export default function App() {
         <ChannelBar
           conversations={conversations}
           totalCount={totalCount}
+          channelCounts={channelCounts}
           activeChannel={activeChannel}
           setActiveChannel={setActiveChannel}
           contactOpen={contactOpen}

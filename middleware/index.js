@@ -2464,6 +2464,7 @@ app.get('/api/conversations', async (req, res) => {
     if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
     const workspaceSchema = await getWorkspaceSchema();
     const historyView = String(req.query?.view || req.query?.scope || '').trim() === 'history';
+    const includeEmail = String(req.query?.includeEmail || '').trim() === 'true';
     const visibility = conversationVisibilityWhere(viewer, 'c', 1, {
       workspaceSchema,
       allowPrivilegedAllChannels: historyView,
@@ -2500,10 +2501,13 @@ app.get('/api/conversations', async (req, res) => {
         )`
       : '';
     if (cursor) listParams.push(cursor.lastMessageAt, cursor.id);
+    const channelScopeSql = includeEmail ? '' : `AND c.channel <> 'email'`;
     const countPromise = pool.query(
-      `SELECT COUNT(*)::int AS total
+      `SELECT c.channel, COUNT(*)::int AS total
          FROM conv.conversations c
-        WHERE ${visibility.sql}`,
+        WHERE ${visibility.sql}
+          ${channelScopeSql}
+        GROUP BY c.channel`,
       visibility.params,
     );
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
@@ -2629,11 +2633,13 @@ app.get('/api/conversations', async (req, res) => {
         AND (read_state.last_read_at IS NULL OR unread_message.sent_at > read_state.last_read_at)
     ) unread ON TRUE
     WHERE ${visibility.sql}
+    ${channelScopeSql}
     ${cursorSql}
     ORDER BY c.last_message_at DESC NULLS LAST, c.id::text DESC
     LIMIT ${pageSize + 1}`, listParams);
     const countResult = await countPromise;
-    const totalCount = Number(countResult.rows[0]?.total || 0);
+    const channelCounts = Object.fromEntries(countResult.rows.map(row => [row.channel, Number(row.total || 0)]));
+    const totalCount = Object.values(channelCounts).reduce((sum, count) => sum + count, 0);
     const hasMore = result.rows.length > pageSize;
     const rows = hasMore ? result.rows.slice(0, pageSize) : result.rows;
     const last = rows[rows.length - 1];
@@ -2643,6 +2649,7 @@ app.get('/api/conversations', async (req, res) => {
       : '';
     res.set({
       'X-Conversation-Total-Count': String(totalCount),
+      'X-Conversation-Channel-Counts': JSON.stringify(channelCounts),
       'X-Conversation-Has-More': String(hasMore),
       'X-Conversation-Next-Cursor': nextCursor,
     });

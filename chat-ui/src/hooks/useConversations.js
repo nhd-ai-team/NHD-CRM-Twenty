@@ -25,6 +25,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
+  const [channelCounts, setChannelCounts] = useState({})
 
   async function requireAccessToken() {
     const token = await waitForTwentyAccessToken()
@@ -47,7 +48,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     try {
       await requireAccessToken()
       // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
-      const params = new URLSearchParams({ _: String(Date.now()), limit: '30' })
+      const params = new URLSearchParams({ _: String(Date.now()), limit: '30', includeEmail: String(includeEmail) })
       if (view === 'history') params.set('view', 'history')
       if (append && nextCursorRef.current) params.set('cursor', nextCursorRef.current)
       const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
@@ -64,12 +65,15 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       const hasMore = response.headers.get('X-Conversation-Has-More') === 'true'
       const nextCursor = response.headers.get('X-Conversation-Next-Cursor') || ''
       const responseTotalCount = Number(response.headers.get('X-Conversation-Total-Count'))
+      let responseChannelCounts = {}
+      try { responseChannelCounts = JSON.parse(response.headers.get('X-Conversation-Channel-Counts') || '{}') } catch { /* ignore malformed optional header */ }
       // Mark-read-triggered requests supersede older polling responses.
       if (requestId != listRequestRef.current) return
       nextCursorRef.current = nextCursor
       hasMoreRef.current = hasMore
       setHasMore(hasMore)
       if (Number.isFinite(responseTotalCount)) setTotalCount(responseTotalCount)
+      if (responseChannelCounts && typeof responseChannelCounts === 'object') setChannelCounts(responseChannelCounts)
       setConversations(current => {
         const withMessages = page.map(conv => ({
           ...conv,
@@ -394,5 +398,6 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     hasMore,
     loadingMore,
     totalCount,
+    channelCounts,
   }
 }
