@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { waitForTwentyAccessToken, withTwentyAuthHeaders } from '../utils/twentyAuth'
+import { waitForTwentyAccessToken, withTwentyAuthHeaders, notifyTwentyAuthExpired } from '../utils/twentyAuth'
 
 // 两批消息是否等价：条数、末条 id 与送达时间一致即视为没有新内容。
 function sameMessageList(a = [], b = []) {
@@ -24,6 +24,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     const token = await waitForTwentyAccessToken()
     if (!token) {
       setAuthExpired(true)
+      notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
     return token
@@ -42,6 +43,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     })
     if (response.status === 401) {
       setAuthExpired(true)
+      notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
     if (!response.ok) throw new Error('无法加载会话')
@@ -71,6 +73,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     })
     if (response.status === 401) {
       setAuthExpired(true)
+      notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
     if (!response.ok) throw new Error('无法加载聊天记录')
@@ -197,6 +200,10 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     }
     const response = await fetch(`/conv-api/conversations/${convId}/messages`, options)
     if (!response.ok) {
+      if (response.status === 401) {
+        setAuthExpired(true)
+        notifyTwentyAuthExpired()
+      }
       const data = await response.json().catch(() => ({}))
       throw new Error([data.error, data.detail].filter(Boolean).join('：') || '消息发送失败')
     }

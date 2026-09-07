@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { waitForTwentyAccessToken, withTwentyAuthHeaders } from '../utils/twentyAuth'
+import { waitForTwentyAccessToken, withTwentyAuthHeaders, notifyTwentyAuthExpired } from '../utils/twentyAuth'
 
 // 邮箱视图数据：复用 conv-api，仅取 channel='email' 的会话（只读，无发送/接管）。
 export function useEmails() {
@@ -12,6 +12,7 @@ export function useEmails() {
     const token = await waitForTwentyAccessToken()
     if (!token) {
       setAuthExpired(true)
+      notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
     return token
@@ -26,6 +27,7 @@ export function useEmails() {
     })
     if (response.status === 401) {
       setAuthExpired(true)
+      notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
     if (!response.ok) throw new Error('无法加载邮件')
@@ -49,6 +51,7 @@ export function useEmails() {
     })
     if (response.status === 401) {
       setAuthExpired(true)
+      notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
     if (!response.ok) throw new Error('无法加载邮件正文')

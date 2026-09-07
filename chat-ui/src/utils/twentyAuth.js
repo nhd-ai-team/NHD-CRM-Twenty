@@ -73,6 +73,19 @@ function decodeJwtPayload(token) {
   }
 }
 
+export const TWENTY_AUTH_EXPIRED_EVENT = 'twenty-auth-expired'
+
+export function notifyTwentyAuthExpired(reason = '登录状态已失效，请刷新 CRM 后重试') {
+  try {
+    window.dispatchEvent(new CustomEvent(TWENTY_AUTH_EXPIRED_EVENT, {
+      detail: { reason: String(reason || '登录状态已失效，请刷新 CRM 后重试') },
+    }))
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ type: TWENTY_AUTH_EXPIRED_EVENT, reason }, window.location.origin)
+    }
+  } catch (_) {}
+}
+
 export function getTwentyAccessToken() {
   const hash = window.location.hash?.replace(/^#/, '') || ''
   const params = new URLSearchParams(hash)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { waitForTwentyAccessToken, withTwentyAuthHeaders } from '../utils/twentyAuth'
+import { waitForTwentyAccessToken, withTwentyAuthHeaders, notifyTwentyAuthExpired } from '../utils/twentyAuth'
 
 // 渠道级 AI 自动回复配置（工作台齿轮的「生效范围」）
 export function useAiSettings() {
@@ -10,12 +10,17 @@ export function useAiSettings() {
   const load = useCallback(async () => {
     try {
       setLoading(true)
-      await waitForTwentyAccessToken()
+      const token = await waitForTwentyAccessToken()
+      if (!token) {
+        notifyTwentyAuthExpired()
+        throw new Error('登录状态已失效，请刷新 CRM 后重试')
+      }
       const response = await fetch(`/conv-api/ai-settings?_=${Date.now()}`, {
         cache: 'no-store',
         headers: withTwentyAuthHeaders(),
       })
       if (!response.ok) {
+        if (response.status === 401) notifyTwentyAuthExpired()
         const data = await response.json().catch(() => ({}))
         throw new Error(data.error || data.detail || '无法加载 AI 配置')
       }
@@ -51,6 +56,7 @@ export function useAiSettings() {
         }),
       })
       if (!response.ok) {
+        if (response.status === 401) notifyTwentyAuthExpired()
         const data = await response.json().catch(() => ({}))
         throw new Error(data.error || 'AI 配置保存失败')
       }
@@ -92,6 +98,7 @@ export function useAiSettings() {
         }),
       })
       if (!response.ok) {
+        if (response.status === 401) notifyTwentyAuthExpired()
         const data = await response.json().catch(() => ({}))
         throw new Error(data.error || 'AI 配置保存失败')
       }

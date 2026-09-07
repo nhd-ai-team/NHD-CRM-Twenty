@@ -5,6 +5,8 @@ import App from './App.jsx'
 import { MailApp } from './components/MailApp.jsx'
 import { HistoryApp } from './components/HistoryApp.jsx'
 import { useTheme } from './hooks/useTheme.js'
+import { AuthExpiredScreen } from './components/AuthExpiredScreen.jsx'
+import { TWENTY_AUTH_EXPIRED_EVENT } from './utils/twentyAuth.js'
 
 // 视图路由：hash 含 view=mail/history → 邮箱/沟通状态视图；否则渠道工作台。三者共用 twenty auth hash。
 function getView() {
@@ -15,6 +17,7 @@ function getView() {
 
 function Root() {
   useTheme()
+  const [authExpired, setAuthExpired] = useState(null)
   // 导航切换只改 iframe 的 hash（不重载文档），需监听 hashchange 重新路由。
   const [view, setView] = useState(getView())
   useEffect(() => {
@@ -22,6 +25,14 @@ function Root() {
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
+  useEffect(() => {
+    const onAuthExpired = (event) => {
+      setAuthExpired(event.detail?.reason || '请刷新 CRM，登录后再继续操作。')
+    }
+    window.addEventListener(TWENTY_AUTH_EXPIRED_EVENT, onAuthExpired)
+    return () => window.removeEventListener(TWENTY_AUTH_EXPIRED_EVENT, onAuthExpired)
+  }, [])
+  if (authExpired) return <AuthExpiredScreen reason={authExpired} />
   if (view === 'mail') return <MailApp />
   if (view === 'history') return <HistoryApp />
   return <App />
