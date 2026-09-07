@@ -1065,6 +1065,15 @@ async function ensureSchema() {
     -- 邮件专用字段（仅 channel='email' 使用）：主题与附件清单
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS subject TEXT;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS attachments JSONB;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS mail_direction TEXT NOT NULL DEFAULT 'inbound';
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS from_address TEXT;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS to_addresses JSONB;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS cc_addresses JSONB;
+    UPDATE conv.messages m SET mail_direction = CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END
+      FROM conv.conversations c
+     WHERE c.id = m.conversation_id AND c.channel = 'email'
+       AND ((m.sender_type IN ('agent', 'ai') AND m.mail_direction <> 'outbound')
+         OR (m.sender_type NOT IN ('agent', 'ai') AND m.mail_direction <> 'inbound'));
     CREATE TABLE IF NOT EXISTS conv.follow_ups (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       subject_type TEXT NOT NULL,
@@ -2524,6 +2533,7 @@ app.get('/api/conversations', async (req, res) => {
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
     NULLIF(CONCAT_WS(' ', current_agent."nameFirstName", current_agent."nameLastName"), '') AS "currentAgentName",
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
+    CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
     COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
@@ -2745,7 +2755,9 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const access = await requireConversationAccess(req, res, { historyView });
   if (!access) return;
   const workspaceSchema = await getWorkspaceSchema();
-  const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments, m.sent_at AS "sentAt",
+  const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments,
+      CASE WHEN c.channel = 'email' THEN COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) ELSE NULL END AS "mailDirection",
+      m.from_address AS "fromAddress", m.to_addresses AS "toAddresses", m.cc_addresses AS "ccAddresses", m.sent_at AS "sentAt",
       m.raw_message_type AS "rawMessageType", m.message_summary AS "messageSummary",
       CASE WHEN m.sender_type = 'agent' THEN COALESCE(
         NULLIF(CONCAT_WS(' ', sender_member."nameFirstName", sender_member."nameLastName"), ''),
@@ -6647,7 +6659,7 @@ async function saveBufferToLocalFile(buffer, filenameHint, mimetype) {
   return `/conv-api/uploads/conversation-files/${encodeURIComponent(storedName)}${suffix}`;
 }
 
-async function persistEmailMessage({ fromAddress, fromName, subject, body, attachments, messageId, sentAt }) {
+async function persistEmailMessage({ fromAddress, fromName, toAddresses, ccAddresses, subject, body, attachments, messageId, sentAt }) {
   const addr = String(fromAddress || '').trim().toLowerCase();
   if (!addr) return false;
   const displayName = (fromName && fromName.trim()) || addr;
@@ -6669,10 +6681,14 @@ async function persistEmailMessage({ fromAddress, fromName, subject, body, attac
       VALUES ('email', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [addr, contact.id]);
     const conversation = conversationResult.rows[0];
-    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, subject, attachments, sent_at)
-      VALUES ($1, $2, 'customer', $3, 'email', $4, $5, $6) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+    const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, subject, attachments, mail_direction, from_address, to_addresses, cc_addresses, sent_at)
+      VALUES ($1, $2, 'customer', $3, 'email', $4, $5, 'inbound', $6, $7, $8, $9) ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
       [messageId, conversation.id, body || '', subject || null,
-        attachments && attachments.length ? JSON.stringify(attachments) : null, when]);
+        attachments && attachments.length ? JSON.stringify(attachments) : null,
+        addr,
+        toAddresses && toAddresses.length ? JSON.stringify(toAddresses) : null,
+        ccAddresses && ccAddresses.length ? JSON.stringify(ccAddresses) : null,
+        when]);
     // 邮件按时间沉淀，last_message_at 取邮件发送时间（可能早于/晚于现有值）
     if (inserted.rowCount) await client.query(
       `UPDATE conv.conversations SET last_message_at = GREATEST(COALESCE(last_message_at, $2), $2), last_message_preview = $3, updated_at = now() WHERE id = $1`,
@@ -6741,6 +6757,8 @@ async function pollEmailsOnce() {
         try {
           const parsed = await simpleParser(msg.source);
           const from = (parsed.from && parsed.from.value && parsed.from.value[0]) || {};
+          const toAddresses = (parsed.to?.value || []).map(item => ({ name: item.name || '', address: item.address || '' })).filter(item => item.address);
+          const ccAddresses = (parsed.cc?.value || []).map(item => ({ name: item.name || '', address: item.address || '' })).filter(item => item.address);
           const attachments = [];
           for (const a of (parsed.attachments || [])) {
             const filename = a.filename || '(未命名)';
@@ -6759,6 +6777,7 @@ async function pollEmailsOnce() {
           const body = (parsed.text || '').trim() || htmlToText(parsed.html || '');
           const inserted = await persistEmailMessage({
             fromAddress: from.address, fromName: from.name,
+            toAddresses, ccAddresses,
             subject: parsed.subject || '(无主题)', body, attachments,
             messageId: parsed.messageId || `email:${uidValidity}:${msg.uid}`,
             sentAt: parsed.date || new Date(),

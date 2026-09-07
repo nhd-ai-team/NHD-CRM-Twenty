@@ -6,6 +6,24 @@ import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
 import { useLeadForm } from '../hooks/useLeadForm'
 
+const mailDirectionLabel = direction => direction === 'outbound' ? '发件' : '收件'
+const mailDirectionStyle = direction => direction === 'outbound'
+  ? { color: '#1677ff', background: '#eaf3ff' }
+  : { color: '#16834b', background: '#e9f8ef' }
+
+function MailDirectionBadge({ direction }) {
+  return <span style={{ ...mailDirectionStyle(direction), display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 4, fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, flexShrink: 0 }}>{mailDirectionLabel(direction)}</span>
+}
+
+function addressLabel(address) {
+  if (!address) return ''
+  return address.name ? `${address.name} <${address.address}>` : address.address
+}
+
+function addressesLabel(addresses) {
+  return Array.isArray(addresses) ? addresses.map(addressLabel).filter(Boolean).join('、') : ''
+}
+
 function fmtSize(bytes) {
   const n = Number(bytes) || 0
   if (n < 1024) return `${n} B`
@@ -25,6 +43,7 @@ function EmailListItem({ conv, active, onClick }) {
       borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+        <MailDirectionBadge direction={conv.mailDirection} />
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
@@ -38,15 +57,25 @@ function EmailListItem({ conv, active, onClick }) {
 
 function EmailCard({ msg, fromLabel }) {
   const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
+  const outbound = msg.mailDirection === 'outbound'
+  const from = msg.fromAddress || (outbound ? '' : fromLabel)
+  const to = addressesLabel(msg.toAddresses)
+  const cc = addressesLabel(msg.ccAddresses)
   return (
     <div style={{
       border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)',
       marginBottom: 14, overflow: 'hidden', boxShadow: 'var(--shadow-sm)',
     }}>
       <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border-soft)' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{msg.subject || '(无主题)'}</div>
-        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 4 }}>
-          {fromLabel} · {format(msg.sentAt, 'yyyy-MM-dd HH:mm')}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <MailDirectionBadge direction={msg.mailDirection} />
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 7, lineHeight: 1.55 }}>
+          <div><strong style={{ color: 'var(--text-secondary)' }}>发件人</strong>：{from || '未知'}</div>
+          {to && <div><strong style={{ color: 'var(--text-secondary)' }}>收件人</strong>：{to}</div>}
+          {cc && <div><strong style={{ color: 'var(--text-secondary)' }}>抄送</strong>：{cc}</div>}
+          <div>{format(msg.sentAt, 'yyyy-MM-dd HH:mm')}</div>
         </div>
       </div>
       <div style={{ padding: '12px 16px', fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
