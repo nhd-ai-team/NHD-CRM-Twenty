@@ -23,6 +23,11 @@ services:
       FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY}
       APP_SECRET: ${APP_SECRET:-}
 
+      # Keep the interactive login usable through a normal workday while
+      # retaining the longer refresh-token safety net for renewal.
+      ACCESS_TOKEN_EXPIRES_IN: ${ACCESS_TOKEN_EXPIRES_IN:-24h}
+      REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-90d}
+
       # 出站邮件（工作区邀请、忘记密码等）。默认 QQ 邮箱 SMTP；
       # 账号/授权码等敏感值只从 .env 读取，仓库不留明文。
       EMAIL_DRIVER: ${EMAIL_DRIVER:-smtp}

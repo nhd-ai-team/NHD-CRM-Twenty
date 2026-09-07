@@ -356,6 +356,8 @@
 - 登录后跳错误页
 - 无限刷新
 - 登录成功但无法加载主菜单
+
+补充验收：当前部署默认 `ACCESS_TOKEN_EXPIRES_IN=24h`、`REFRESH_TOKEN_EXPIRES_IN=90d`。访问令牌临近过期时应自动续期；只有刷新令牌失效时才要求重新登录。
 - 报 token / unauthorized / forbidden 且不是输错密码造成
 
 ### 要记录的信息

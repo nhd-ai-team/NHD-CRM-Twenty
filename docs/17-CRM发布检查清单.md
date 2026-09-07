@@ -86,6 +86,7 @@ ssh nhdailabcenter@192.168.118.105 'export PATH=/opt/homebrew/bin:$PATH; docker 
 - 工作台、邮箱、接待状态或 AI 配置接口返回 `401` 时，页面必须停止展示旧数据，并显示「登录状态已失效」及「刷新并重新登录」入口。
 - 原生 CRM 页面检测到 GraphQL `UNAUTHENTICATED` 或注入接口 `401` 时，不得继续显示空白/旧壳；应显示统一登录失效遮罩。
 - `/metadata` 是大响应的认证 POST 请求，Portal 的该路由必须保持 `proxy_buffering off`，并按认证身份/请求体使用短时缓存和 `proxy_cache_lock`，避免并发初始化时写入 `proxy_temp` 或重复打穿上游。
+- `/metadata` 还应启用后台刷新和短暂 stale 容错；服务端环境应确认 `ACCESS_TOKEN_EXPIRES_IN=24h`、`REFRESH_TOKEN_EXPIRES_IN=90d`。
 - 验证方法：登录后清除/等待 token 失效，访问 `/chat/`、`/objects/people` 和 `/settings/profile`，确认页面有明确失效提示，刷新后可以重新进入；控制台不应持续出现无限重试。
 
 ```bash
