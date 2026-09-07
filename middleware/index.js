@@ -2543,11 +2543,12 @@ app.get('/api/conversations', async (req, res) => {
       : 'inbox';
     const emailCategorySql = requestedChannel === 'email' && emailCategory !== 'all'
       ? emailCategory === 'junk'
-        ? `AND COALESCE((SELECT m.source_is_junk FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = true`
+        ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.source_is_junk, false) = true)`
         : emailCategory === 'outbound'
-          ? `AND COALESCE((SELECT m.mail_direction FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), 'inbound') = 'outbound'`
-          : `AND COALESCE((SELECT m.source_is_junk FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = false
-          AND COALESCE((SELECT m.mail_direction FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), 'inbound') = 'inbound'`
+          ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) = 'outbound')`
+          : `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id
+            AND COALESCE(m.source_is_junk, false) = false
+            AND COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) = 'inbound')`
       : '';
     const countPromise = pool.query(
       `SELECT c.channel, COUNT(*)::int AS total
