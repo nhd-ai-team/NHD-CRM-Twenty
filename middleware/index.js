@@ -2521,7 +2521,12 @@ app.get('/api/conversations', async (req, res) => {
         )`
       : '';
     if (cursor) listParams.push(cursor.lastMessageAt, cursor.id);
-    const channelScopeSql = includeEmail ? '' : `AND c.channel <> 'email'`;
+    const requestedChannel = ['website', 'whatsapp', 'email', 'instagram', 'facebook'].includes(String(req.query?.channel || '').trim())
+      ? String(req.query.channel).trim()
+      : '';
+    const channelScopeSql = requestedChannel
+      ? `AND c.channel = '${requestedChannel}'`
+      : includeEmail ? '' : `AND c.channel <> 'email'`;
     const countPromise = pool.query(
       `SELECT c.channel, COUNT(*)::int AS total
          FROM conv.conversations c

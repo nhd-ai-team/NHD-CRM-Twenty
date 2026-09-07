@@ -108,11 +108,20 @@ function EmailCard({ msg, fromLabel }) {
 }
 
 export function MailApp() {
-  const { filtered, selected, selectedId, setSelectedId, search, setSearch } = useEmails()
+  const { filtered, selected, selectedId, setSelectedId, search, setSearch, loadMore, hasMore, loadingMore, totalCount } = useEmails()
   const leadForm = useLeadForm({ selected, selectedId })
   const bottomRef = useRef(null)
+  const listBottomRef = useRef(null)
 
   useEffect(() => { bottomRef.current?.scrollIntoView() }, [selectedId, selected?.messages?.length])
+
+  useEffect(() => {
+    const node = listBottomRef.current
+    if (!node || !hasMore) return undefined
+    const observer = new IntersectionObserver(entries => { if (entries[0]?.isIntersecting) loadMore() }, { rootMargin: '180px' })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMore, loadMore])
 
   const fromLabel = selected
     ? `${selected.contact?.name || ''}${selected.contact?.email ? ` <${selected.contact.email}>` : ''}`.trim()
@@ -125,7 +134,7 @@ export function MailApp() {
         <div style={{ height: 44, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 14px', borderBottom: '1px solid var(--border)' }}>
           <ChannelIcon channel="email" size={16} />
           <span style={{ fontWeight: 700, fontSize: 14 }}>邮箱</span>
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>{filtered.length}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>{totalCount || filtered.length}</span>
         </div>
         <div style={{ padding: '8px 12px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, background: 'var(--bg-active)' }}>
@@ -145,6 +154,7 @@ export function MailApp() {
                 <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} />
               ))
           }
+          {hasMore && <div ref={listBottomRef} style={{ padding: '10px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{loadingMore ? '正在加载…' : '继续下拉加载更多'}</div>}
         </div>
       </div>
 
