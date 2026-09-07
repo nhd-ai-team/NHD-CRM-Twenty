@@ -48,16 +48,22 @@ function EmailListItem({ conv, active, onClick }) {
 function EmailCard({ msg, fromLabel }) {
   const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
   const outbound = msg.mailDirection === 'outbound'
+  const directionLabel = outbound ? '发件邮件' : '收件邮件'
+  const directionColor = outbound ? '#1677ff' : '#16834b'
+  const directionBackground = outbound ? '#f4f8ff' : '#f5fbf7'
   const from = msg.fromAddress || (outbound ? '' : fromLabel)
   const to = addressesLabel(msg.toAddresses)
   const cc = addressesLabel(msg.ccAddresses)
   return (
     <div style={{
-      border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-primary)',
+      border: '1px solid var(--border)', borderLeft: `4px solid ${directionColor}`, borderRadius: 8, background: directionBackground,
       marginBottom: 14, overflow: 'hidden', boxShadow: 'var(--shadow-sm)',
     }}>
       <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border-soft)' }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: directionColor, flexShrink: 0 }}>{directionLabel}</span>
+          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
+        </div>
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 7, lineHeight: 1.55 }}>
           <div><strong style={{ color: 'var(--text-secondary)' }}>发件人</strong>：{from || '未知'}</div>
           {to && <div><strong style={{ color: 'var(--text-secondary)' }}>收件人</strong>：{to}</div>}
