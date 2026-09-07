@@ -9,6 +9,7 @@ export function useEmails() {
   const [emailCategory, setEmailCategory] = useState('inbox')
   const [authExpired, setAuthExpired] = useState(false)
   const nextCursorRef = useRef('')
+  const loadedCategoryRef = useRef('')
   const hasMoreRef = useRef(true)
   const loadingMoreRef = useRef(false)
   const [hasMore, setHasMore] = useState(true)
@@ -54,6 +55,9 @@ export function useEmails() {
       setEmails(current => {
         const page = list.map(conv => ({ ...conv, messages: current.find(item => item.id === conv.id)?.messages ?? [] }))
         const pageIds = new Set(page.map(conv => conv.id))
+        const categoryChanged = loadedCategoryRef.current !== emailCategory
+        loadedCategoryRef.current = emailCategory
+        if (categoryChanged) return page
         return append ? [...current.filter(conv => !pageIds.has(conv.id)), ...page] : [...page, ...current.filter(conv => !pageIds.has(conv.id))]
       })
       if (!append) setSelectedId(current => current && list.some(conv => conv.id === current) ? current : list[0]?.id || null)
