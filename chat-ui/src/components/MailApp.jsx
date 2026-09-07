@@ -15,6 +15,25 @@ function addressesLabel(addresses) {
   return Array.isArray(addresses) ? addresses.map(addressLabel).filter(Boolean).join('、') : ''
 }
 
+// 邮件正文常带有历史引用；拆开后分别渲染，避免把客户当前来信和我方旧回复看成同一封邮件。
+function splitQuotedEmail(content) {
+  const text = String(content || '')
+  const lines = text.split(/\r?\n/)
+  const quoteStart = lines.findIndex((line, index) => index > 0 && (
+    /^\s*>/.test(line) ||
+    /^\s*(From|发件人)\s*:/i.test(line)
+  ))
+  if (quoteStart <= 0) return [{ content: text, quoted: false }]
+  const current = lines.slice(0, quoteStart).join('\n').trim()
+  const quoted = lines.slice(quoteStart).join('\n').trim()
+  if (!current || !quoted) return [{ content: text, quoted: false }]
+  const outbound = /sales@chinanhd\.com/i.test(quoted)
+  return [
+    { content: current, quoted: false },
+    { content: quoted, quoted: true, direction: outbound ? 'outbound' : 'inbound' },
+  ]
+}
+
 function fmtSize(bytes) {
   const n = Number(bytes) || 0
   if (n < 1024) return `${n} B`
@@ -45,10 +64,10 @@ function EmailListItem({ conv, active, onClick }) {
   )
 }
 
-function EmailCard({ msg, fromLabel }) {
+function EmailCard({ msg, fromLabel, directionOverride, quoted = false }) {
   const attachments = Array.isArray(msg.attachments) ? msg.attachments : []
-  const outbound = msg.mailDirection === 'outbound'
-  const directionLabel = outbound ? '发件邮件' : '收件邮件'
+  const outbound = (directionOverride || msg.mailDirection) === 'outbound'
+  const directionLabel = quoted ? `引用历史（${outbound ? '发件' : '收件'}）` : (outbound ? '发件邮件' : '收件邮件')
   const directionColor = outbound ? '#1677ff' : '#16834b'
   const directionBackground = outbound ? '#f4f8ff' : '#f5fbf7'
   const from = msg.fromAddress || (outbound ? '' : fromLabel)
@@ -56,7 +75,7 @@ function EmailCard({ msg, fromLabel }) {
   const cc = addressesLabel(msg.ccAddresses)
   return (
     <div style={{
-      border: '1px solid var(--border)', borderLeft: `4px solid ${directionColor}`, borderRadius: 8, background: directionBackground,
+      border: quoted ? `1px dashed ${directionColor}` : '1px solid var(--border)', borderLeft: `4px solid ${directionColor}`, borderRadius: 8, background: directionBackground,
       marginBottom: 14, overflow: 'hidden', boxShadow: 'var(--shadow-sm)',
     }}>
       <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border-soft)' }}>
@@ -170,7 +189,15 @@ export function MailApp() {
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: 16, minHeight: 0 }}>
               {selected.messages.map((msg, i) => (
-                <EmailCard key={msg.id ?? i} msg={msg} fromLabel={fromLabel} />
+                splitQuotedEmail(msg.content).map((part, partIndex) => (
+                  <EmailCard
+                    key={`${msg.id ?? i}-${partIndex}`}
+                    msg={{ ...msg, content: part.content }}
+                    fromLabel={fromLabel}
+                    directionOverride={part.direction}
+                    quoted={part.quoted}
+                  />
+                ))
               ))}
               <div ref={bottomRef} />
             </div>
