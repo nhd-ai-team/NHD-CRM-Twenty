@@ -6,15 +6,6 @@ import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
 import { useLeadForm } from '../hooks/useLeadForm'
 
-const mailDirectionLabel = direction => direction === 'outbound' ? '发件' : '收件'
-const mailDirectionStyle = direction => direction === 'outbound'
-  ? { color: '#1677ff', background: '#eaf3ff' }
-  : { color: '#16834b', background: '#e9f8ef' }
-
-function MailDirectionBadge({ direction }) {
-  return <span style={{ ...mailDirectionStyle(direction), display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 4, fontSize: 10.5, fontWeight: 600, lineHeight: 1.2, flexShrink: 0 }}>{mailDirectionLabel(direction)}</span>
-}
-
 function addressLabel(address) {
   if (!address) return ''
   return address.name ? `${address.name} <${address.address}>` : address.address
@@ -43,7 +34,6 @@ function EmailListItem({ conv, active, onClick }) {
       borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-        <MailDirectionBadge direction={conv.mailDirection} />
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
@@ -67,10 +57,7 @@ function EmailCard({ msg, fromLabel }) {
       marginBottom: 14, overflow: 'hidden', boxShadow: 'var(--shadow-sm)',
     }}>
       <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border-soft)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <MailDirectionBadge direction={msg.mailDirection} />
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
-        </div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 7, lineHeight: 1.55 }}>
           <div><strong style={{ color: 'var(--text-secondary)' }}>发件人</strong>：{from || '未知'}</div>
           {to && <div><strong style={{ color: 'var(--text-secondary)' }}>收件人</strong>：{to}</div>}
@@ -147,7 +134,7 @@ export function MailApp() {
             />
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            {[['inbox', '收件箱'], ['flagged', '重点'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
+            {[['inbox', '收件箱'], ['outbound', '发件箱'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
               <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{label}</button>
             ))}
           </div>

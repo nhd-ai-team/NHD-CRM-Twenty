@@ -2538,11 +2538,16 @@ app.get('/api/conversations', async (req, res) => {
     const channelScopeSql = requestedChannel
       ? `AND c.channel = '${requestedChannel}'`
       : includeEmail ? '' : `AND c.channel <> 'email'`;
-    const emailCategory = ['inbox', 'junk', 'flagged', 'all'].includes(String(req.query?.emailCategory || '').trim())
+    const emailCategory = ['inbox', 'outbound', 'junk', 'all'].includes(String(req.query?.emailCategory || '').trim())
       ? String(req.query.emailCategory).trim()
       : 'inbox';
     const emailCategorySql = requestedChannel === 'email' && emailCategory !== 'all'
-      ? `AND COALESCE((SELECT m.source_is_junk FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = ${emailCategory === 'junk' ? 'true' : 'false'}${emailCategory === 'flagged' ? ` AND COALESCE((SELECT m.source_is_flagged FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = true` : ''}`
+      ? emailCategory === 'junk'
+        ? `AND COALESCE((SELECT m.source_is_junk FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = true`
+        : emailCategory === 'outbound'
+          ? `AND COALESCE((SELECT m.mail_direction FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), 'inbound') = 'outbound'`
+          : `AND COALESCE((SELECT m.source_is_junk FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), false) = false
+          AND COALESCE((SELECT m.mail_direction FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1), 'inbound') = 'inbound'`
       : '';
     const countPromise = pool.query(
       `SELECT c.channel, COUNT(*)::int AS total
