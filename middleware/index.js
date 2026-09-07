@@ -2445,6 +2445,19 @@ function conversationReadScopeKey(viewer, channel) {
 
 app.get('/api/conversations', async (req, res) => {
   try {
+    const pageSize = Math.min(Math.max(Number.parseInt(req.query?.limit || '30', 10) || 30, 1), 50);
+    let cursor = null;
+    if (req.query?.cursor) {
+      try {
+        const decoded = Buffer.from(String(req.query.cursor), 'base64url').toString('utf8');
+        const parsed = JSON.parse(decoded);
+        if (parsed && (parsed.lastMessageAt === null || typeof parsed.lastMessageAt === 'string') && typeof parsed.id === 'string') {
+          cursor = parsed;
+        }
+      } catch {
+        return res.status(400).json({ error: '会话分页游标无效' });
+      }
+    }
     // 生效范围解析：会话级覆盖(c.ai_enabled) → 渠道设置(cs.ai_enabled) → 官网默认开
     const scheduleActive = aiScheduleActiveExpression('cs');
     const viewer = await resolveConversationViewer(req);
@@ -2477,6 +2490,15 @@ app.get('/api/conversations', async (req, res) => {
       SELECT 1 FROM conv.conversation_participants cp
       WHERE cp.conversation_id = c.id AND cp.workspace_member_id = $1
     )` : 'false';
+    const cursorSql = cursor
+      ? `AND (
+          ($5::timestamptz IS NOT NULL AND c.last_message_at IS NOT NULL
+            AND (c.last_message_at, c.id::text) < ($5::timestamptz, $6::text))
+          OR ($5::timestamptz IS NOT NULL AND c.last_message_at IS NULL)
+          OR ($5::timestamptz IS NULL AND c.last_message_at IS NULL AND c.id::text < $6::text)
+        )`
+      : '';
+    if (cursor) listParams.push(cursor.lastMessageAt, cursor.id);
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
     NULLIF(CONCAT_WS(' ', current_agent."nameFirstName", current_agent."nameLastName"), '') AS "currentAgentName",
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
@@ -2600,8 +2622,21 @@ app.get('/api/conversations', async (req, res) => {
         AND (read_state.last_read_at IS NULL OR unread_message.sent_at > read_state.last_read_at)
     ) unread ON TRUE
     WHERE ${visibility.sql}
-    ORDER BY c.last_message_at DESC NULLS LAST`, listParams);
-    res.json(result.rows);
+    ${cursorSql}
+    ORDER BY c.last_message_at DESC NULLS LAST, c.id::text DESC
+    LIMIT ${pageSize + 1}`, listParams);
+    const hasMore = result.rows.length > pageSize;
+    const rows = hasMore ? result.rows.slice(0, pageSize) : result.rows;
+    const last = rows[rows.length - 1];
+    const lastMessageAt = last?.lastMessageAt || null;
+    const nextCursor = hasMore && last
+      ? Buffer.from(JSON.stringify({ lastMessageAt, id: last.id })).toString('base64url')
+      : '';
+    res.set({
+      'X-Conversation-Has-More': String(hasMore),
+      'X-Conversation-Next-Cursor': nextCursor,
+    });
+    res.json(rows);
   } catch (error) {
     console.error('[conversations] list failed:', error.message);
     res.status(502).json({ error: '无法加载会话', detail: error.message });

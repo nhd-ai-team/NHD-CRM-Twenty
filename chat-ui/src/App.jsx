@@ -214,6 +214,7 @@ export default function App() {
     activeStatus, setActiveStatus,
     search, setSearch,
     sendMessage, setTakeover, markHandoffNoticeSeen, renameConversation, reload: reloadConversations,
+    loadMore: loadMoreConversations, hasMore, loadingMore,
   } = useConversations()
 
   const aiSettings = useAiSettings()
@@ -294,6 +295,9 @@ export default function App() {
               search={search}
               setSearch={setSearch}
               onRename={renameConversation}
+              onLoadMore={loadMoreConversations}
+              hasMore={hasMore}
+              loadingMore={loadingMore}
             />
           </div>
 

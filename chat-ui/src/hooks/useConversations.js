@@ -19,6 +19,11 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const [authExpired, setAuthExpired] = useState(false)
   const listRequestRef = useRef(0)
   const readInFlightRef = useRef(new Set())
+  const nextCursorRef = useRef('')
+  const hasMoreRef = useRef(true)
+  const loadingMoreRef = useRef(false)
+  const [hasMore, setHasMore] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   async function requireAccessToken() {
     const token = await waitForTwentyAccessToken()
@@ -30,36 +35,71 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     return token
   }
 
-  async function loadConversations() {
+  async function loadConversations({ append = false } = {}) {
     if (authExpired) return
-    const requestId = ++listRequestRef.current
-    await requireAccessToken()
-    // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
-    const params = new URLSearchParams({ _: String(Date.now()) })
-    if (view === 'history') params.set('view', 'history')
-    const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
-      cache: 'no-store',
-      headers: withTwentyAuthHeaders(),
-    })
-    if (response.status === 401) {
-      setAuthExpired(true)
-      notifyTwentyAuthExpired()
-      throw new Error('登录状态已失效，请刷新 CRM 后重试')
+    if (append && (!hasMoreRef.current || loadingMoreRef.current)) return
+    if (append) {
+      loadingMoreRef.current = true
+      setLoadingMore(true)
     }
-    if (!response.ok) throw new Error('无法加载会话')
-    // 邮箱是独立板块（见 useEmails），渠道工作台默认不展示 email 会话；只读历史页可按需复用全量接口。
-    const list = (await response.json()).filter(c => includeEmail || c.channel !== 'email')
-    // Mark-read-triggered requests supersede older polling responses.
-    if (requestId != listRequestRef.current) return
-    setConversations(current => list.map(conv => ({
-      ...conv,
-      messages: current.find(item => item.id === conv.id)?.messages ?? [],
-      unread: Number(conv.unreadCount || 0),
-    })))
-    setSelectedId(current => {
-      if (current && list.some(conv => conv.id === current)) return current
-      return list[0]?.id || null
-    })
+    const requestId = ++listRequestRef.current
+    try {
+      await requireAccessToken()
+      // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
+      const params = new URLSearchParams({ _: String(Date.now()), limit: '30' })
+      if (view === 'history') params.set('view', 'history')
+      if (append && nextCursorRef.current) params.set('cursor', nextCursorRef.current)
+      const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
+        cache: 'no-store',
+        headers: withTwentyAuthHeaders(),
+      })
+      if (response.status === 401) {
+        setAuthExpired(true)
+        notifyTwentyAuthExpired()
+        throw new Error('登录状态已失效，请刷新 CRM 后重试')
+      }
+      if (!response.ok) throw new Error('无法加载会话')
+      const page = (await response.json()).filter(c => includeEmail || c.channel !== 'email')
+      const hasMore = response.headers.get('X-Conversation-Has-More') === 'true'
+      const nextCursor = response.headers.get('X-Conversation-Next-Cursor') || ''
+      // Mark-read-triggered requests supersede older polling responses.
+      if (requestId != listRequestRef.current) return
+      nextCursorRef.current = nextCursor
+      hasMoreRef.current = hasMore
+      setHasMore(hasMore)
+      setConversations(current => {
+        const withMessages = page.map(conv => ({
+          ...conv,
+          messages: current.find(item => item.id === conv.id)?.messages ?? [],
+          unread: Number(conv.unreadCount || 0),
+        }))
+        if (!append) {
+          const pageIds = new Set(page.map(conv => conv.id))
+          return [...withMessages, ...current.filter(conv => !pageIds.has(conv.id))]
+        }
+        const pageIds = new Set(page.map(conv => conv.id))
+        return [...current.filter(conv => !pageIds.has(conv.id)), ...withMessages]
+      })
+      if (!append) {
+        setSelectedId(current => {
+          if (current && page.some(conv => conv.id === current)) return current
+          return current || page[0]?.id || null
+        })
+      }
+    } finally {
+      if (append) {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      }
+    }
+  }
+
+  function resetConversationPaging() {
+    nextCursorRef.current = ''
+    hasMoreRef.current = true
+    loadingMoreRef.current = false
+    setHasMore(true)
+    setLoadingMore(false)
   }
 
   async function loadMessages(convId) {
@@ -96,6 +136,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
 
   useEffect(() => {
     if (authExpired) return undefined
+    resetConversationPaging()
     loadConversations().catch(error => console.error(error))
     // SSE 是主通道；轮询只作为网络切换、代理断流时的兜底，避免每个标签页持续打列表查询。
     const timer = setInterval(() => loadConversations().catch(() => {}), 30000)
@@ -346,5 +387,8 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     search, setSearch,
     sendMessage, setTakeover, respondHandoff, markHandoffNoticeSeen, closeConversation, renameConversation,
     reload: loadConversations,
+    loadMore: () => loadConversations({ append: true }),
+    hasMore,
+    loadingMore,
   }
 }
