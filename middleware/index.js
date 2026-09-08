@@ -2565,6 +2565,7 @@ app.get('/api/conversations', async (req, res) => {
     const result = await pool.query(`SELECT c.id, c.channel, c.status, c.agent_id AS "agentId",
     NULLIF(CONCAT_WS(' ', current_agent."nameFirstName", current_agent."nameLastName"), '') AS "currentAgentName",
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
+    CASE WHEN c.channel = 'email' THEN (SELECT m.id FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "latestMessageId",
       CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
     CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.source_is_junk, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsJunk",
     CASE WHEN c.channel = 'email' THEN EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false))) ELSE false END AS "sourceIsFlagged",

@@ -98,7 +98,7 @@ export function useEmails() {
     if (!response.ok) throw new Error('重点标记失败')
     const result = await response.json()
     setEmails(current => current.map(conv => conv.id === convId
-      ? { ...conv, messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, isFlagged: result.isFlagged } : msg) }
+      ? { ...conv, sourceIsFlagged: result.isFlagged, messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, isFlagged: result.isFlagged } : msg) }
       : conv))
     return result
   }, [authExpired, requireAccessToken])

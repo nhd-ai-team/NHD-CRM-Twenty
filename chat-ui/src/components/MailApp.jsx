@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { format } from 'date-fns'
-import { Search, Paperclip, Star, Flag } from 'lucide-react'
+import { Search, Paperclip, Flag } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
@@ -41,7 +41,7 @@ function fmtSize(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-function EmailListItem({ conv, active, onClick }) {
+function EmailListItem({ conv, active, onClick, onToggleFlag }) {
   const last = conv.messages[conv.messages.length - 1]
   const subject = last?.subject || conv.lastMessage || '(无主题)'
   const when = conv.lastMessageAt ? format(new Date(conv.lastMessageAt), 'MM-dd HH:mm') : ''
@@ -56,11 +56,17 @@ function EmailListItem({ conv, active, onClick }) {
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
-        {conv.sourceIsFlagged && <Flag size={15} fill="currentColor" strokeWidth={1.8} style={{ color: '#f04438', flexShrink: 0 }} aria-label="重点邮件" />}
         <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{when}</span>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subject}</div>
-      <div style={{ fontSize: 10.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.contact?.email}</div>
+      <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+        <span style={{ fontSize: 10.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{conv.contact?.email}</span>
+        {onToggleFlag && conv.latestMessageId && (
+          <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>
+            <Flag size={15} fill={conv.sourceIsFlagged ? 'currentColor' : 'none'} strokeWidth={1.8} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -83,11 +89,6 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: directionColor, flexShrink: 0 }}>{directionLabel}</span>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)', minWidth: 0 }}>{msg.subject || '(无主题)'}</div>
-          {!quoted && onToggleFlag && (
-            <button type="button" title={msg.isFlagged ? '取消重点' : '标记为重点'} onClick={() => onToggleFlag(msg)} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', padding: 2, color: msg.isFlagged ? '#e0a400' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
-              <Star size={16} fill={msg.isFlagged ? 'currentColor' : 'none'} />
-            </button>
-          )}
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 7, lineHeight: 1.55 }}>
           <div><strong style={{ color: 'var(--text-secondary)' }}>发件人</strong>：{from || '未知'}</div>
@@ -174,7 +175,7 @@ export function MailApp() {
           {filtered.length === 0
             ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>暂无邮件</div>
             : filtered.map(conv => (
-                <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} />
+                <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} onToggleFlag={conv => toggleFlag(conv.id, conv.latestMessageId, !conv.sourceIsFlagged)} />
               ))
           }
           {hasMore && <div ref={listBottomRef} style={{ padding: '10px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{loadingMore ? '正在加载…' : '继续下拉加载更多'}</div>}
@@ -202,7 +203,6 @@ export function MailApp() {
                     fromLabel={fromLabel}
                     directionOverride={part.direction}
                     quoted={part.quoted}
-                    onToggleFlag={part.quoted ? null : (target) => toggleFlag(selected.id, target.id, !target.isFlagged)}
                   />
                 ))
               ))}
