@@ -1319,6 +1319,13 @@ async function ensureSchema() {
       ON conv.conversations(owner_id) WHERE owner_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS conversations_waha_session_idx
       ON conv.conversations(waha_session) WHERE waha_session IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS conv.whatsapp_contact_aliases (
+      session_name TEXT NOT NULL,
+      lid TEXT NOT NULL,
+      canonical_chat_id TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (session_name, lid)
+    );
   `);
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS channel_accounts_active_external_account_unique
@@ -1397,6 +1404,25 @@ async function resolvePhone(jid = '', session = WAHA_SESSION) {
     const contact = await response.json();
     return String(contact.id || '').endsWith('@c.us') ? phoneFromJid(contact.id) : null;
   } catch (error) { console.error('[whatsapp] lid resolve failed:', error.message); return null; }
+}
+
+async function resolveWhatsAppChatKey(jid, session) {
+  const phone = await resolvePhone(jid, session);
+  if (phone) {
+    const canonical = `${phone}@c.us`;
+    await pool.query(
+      `INSERT INTO conv.whatsapp_contact_aliases(session_name, lid, canonical_chat_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (session_name, lid) DO UPDATE SET canonical_chat_id = EXCLUDED.canonical_chat_id, updated_at = now()`,
+      [session, jid, canonical],
+    ).catch(error => console.warn('[whatsapp] lid alias cache write failed:', error.message));
+    return canonical;
+  }
+  const alias = await pool.query(
+    `SELECT canonical_chat_id FROM conv.whatsapp_contact_aliases WHERE session_name = $1 AND lid = $2`,
+    [session, jid],
+  );
+  return alias.rows[0]?.canonical_chat_id || jid;
 }
 // WAHA `message` 事件为扁平 payload：{ from, body, hasMedia, media: { url, mimetype }, type }。
 // 非文本消息的原始类型可能位于 type 或 _data.type，两个位置都兼容。
@@ -1658,9 +1684,9 @@ async function persistWhatsAppMessage(payload, session) {
       parsed.mediaUrl = null;
     }
   }
-  const phone = await resolvePhone(counterpartyJid, inboundSession);
+  const chatKey = await resolveWhatsAppChatKey(counterpartyJid, inboundSession);
+  const phone = chatKey.endsWith('@c.us') ? phoneFromJid(chatKey) : null;
   // 归一化会话键：同一客户的 @lid 与 @c.us 统一为真实号 <phone>@c.us，避免拆成多个会话。
-  const chatKey = phone ? `${phone}@c.us` : counterpartyJid;
   // 渠道原始名：只有客户入站事件的 notifyName 才是客户真名；
   // 出站回声（fromMe）里的 notifyName 是本机账号自己，不能当客户名写入。
   const channelName = (!fromMe && String(data.notifyName || data._data?.notifyName || '').trim()) || null;
