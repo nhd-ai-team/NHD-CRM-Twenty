@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { format } from 'date-fns'
-import { Search, Paperclip, Star } from 'lucide-react'
+import { Search, Paperclip, Star, Flag } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
@@ -56,7 +56,7 @@ function EmailListItem({ conv, active, onClick }) {
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
-        {conv.sourceIsFlagged && <Star size={14} fill="currentColor" style={{ color: '#e0a400', flexShrink: 0 }} aria-label="重点邮件" />}
+        {conv.sourceIsFlagged && <Flag size={15} fill="currentColor" strokeWidth={1.8} style={{ color: '#f04438', flexShrink: 0 }} aria-label="重点邮件" />}
         <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{when}</span>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subject}</div>
