@@ -44,6 +44,10 @@ const TWENTY_API_KEY = process.env.TWENTY_API_KEY || '';
 const WAHA_API_URL = process.env.WAHA_API_URL || 'http://localhost:3003';
 const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
 const WAHA_SESSION = process.env.WAHA_SESSION || 'default';
+// WAHA runs in Docker and can fetch files from middleware without sending a
+// large base64 JSON body through the Puppeteer bridge.
+const MIDDLEWARE_INTERNAL_URL = process.env.MIDDLEWARE_INTERNAL_URL || 'http://middleware:3002';
+const WAHA_SEND_TIMEOUT_MS = Math.max(15_000, Number(process.env.WAHA_SEND_TIMEOUT_MS || 90_000));
 const WAHA_WEBHOOK_URL = process.env.WAHA_WEBHOOK_URL || 'http://host.docker.internal:3002/api/whatsapp/webhook';
 const WAHA_STATUS_POLL_SECONDS = Math.max(30, Number(process.env.WAHA_STATUS_POLL_SECONDS || 60));
 const WAHA_AUTO_RESTART_ON_DISCONNECT = String(process.env.WAHA_AUTO_RESTART_ON_DISCONNECT ?? 'true').toLowerCase() !== 'false';
@@ -119,6 +123,12 @@ function publishConversationEvent(event) {
   for (const client of conversationEventClients) {
     try { client.res.write(payload); } catch { conversationEventClients.delete(client); }
   }
+}
+
+function withTimeoutSignal(timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(`WAHA request timed out after ${timeoutMs}ms`)), timeoutMs);
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -1825,8 +1835,6 @@ async function syncConversationToHistory(conversationId, { createIfMissing = fal
 
 // ── 需求二：WhatsApp 送达/已读回执 ───────────────────────────────────────────
 // 状态等级用于防止 webhook 乱序把高状态覆盖回低状态；failed 是终态，不参与升级比较。
-const DELIVERY_STATUS_RANK = { pending: 0, sent: 1, delivered: 2, read: 3 };
-
 // WAHA ack → CRM 状态。ackName 优先（语义明确），缺失时退回数字 code。
 // 依据 https://waha.devlike.pro/docs/how-to/events/
 function mapWahaAckStatus(ackName, ackCode) {
@@ -1885,7 +1893,9 @@ async function persistWhatsAppMessageAck(payload, session) {
       Number.isFinite(nextRank) ? nextRank : null],
   );
   if (!updated.rowCount) {
-    // 可能是：ack 早于消息落库 / 客户入站消息的 ack / 重复或倒退的 ack —— 都不是错误，只记录便于排查。
+    // 可能是 ack 早于消息落库。短暂缓存，recordAgentMessage 会在 INSERT 后补应用。
+    pendingWhatsAppAcks.set(externalMessageId, { status: nextStatus, code: ackCode, name: ackName });
+    setTimeout(() => pendingWhatsAppAcks.delete(externalMessageId), 10 * 60 * 1000).unref?.();
     console.warn('[whatsapp-ack] no outbound message upgraded:', externalMessageId, ackName || ackCode, 'session=', session);
     return { ignored: true, reason: 'no_upgradable_message' };
   }
@@ -6241,6 +6251,29 @@ app.post('/api/opportunities/:id/convert-to-project', requireSameSite, async (re
   }
 });
 
+// ack 可能在渠道响应之后、CRM INSERT 之前到达。暂存很短时间，避免首个回执丢失。
+const pendingWhatsAppAcks = new Map();
+const DELIVERY_STATUS_RANK = { pending: 0, sent: 1, delivered: 2, read: 3 };
+
+async function applyWhatsAppAckToMessage(externalId, ack) {
+  if (!externalId || !ack?.status) return;
+  const nextRank = DELIVERY_STATUS_RANK[ack.status];
+  await pool.query(
+    `UPDATE conv.messages SET
+       delivery_status = $2, delivery_status_code = $3, delivery_status_at = now(),
+       delivered_at = CASE WHEN $2 IN ('delivered', 'read') THEN COALESCE(delivered_at, now()) ELSE delivered_at END,
+       read_at = CASE WHEN $2 = 'read' THEN COALESCE(read_at, now()) ELSE read_at END,
+       failed_at = CASE WHEN $2 = 'failed' THEN COALESCE(failed_at, now()) ELSE failed_at END,
+       status_detail = CASE WHEN $2 = 'failed' THEN COALESCE($4, status_detail) ELSE status_detail END
+     WHERE external_msg_id = $1 AND sender_type IN ('agent', 'ai')
+       AND delivery_status <> 'failed'
+       AND ($2 = 'failed' OR COALESCE($5::int, -1) > COALESCE((CASE delivery_status
+         WHEN 'pending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 END), -1))`,
+    [externalId, ack.status, ack.code ?? null, ack.name ? `WAHA ack ${ack.name}` : null,
+      Number.isFinite(nextRank) ? nextRank : null],
+  );
+}
+
 // 记录销售在 CRM 内发出的消息。用渠道返回的消息 id 落库，与 message.any webhook 回传的
 // 同一条出站消息（fromMe=true，external_msg_id 同为该 id）去重，避免重复。
 async function recordAgentMessage(conversationId, content, externalId, options = {}) {
@@ -6264,6 +6297,11 @@ async function recordAgentMessage(conversationId, content, externalId, options =
     ]);
   await pool.query(`UPDATE conv.conversations SET last_message_at = now(), last_message_preview = $2, updated_at = now() WHERE id = $1`, [conversationId, content]);
   if (inserted.rows[0]?.id) {
+    const earlyAck = pendingWhatsAppAcks.get(externalId);
+    if (earlyAck) {
+      pendingWhatsAppAcks.delete(externalId);
+      await applyWhatsAppAckToMessage(externalId, earlyAck);
+    }
     publishConversationEvent({
       type: 'message.sent',
       conversationId,
@@ -6556,22 +6594,28 @@ async function sendWhatsAppFile(conversation, file, content, session = WAHA_SESS
       ? '/api/sendVideo'
       : '/api/sendFile';
   const filename = fileTitle(file);
-  const response = await fetch(`${WAHA_API_URL}${endpoint}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
-    body: JSON.stringify({
-      session,
-      chatId: conversation.external_chat_id,
-      caption: content || undefined,
-      file: {
-        mimetype: file.mimetype,
-        filename,
-        data: fs.readFileSync(file.path).toString('base64'),
-      },
-    }),
-  });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
+  const fileUrl = `${MIDDLEWARE_INTERNAL_URL}/api/uploads/conversation-files/${encodeURIComponent(file.filename)}?filename=${encodeURIComponent(filename)}`;
+  const timeout = withTimeoutSignal(WAHA_SEND_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${WAHA_API_URL}${endpoint}`, {
+      method: 'POST',
+      signal: timeout.signal,
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': WAHA_API_KEY },
+      body: JSON.stringify({
+        session,
+        chatId: conversation.external_chat_id,
+        caption: content || undefined,
+        file: { mimetype: file.mimetype, filename, url: fileUrl },
+      }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json();
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`WhatsApp 附件发送超时（${Math.round(WAHA_SEND_TIMEOUT_MS / 1000)}秒），请勿重复点击发送，稍后检查 WhatsApp 送达状态`);
+    throw error;
+  } finally {
+    timeout.clear();
+  }
 }
 
 app.post('/api/conversations/:id/messages', requireSameSite, uploadSingleAttachment, async (req, res) => {
