@@ -56,6 +56,7 @@ function EmailListItem({ conv, active, onClick }) {
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
+        {conv.sourceIsFlagged && <Star size={14} fill="currentColor" style={{ color: '#e0a400', flexShrink: 0 }} aria-label="重点邮件" />}
         <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{when}</span>
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subject}</div>
@@ -163,7 +164,7 @@ export function MailApp() {
               style={{ border: 'none', outline: 'none', background: 'transparent', fontSize: 12, color: 'var(--text-primary)', width: '100%' }}
             />
           </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             {[['inbox', '收件箱'], ['outbound', '发件箱'], ['flagged', '重点邮件'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
               <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{label}</button>
             ))}

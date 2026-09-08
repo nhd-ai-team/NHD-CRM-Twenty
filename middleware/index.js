@@ -2567,7 +2567,7 @@ app.get('/api/conversations', async (req, res) => {
     c.last_message_preview AS "lastMessage", c.last_message_at AS "lastMessageAt", c.lead_draft AS "leadDraft", c.taken_over_at AS "takenOverAt",
       CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
     CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.source_is_junk, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsJunk",
-    CASE WHEN c.channel = 'email' THEN (SELECT (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false)) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsFlagged",
+    CASE WHEN c.channel = 'email' THEN EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false))) ELSE false END AS "sourceIsFlagged",
     COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
       'name', COALESCE(NULLIF(TRIM(CONCAT_WS(' ', p."nameFirstName", p."nameLastName")), ''), ''),
