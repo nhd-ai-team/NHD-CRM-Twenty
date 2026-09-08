@@ -107,7 +107,7 @@
     return OBJECT_SLUGS[slug] || slug;
   }
 
-  var CHAT_SRC   = '/chat/?v=20260824-chat-ui-pollingfix';
+  var CHAT_SRC   = '/chat/?v=20260908-attachment-upload-v2';
   var LABEL      = '对话工作台';
   var NAV_ID     = '__chat_nav_item__';
   var MAIL_LABEL = '邮箱';
