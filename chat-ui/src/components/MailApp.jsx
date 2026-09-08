@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { Search, Paperclip, Flag, MoreHorizontal } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
@@ -146,6 +146,13 @@ export function MailApp() {
     await toggleCustomerMail(conversationId, selected.latestMessageId, true)
   }, [selected?.isCustomerMail, selected?.latestMessageId, toggleCustomerMail])
   const leadForm = useLeadForm({ selected, selectedId, onFormSaved: markCustomerMailAfterFormSave })
+  const customerNameOptions = useMemo(() => {
+    if (!selected) return []
+    const names = selected.messages.flatMap(msg => Array.isArray(msg.ccAddresses) ? msg.ccAddresses : [])
+      .map(address => String(address?.name || '').trim())
+      .filter(Boolean)
+    return [...new Set(names)]
+  }, [selected])
   const bottomRef = useRef(null)
   const listBottomRef = useRef(null)
 
@@ -230,7 +237,7 @@ export function MailApp() {
       </div>
 
       {/* 右：资料表单（复用） */}
-      <LeadSidebar form={leadForm} selected={selected} inline={true} open={true} />
+      <LeadSidebar form={leadForm} selected={selected} inline={true} open={true} customerNameOptions={customerNameOptions} />
     </div>
   )
 }

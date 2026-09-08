@@ -28,6 +28,47 @@ function TextField({ label, value, onChange, onBlur, type = 'text', placeholder 
     </div>
   )
 }
+
+function CustomerNameField({ value, onChange, onBlur, options = [] }) {
+  const [open, setOpen] = useState(false)
+  const visibleOptions = options.filter(Boolean)
+
+  return (
+    <div style={{ marginBottom: 10, position: 'relative' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>姓名</div>
+      <input
+        value={value ?? ''}
+        placeholder="客户姓名"
+        onFocus={() => setOpen(true)}
+        onChange={(e) => { onChange(e.target.value); setOpen(true) }}
+        onBlur={() => { setTimeout(() => setOpen(false), 140); onBlur?.() }}
+        style={inputStyle}
+      />
+      {open && visibleOptions.length > 0 && (
+        <div style={{
+          position: 'absolute', left: 0, right: 0, top: 54, zIndex: 20,
+          border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)',
+          boxShadow: '0 8px 24px rgba(0,0,0,.12)', overflow: 'hidden',
+        }}>
+          {visibleOptions.map((name) => (
+            <button
+              key={name}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(name); setOpen(false) }}
+              style={{
+                width: '100%', padding: '8px 10px', border: 'none', background: 'transparent',
+                textAlign: 'left', cursor: 'pointer', fontSize: 12.5, color: 'var(--text-primary)',
+              }}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 function CompanyField({ value, selectedId, onChange, onPick, onBlur }) {
   const [options, setOptions] = useState([])
   const [open, setOpen] = useState(false)
@@ -288,7 +329,7 @@ function FollowUpTab({ conv }) {
   )
 }
 
-export function ContactPanel({ conv, open = true, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting }) {
+export function ContactPanel({ conv, open = true, inline = false, draft = {}, onField, onFields, onBlurSave, onConvert, converting, customerNameOptions = [] }) {
   const [activeTab, setActiveTab] = useState('资料')
   const [members, setMembers] = useState([])
   const [membersLoading, setMembersLoading] = useState(false)
@@ -398,7 +439,7 @@ export function ContactPanel({ conv, open = true, inline = false, draft = {}, on
 
             {/* Editable fields — 对齐 Opportunity，失焦自动暂存 */}
             <Section title="客户信息">
-              <TextField label="姓名" value={draft.name} onChange={f('name')} onBlur={onBlurSave} placeholder="客户姓名" />
+              <CustomerNameField value={draft.name} onChange={f('name')} onBlur={onBlurSave} options={customerNameOptions} />
               <CompanyField value={draft.company} selectedId={draft.companyId} onChange={updateCompany} onPick={pickCompany} onBlur={onBlurSave} />
               <TextField label="WhatsApp" value={draft.phone} onChange={f('phone')} onBlur={onBlurSave} />
               <TextField label="邮箱" value={draft.email} onChange={f('email')} onBlur={onBlurSave} placeholder="多个邮箱可用空格/逗号分隔" />
