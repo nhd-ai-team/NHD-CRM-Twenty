@@ -31,6 +31,7 @@ const {
   fileTypeFromName,
   normalizeOutboundAttachments,
   normalizeUploadFilename,
+  publicFileUrl,
 } = require('./lib/files');
 
 const app = express();
