@@ -133,6 +133,15 @@ const upload = multer({
   }),
   limits: { fileSize: MAX_UPLOAD_BYTES },
 });
+const uploadSingleAttachment = (req, res, next) => {
+  const startedAt = process.hrtime.bigint();
+  upload.single('file')(req, res, error => {
+    if (error) return next(error);
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    if (req.file) console.info(`[attachment-timing] upload_parse=${elapsedMs.toFixed(1)}ms size=${req.file.size} name=${req.file.displayName || req.file.originalname || 'attachment'}`);
+    next();
+  });
+};
 // 下载文件名：磁盘上存的是随机名（时间戳-uuid），会导致下载保存成一串乱码般的
 // 随机串。支持用 ?filename= 传原始名，优先用它做 Content-Disposition，让下载保留
 // 真实文件名（WhatsApp 入站等会带上）；没有则回退磁盘存储名。
@@ -6482,7 +6491,7 @@ async function sendWhatsAppFile(conversation, file, content, session = WAHA_SESS
   return response.json();
 }
 
-app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file'), async (req, res) => {
+app.post('/api/conversations/:id/messages', requireSameSite, uploadSingleAttachment, async (req, res) => {
   const content = String(req.body?.content || '').trim();
   const uploadedFile = req.file || null;
   if (!content && !uploadedFile) return res.status(400).json({ error: 'content or file is required' });
@@ -6503,6 +6512,11 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
   }
 
   if (uploadedFile) {
+    const attachmentStartedAt = process.hrtime.bigint();
+    const markAttachmentTiming = (stage) => {
+      const elapsedMs = Number(process.hrtime.bigint() - attachmentStartedAt) / 1e6;
+      console.info(`[attachment-timing] channel=${conversation.channel} conversation=${conversation.id} stage=${stage} elapsed=${elapsedMs.toFixed(1)}ms`);
+    };
     if (!uploadFileAllowed(uploadedFile)) {
       deleteUploadedFileBestEffort(uploadedFile);
       return res.status(400).json({
@@ -6515,10 +6529,12 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
     const messageType = fileMessageType(uploadedFile);
     const displayContent = content || title;
     const attachment = attachmentFromUploadedFile(req, uploadedFile, content);
+    markAttachmentTiming('metadata_ready');
 
     if (conversation.channel === 'whatsapp') {
       try {
         const sent = await sendWhatsAppFile(conversation, uploadedFile, content, conversation.waha_session || WAHA_SESSION);
+        markAttachmentTiming('channel_sent');
         const messageId = await recordAgentMessage(req.params.id, displayContent, sent?.id?._serialized || sent?._data?.id?._serialized, {
           ownerId: access.viewer.userId,
           senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales',
@@ -6526,6 +6542,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
           mediaUrl,
           attachments: [attachment],
         });
+        markAttachmentTiming('crm_recorded');
         await recordAuditEvent('message.sent', {
           channel: conversation.channel,
           conversationId: req.params.id,
@@ -6536,6 +6553,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         });
         return res.status(202).json(sent);
       } catch (error) {
+        markAttachmentTiming(`channel_failed:${String(error.message).slice(0, 120)}`);
         // 需求二：附件与文本共用同一状态模型，失败同样落 failed 并留痕。
         const failedId = await recordAgentMessage(req.params.id, displayContent, null, {
           ownerId: access.viewer.userId,
@@ -6562,6 +6580,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
       try {
         const idempotencyKey = `crm-file:${req.params.id}:${Date.now()}`;
         const sent = await sendWebsiteAgentMessage(conversation, displayContent, idempotencyKey, attachment);
+        markAttachmentTiming('channel_sent');
         const messageId = await recordAgentMessage(req.params.id, displayContent, `web:agent:${sent?.messageId || idempotencyKey}`, {
           ownerId: access.viewer.userId,
           senderRole: access.viewer.isSupervisor ? 'supervisor' : 'sales',
@@ -6569,6 +6588,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
           mediaUrl,
           attachments: [attachment],
         });
+        markAttachmentTiming('crm_recorded');
         await recordAuditEvent('message.sent', {
           channel: conversation.channel,
           conversationId: req.params.id,
@@ -6579,6 +6599,7 @@ app.post('/api/conversations/:id/messages', requireSameSite, upload.single('file
         });
         return res.status(202).json(sent);
       } catch (error) {
+        markAttachmentTiming(`channel_failed:${String(error.message).slice(0, 120)}`);
         return res.status(502).json({ error: 'Website file send failed', detail: error.message });
       }
     }
