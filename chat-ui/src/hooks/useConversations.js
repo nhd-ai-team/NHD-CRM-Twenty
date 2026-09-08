@@ -233,15 +233,48 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
 
   const selected = conversations.find(c => c.id === selectedId) ?? null
 
+  async function uploadLargeAttachment(convId, file) {
+    const chunkSize = 512 * 1024
+    const total = Math.ceil(file.size / chunkSize)
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
+    let result = null
+    for (let index = 0; index < total; index += 1) {
+      const form = new FormData()
+      form.append('uploadId', uploadId)
+      form.append('index', String(index))
+      form.append('total', String(total))
+      form.append('filename', file.name)
+      form.append('mimetype', file.type || 'application/octet-stream')
+      form.append('size', String(file.size))
+      form.append('chunk', file.slice(index * chunkSize, Math.min(file.size, (index + 1) * chunkSize)), file.name)
+      const response = await fetch(`/conv-api/conversations/${convId}/attachment-chunks`, {
+        method: 'POST',
+        headers: withTwentyAuthHeaders(),
+        body: form,
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error([data.error, data.detail].filter(Boolean).join('：') || '附件上传失败')
+      result = data
+    }
+    if (!result?.complete || !result.token) throw new Error('附件上传未完成，请重试')
+    return result.token
+  }
+
   async function sendMessage(convId, content, file) {
     await requireAccessToken()
     const options = { method: 'POST' }
     if (file) {
-      const form = new FormData()
-      if (content) form.append('content', content)
-      form.append('file', file)
-      options.body = form
-      options.headers = withTwentyAuthHeaders()
+      if (file.size > 4 * 1024 * 1024) {
+        const attachmentToken = await uploadLargeAttachment(convId, file)
+        options.headers = withTwentyAuthHeaders({ 'Content-Type': 'application/json' })
+        options.body = JSON.stringify({ content, attachmentToken })
+      } else {
+        const form = new FormData()
+        if (content) form.append('content', content)
+        form.append('file', file)
+        options.body = form
+        options.headers = withTwentyAuthHeaders()
+      }
     } else {
       options.headers = withTwentyAuthHeaders({ 'Content-Type': 'application/json' })
       options.body = JSON.stringify({ content })

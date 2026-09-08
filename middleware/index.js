@@ -142,6 +142,89 @@ const uploadSingleAttachment = (req, res, next) => {
     next();
   });
 };
+
+// Cloudflare Tunnel may reject larger single requests before they reach this
+// service. Keep each public chunk below that limit, then reuse the normal
+// attachment send path after assembling the file locally.
+const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
+const attachmentUploadTokens = new Map();
+const chunkUpload = multer({
+  storage: multer.memoryStorage(),
+  // Leave room for multipart headers; the client deliberately sends 512KB chunks.
+  limits: { fileSize: 1 * 1024 * 1024 },
+});
+
+function consumeAttachmentUploadToken(token) {
+  const entry = attachmentUploadTokens.get(token);
+  if (!entry) return null;
+  clearTimeout(entry.expiryTimer);
+  attachmentUploadTokens.delete(token);
+  return {
+    path: entry.path,
+    filename: entry.filename,
+    originalname: entry.filename,
+    displayName: entry.filename,
+    mimetype: entry.mimetype,
+    size: entry.size,
+  };
+}
+
+app.post('/api/conversations/:id/attachment-chunks', requireSameSite, chunkUpload.single('chunk'), async (req, res) => {
+  const access = await requireConversationAccess(req, res, { reply: true, write: true });
+  if (!access) return;
+  if (!req.file) return res.status(400).json({ error: '缺少附件分片' });
+
+  const uploadId = String(req.body?.uploadId || '').trim();
+  const index = Number(req.body?.index);
+  const total = Number(req.body?.total);
+  const filename = normalizeUploadFilename(String(req.body?.filename || '附件'));
+  const mimetype = String(req.body?.mimetype || req.file.mimetype || 'application/octet-stream');
+  if (!/^[a-zA-Z0-9_-]{16,100}$/.test(uploadId) || !Number.isInteger(index) || !Number.isInteger(total) || index < 0 || index >= total || total < 2 || total > 100) {
+    return res.status(400).json({ error: '附件分片参数无效' });
+  }
+  if (!uploadFileAllowed({ originalname: filename, mimetype })) {
+    return res.status(400).json({ error: '当前仅支持上传 PDF、PPT、Word 和图片附件' });
+  }
+
+  const chunkDir = path.join(UPLOAD_DIR, '.chunks', uploadId);
+  await fs.promises.mkdir(chunkDir, { recursive: true });
+  await fs.promises.writeFile(path.join(chunkDir, String(index)), req.file.buffer);
+  const manifestPath = path.join(chunkDir, 'manifest.json');
+  const manifest = { filename, mimetype, total, size: Number(req.body?.size || 0) };
+  await fs.promises.writeFile(manifestPath, JSON.stringify(manifest));
+
+  const chunkNames = await fs.promises.readdir(chunkDir);
+  const received = chunkNames.filter(name => /^\d+$/.test(name)).length;
+  if (received < total) return res.json({ complete: false, received, total });
+
+  const finalFilename = `${Date.now()}-${crypto.randomUUID()}${path.extname(filename).slice(0, 24)}`;
+  const finalPath = path.join(UPLOAD_DIR, finalFilename);
+  let assembledSize = 0;
+  try {
+    for (let chunkIndex = 0; chunkIndex < total; chunkIndex += 1) {
+      const chunkPath = path.join(chunkDir, String(chunkIndex));
+      const chunk = await fs.promises.readFile(chunkPath);
+      assembledSize += chunk.length;
+      if (assembledSize > MAX_UPLOAD_BYTES) throw new Error('附件超过大小限制');
+      await fs.promises.appendFile(finalPath, chunk);
+    }
+    await fs.promises.rm(chunkDir, { recursive: true, force: true });
+  } catch (error) {
+    await fs.promises.rm(chunkDir, { recursive: true, force: true }).catch(() => {});
+    await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+    return res.status(413).json({ error: `附件不能超过 ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)}MB`, detail: error.message });
+  }
+
+  const token = `${uploadId}-${crypto.randomUUID()}`;
+  const expiryTimer = setTimeout(() => {
+    const entry = attachmentUploadTokens.get(token);
+    if (!entry) return;
+    attachmentUploadTokens.delete(token);
+    fs.promises.rm(entry.path, { force: true }).catch(() => {});
+  }, 30 * 60 * 1000);
+  attachmentUploadTokens.set(token, { path: finalPath, filename, mimetype, size: assembledSize, expiryTimer });
+  return res.json({ complete: true, token, size: assembledSize, filename });
+});
 // 下载文件名：磁盘上存的是随机名（时间戳-uuid），会导致下载保存成一串乱码般的
 // 随机串。支持用 ?filename= 传原始名，优先用它做 Content-Disposition，让下载保留
 // 真实文件名（WhatsApp 入站等会带上）；没有则回退磁盘存储名。
@@ -6493,12 +6576,17 @@ async function sendWhatsAppFile(conversation, file, content, session = WAHA_SESS
 
 app.post('/api/conversations/:id/messages', requireSameSite, uploadSingleAttachment, async (req, res) => {
   const content = String(req.body?.content || '').trim();
-  const uploadedFile = req.file || null;
-  if (!content && !uploadedFile) return res.status(400).json({ error: 'content or file is required' });
+  const attachmentToken = String(req.body?.attachmentToken || '').trim();
+  let uploadedFile = req.file || null;
+  if (!content && !uploadedFile && !attachmentToken) return res.status(400).json({ error: 'content or file is required' });
   const access = await requireConversationAccess(req, res, { reply: true, write: true });
   if (!access) {
     if (uploadedFile) deleteUploadedFileBestEffort(uploadedFile);
     return;
+  }
+  if (!uploadedFile && attachmentToken) {
+    uploadedFile = consumeAttachmentUploadToken(attachmentToken);
+    if (!uploadedFile) return res.status(400).json({ error: '附件上传已过期，请重新选择文件' });
   }
   const { conversation } = access;
   // AI 模式才要求先接管；AI 关闭时销售可直接回复/发附件（普通销售会话）。
