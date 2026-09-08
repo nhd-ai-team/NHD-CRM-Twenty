@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { Search, Paperclip, Flag, MoreHorizontal, UserRound } from 'lucide-react'
+import { Search, Paperclip, Flag, MoreHorizontal } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
@@ -175,7 +175,7 @@ export function MailApp() {
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             {[['inbox', '收件箱'], ['outbound', '发件箱'], ['flagged', '重点邮件'], ['customer', '客户邮件'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
-              <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{value === 'customer' && <UserRound size={12} />}{label}</button>
+              <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{label}</button>
             ))}
           </div>
         </div>
