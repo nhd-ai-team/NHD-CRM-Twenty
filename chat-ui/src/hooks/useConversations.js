@@ -256,14 +256,21 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       return data
     }
 
-    // The public tunnel has a small per-request limit, but independent chunks
-    // can travel concurrently. Four workers reduce tunnel round-trip latency
-    // without creating an excessive burst for Safari or the middleware.
+    // Keep enough requests in flight to hide tunnel round trips. The server
+    // still caps each multipart request below 1MB; a worker pool avoids the
+    // long pause between fixed-size batches while keeping Safari stable.
+    const concurrency = Math.min(8, total)
+    let nextIndex = 0
     let result = null
-    for (let start = 0; start < total; start += 4) {
-      const batch = await Promise.all(Array.from({ length: Math.min(4, total - start) }, (_, offset) => uploadChunk(start + offset)))
-      result = batch.find(item => item?.complete) || result
+    const worker = async () => {
+      while (nextIndex < total) {
+        const index = nextIndex
+        nextIndex += 1
+        const uploaded = await uploadChunk(index)
+        if (uploaded?.complete) result = uploaded
+      }
     }
+    await Promise.all(Array.from({ length: concurrency }, worker))
     if (!result?.complete || !result.token) throw new Error('附件上传未完成，请重试')
     return result.token
   }
