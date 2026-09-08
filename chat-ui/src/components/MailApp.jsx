@@ -41,8 +41,9 @@ function fmtSize(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-function EmailListItem({ conv, active, onClick, onToggleFlag }) {
+function EmailListItem({ conv, active, onClick, onToggleFlag, onToggleCustomerMail }) {
   const [hovered, setHovered] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const last = conv.messages[conv.messages.length - 1]
   const subject = last?.subject || conv.lastMessage || '(无主题)'
   const when = conv.lastMessageAt ? format(new Date(conv.lastMessageAt), 'MM-dd HH:mm') : ''
@@ -53,16 +54,19 @@ function EmailListItem({ conv, active, onClick, onToggleFlag }) {
       background: active ? 'var(--bg-active)' : 'transparent',
       borderLeft: active ? '2px solid var(--accent)' : '2px solid transparent',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, position: 'relative' }}>
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
         {(hovered || conv.sourceIsFlagged) && onToggleFlag && conv.latestMessageId && (
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-            {hovered && <button type="button" title="更多操作" aria-label="更多操作" onClick={event => event.stopPropagation()} style={{ border: 'none', background: 'transparent', padding: 1, color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}><MoreHorizontal size={15} /></button>}
+            {hovered && <button type="button" title="更多操作" aria-label="更多操作" onClick={event => { event.stopPropagation(); setMenuOpen(open => !open) }} style={{ border: 'none', background: 'transparent', padding: 1, color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}><MoreHorizontal size={15} /></button>}
             <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
               <Flag size={15} fill={conv.sourceIsFlagged ? 'currentColor' : 'none'} strokeWidth={1.8} />
             </button>
+            {menuOpen && onToggleCustomerMail && <div onClick={event => event.stopPropagation()} style={{ position: 'absolute', top: 24, right: 0, zIndex: 5, minWidth: 132, padding: 5, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', boxShadow: 'var(--shadow-md)' }}>
+              <button type="button" onClick={() => { setMenuOpen(false); onToggleCustomerMail(conv) }} style={{ width: '100%', border: 'none', borderRadius: 4, padding: '7px 9px', textAlign: 'left', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12 }}>{conv.isCustomerMail ? '取消客户邮件' : '设为客户邮件'}</button>
+            </div>}
           </div>
         )}
       </div>
@@ -131,7 +135,7 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
 }
 
 export function MailApp() {
-  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, loadMore, hasMore, loadingMore, totalCount } = useEmails()
+  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, loadMore, hasMore, loadingMore, totalCount } = useEmails()
   const leadForm = useLeadForm({ selected, selectedId })
   const bottomRef = useRef(null)
   const listBottomRef = useRef(null)
@@ -170,7 +174,7 @@ export function MailApp() {
             />
           </div>
           <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            {[['inbox', '收件箱'], ['outbound', '发件箱'], ['flagged', '重点邮件'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
+            {[['inbox', '收件箱'], ['outbound', '发件箱'], ['flagged', '重点邮件'], ['customer', '客户邮件'], ['junk', '垃圾邮件'], ['all', '全部']].map(([value, label]) => (
               <button key={value} type="button" onClick={() => setEmailCategory(value)} style={{ border: '1px solid var(--border)', borderRadius: 5, padding: '4px 8px', fontSize: 11, cursor: 'pointer', color: emailCategory === value ? 'var(--accent)' : 'var(--text-secondary)', background: emailCategory === value ? 'var(--bg-active)' : 'transparent' }}>{label}</button>
             ))}
           </div>
@@ -179,7 +183,7 @@ export function MailApp() {
           {filtered.length === 0
             ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>暂无邮件</div>
             : filtered.map(conv => (
-                <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} onToggleFlag={conv => toggleFlag(conv.id, conv.latestMessageId, !conv.sourceIsFlagged)} />
+                <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} onToggleFlag={conv => toggleFlag(conv.id, conv.latestMessageId, !conv.sourceIsFlagged)} onToggleCustomerMail={conv => toggleCustomerMail(conv.id, conv.latestMessageId, !conv.isCustomerMail)} />
               ))
           }
           {hasMore && <div ref={listBottomRef} style={{ padding: '10px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{loadingMore ? '正在加载…' : '继续下拉加载更多'}</div>}
