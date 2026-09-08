@@ -237,8 +237,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     const chunkSize = 512 * 1024
     const total = Math.ceil(file.size / chunkSize)
     const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
-    let result = null
-    for (let index = 0; index < total; index += 1) {
+    async function uploadChunk(index) {
       const form = new FormData()
       form.append('uploadId', uploadId)
       form.append('index', String(index))
@@ -254,7 +253,16 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error([data.error, data.detail].filter(Boolean).join('：') || '附件上传失败')
-      result = data
+      return data
+    }
+
+    // The public tunnel has a small per-request limit, but independent chunks
+    // can travel concurrently. Four workers reduce tunnel round-trip latency
+    // without creating an excessive burst for Safari or the middleware.
+    let result = null
+    for (let start = 0; start < total; start += 4) {
+      const batch = await Promise.all(Array.from({ length: Math.min(4, total - start) }, (_, offset) => uploadChunk(start + offset)))
+      result = batch.find(item => item?.complete) || result
     }
     if (!result?.complete || !result.token) throw new Error('附件上传未完成，请重试')
     return result.token
