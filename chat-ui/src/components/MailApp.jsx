@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { Search, Paperclip, Flag, MoreHorizontal } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
@@ -39,6 +39,11 @@ function fmtSize(bytes) {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+function hasCustomerFormValue(draft) {
+  return ['name', 'company', 'phone', 'email', 'country', 'ownerId', 'collaboratorId', 'companyType', 'product', 'note']
+    .some(key => String(draft?.[key] || '').trim())
 }
 
 function EmailListItem({ conv, active, onClick, onToggleFlag, onToggleCustomerMail }) {
@@ -136,7 +141,11 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
 
 export function MailApp() {
   const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, loadMore, hasMore, loadingMore, totalCount } = useEmails()
-  const leadForm = useLeadForm({ selected, selectedId })
+  const markCustomerMailAfterFormSave = useCallback(async (conversationId, draft) => {
+    if (!selected?.latestMessageId || selected.isCustomerMail || !hasCustomerFormValue(draft)) return
+    await toggleCustomerMail(conversationId, selected.latestMessageId, true)
+  }, [selected?.isCustomerMail, selected?.latestMessageId, toggleCustomerMail])
+  const leadForm = useLeadForm({ selected, selectedId, onFormSaved: markCustomerMailAfterFormSave })
   const bottomRef = useRef(null)
   const listBottomRef = useRef(null)
 

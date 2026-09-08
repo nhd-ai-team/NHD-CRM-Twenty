@@ -4,7 +4,7 @@ import { buildDraft, applyContactMethodStage } from '../utils/leadDraft'
 
 // 右侧「资料」草稿：编辑就地进行、失焦自动暂存(jsonb)，「转为线索」一键写 Opportunity。
 // 渠道工作台与邮箱视图共用同一套逻辑。
-export function useLeadForm({ selected, selectedId, onConverted, onNameChanged }) {
+export function useLeadForm({ selected, selectedId, onConverted, onNameChanged, onFormSaved }) {
   const [draft, setDraft] = useState({})
   const [converting, setConverting] = useState(false)
   const [convertConfirmOpen, setConvertConfirmOpen] = useState(false)
@@ -35,16 +35,18 @@ export function useLeadForm({ selected, selectedId, onConverted, onNameChanged }
   const saveDraft = useCallback(async (next) => {
     if (!selectedId) return
     try {
-      await fetch(`/conv-api/conversations/${selectedId}/draft`, {
+      const response = await fetch(`/conv-api/conversations/${selectedId}/draft`, {
         method: 'PUT', headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(next),
       })
+      if (!response.ok) throw new Error('资料保存失败')
+      await onFormSaved?.(selectedId, next)
     } catch { /* 暂存失败不打扰用户，下次失焦会重试 */ }
     if (!nameDirtyRef.current || typeof next.name !== 'string' || !onNameChanged) return
     try {
       await onNameChanged(selectedId, next.name.trim())
       nameDirtyRef.current = false
     } catch { /* 姓名同步失败时保留 dirty 状态，后续失焦可重试 */ }
-  }, [selectedId, onNameChanged])
+  }, [selectedId, onNameChanged, onFormSaved])
 
   const setFields = useCallback((patch, save = false) => {
     if (Object.prototype.hasOwnProperty.call(patch, 'name')) nameDirtyRef.current = true
