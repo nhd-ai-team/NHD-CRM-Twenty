@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { waitForTwentyAccessToken, withTwentyAuthHeaders, notifyTwentyAuthExpired } from '../utils/twentyAuth'
 
+const sortFlaggedFirst = items => [...items].sort((a, b) => Number(Boolean(b.sourceIsFlagged)) - Number(Boolean(a.sourceIsFlagged)))
+
 // 邮箱视图数据：复用 conv-api，仅取 channel='email' 的会话（只读，无发送/接管）。
 export function useEmails() {
   const [emails, setEmails] = useState([]) // 会话（按发件人归集），带 messages
@@ -57,8 +59,8 @@ export function useEmails() {
         const pageIds = new Set(page.map(conv => conv.id))
         const categoryChanged = loadedCategoryRef.current !== emailCategory
         loadedCategoryRef.current = emailCategory
-        if (categoryChanged) return page
-        return append ? [...current.filter(conv => !pageIds.has(conv.id)), ...page] : [...page, ...current.filter(conv => !pageIds.has(conv.id))]
+        if (categoryChanged) return sortFlaggedFirst(page)
+        return sortFlaggedFirst(append ? [...current.filter(conv => !pageIds.has(conv.id)), ...page] : [...page, ...current.filter(conv => !pageIds.has(conv.id))])
       })
       if (!append) setSelectedId(current => current && list.some(conv => conv.id === current) ? current : list[0]?.id || null)
     } finally {
@@ -97,9 +99,9 @@ export function useEmails() {
     }
     if (!response.ok) throw new Error('重点标记失败')
     const result = await response.json()
-    setEmails(current => current.map(conv => conv.id === convId
+    setEmails(current => sortFlaggedFirst(current.map(conv => conv.id === convId
       ? { ...conv, sourceIsFlagged: result.isFlagged, messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, isFlagged: result.isFlagged } : msg) }
-      : conv))
+      : conv)))
     return result
   }, [authExpired, requireAccessToken])
 

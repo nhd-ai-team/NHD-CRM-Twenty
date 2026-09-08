@@ -57,15 +57,13 @@ function EmailListItem({ conv, active, onClick, onToggleFlag }) {
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
-        {hovered && onToggleFlag && conv.latestMessageId && (
-          <>
-            <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>
+        {(hovered || conv.sourceIsFlagged) && onToggleFlag && conv.latestMessageId && (
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+            {hovered && <button type="button" title="更多操作" aria-label="更多操作" onClick={event => event.stopPropagation()} style={{ border: 'none', background: 'transparent', padding: 1, color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}><MoreHorizontal size={15} /></button>}
+            <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
               <Flag size={15} fill={conv.sourceIsFlagged ? 'currentColor' : 'none'} strokeWidth={1.8} />
             </button>
-            <button type="button" title="更多操作" aria-label="更多操作" onClick={event => event.stopPropagation()} style={{ border: 'none', background: 'transparent', padding: 1, color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>
-              <MoreHorizontal size={15} />
-            </button>
-          </>
+          </div>
         )}
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subject}</div>
