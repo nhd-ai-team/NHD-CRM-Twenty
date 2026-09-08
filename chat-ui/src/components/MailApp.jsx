@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
-import { Search, Paperclip, Flag } from 'lucide-react'
+import { Search, Paperclip, Flag, MoreHorizontal } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { LeadSidebar } from './LeadSidebar'
 import { useEmails } from '../hooks/useEmails'
@@ -42,11 +42,12 @@ function fmtSize(bytes) {
 }
 
 function EmailListItem({ conv, active, onClick, onToggleFlag }) {
+  const [hovered, setHovered] = useState(false)
   const last = conv.messages[conv.messages.length - 1]
   const subject = last?.subject || conv.lastMessage || '(无主题)'
   const when = conv.lastMessageAt ? format(new Date(conv.lastMessageAt), 'MM-dd HH:mm') : ''
   return (
-    <div onClick={onClick} style={{
+    <div onClick={onClick} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{
       display: 'flex', flexDirection: 'column', gap: 3, padding: '10px 14px', cursor: 'pointer',
       borderBottom: '1px solid var(--border-soft)',
       background: active ? 'var(--bg-active)' : 'transparent',
@@ -56,16 +57,21 @@ function EmailListItem({ conv, active, onClick, onToggleFlag }) {
         <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {conv.contact?.name || conv.contact?.email || '未知发件人'}
         </span>
-        <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{when}</span>
+        {hovered && onToggleFlag && conv.latestMessageId && (
+          <>
+            <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>
+              <Flag size={15} fill={conv.sourceIsFlagged ? 'currentColor' : 'none'} strokeWidth={1.8} />
+            </button>
+            <button type="button" title="更多操作" aria-label="更多操作" onClick={event => event.stopPropagation()} style={{ border: 'none', background: 'transparent', padding: 1, color: 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>
+              <MoreHorizontal size={15} />
+            </button>
+          </>
+        )}
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subject}</div>
       <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
         <span style={{ fontSize: 10.5, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{conv.contact?.email}</span>
-        {onToggleFlag && conv.latestMessageId && (
-          <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex', flexShrink: 0 }}>
-            <Flag size={15} fill={conv.sourceIsFlagged ? 'currentColor' : 'none'} strokeWidth={1.8} />
-          </button>
-        )}
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{when}</span>
       </div>
     </div>
   )
