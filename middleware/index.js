@@ -156,11 +156,11 @@ const uploadSingleAttachment = (req, res, next) => {
 // Cloudflare Tunnel may reject larger single requests before they reach this
 // service. Keep each public chunk below that limit, then reuse the normal
 // attachment send path after assembling the file locally.
-const ATTACHMENT_CHUNK_BYTES = 512 * 1024;
+const ATTACHMENT_CHUNK_BYTES = 900 * 1024;
 const attachmentUploadTokens = new Map();
 const chunkUpload = multer({
   storage: multer.memoryStorage(),
-  // Leave room for multipart headers; the client deliberately sends 512KB chunks.
+  // Keep multipart requests below the proxy's 1MB ceiling while reducing round trips.
   limits: { fileSize: 1 * 1024 * 1024 },
 });
 

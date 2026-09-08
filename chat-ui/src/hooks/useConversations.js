@@ -234,7 +234,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const selected = conversations.find(c => c.id === selectedId) ?? null
 
   async function uploadLargeAttachment(convId, file) {
-    const chunkSize = 512 * 1024
+    const chunkSize = 900 * 1024
     const total = Math.ceil(file.size / chunkSize)
     const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
     async function uploadChunk(index) {
