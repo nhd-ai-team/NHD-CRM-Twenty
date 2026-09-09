@@ -2179,7 +2179,7 @@ async function getDingtalkAccessToken() {
   return dingtalkAccessTokenCache.value;
 }
 
-async function resolveDingtalkRecipients(conversation) {
+async function resolveDingtalkRecipients(conversation, isFirstCustomerMessage) {
   const crmUserIds = [];
   if (conversation.status === 'takeover' && conversation.agent_id) {
     const schema = await getWorkspaceSchema();
@@ -2187,7 +2187,7 @@ async function resolveDingtalkRecipients(conversation) {
     if (result.rows[0]?.userId) crmUserIds.push(result.rows[0].userId);
   } else if (conversation.owner_id) {
     crmUserIds.push(conversation.owner_id);
-  } else {
+  } else if (isFirstCustomerMessage) {
     crmUserIds.push(...DINGTALK_SALES_USER_IDS);
   }
   return [...new Set(crmUserIds.map(dingtalkMappedUserId).filter(Boolean))];
@@ -2195,7 +2195,7 @@ async function resolveDingtalkRecipients(conversation) {
 
 async function enqueueWebsiteDingtalkNotifications({ conversation, messageId, visitorName, content, isFirstCustomerMessage }) {
   if (!DINGTALK_ENABLED) return;
-  const recipients = await resolveDingtalkRecipients(conversation);
+  const recipients = await resolveDingtalkRecipients(conversation, isFirstCustomerMessage);
   if (!recipients.length) {
     console.warn('[dingtalk] no mapped recipients for website message:', messageId);
     return;
