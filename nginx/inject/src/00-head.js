@@ -128,6 +128,7 @@
   var EMAILS_SETTINGS_CARD_ID = '__settings_emails_card__';
   var CHANNELS_SETTINGS_CARD_ID = '__settings_channels_card__';
   var WEBSITE_RELATED_MODAL_ID = '__website_related_modal__';
+  var LEAD_DUPLICATE_MODAL_ID = '__lead_duplicate_modal__';
   // 权限管理（仅管理员可见）
   var RBAC_SETTINGS_LABEL = '权限';
   var RBAC_SETTINGS_PATH = '/settings/accounts/permissions';

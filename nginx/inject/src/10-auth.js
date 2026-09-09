@@ -44,6 +44,83 @@
     return { Opportunity: 'opportunity', Person: 'person', XiangMu: 'xiangMu' }[match[1]] || '';
   }
 
+  function extractLeadDedupeInput(value) {
+    var result = { email: '', phone: '', websiteUrl: '' };
+    function visit(item) {
+      if (!item || typeof item !== 'object') return;
+      if (item.primaryEmail && !result.email) result.email = String(item.primaryEmail).trim();
+      if (item.primaryPhoneNumber && !result.phone) result.phone = String(item.primaryPhoneNumber).trim();
+      if (item.primaryLinkUrl && !result.websiteUrl) result.websiteUrl = String(item.primaryLinkUrl).trim();
+      for (var key in item) {
+        if (Object.prototype.hasOwnProperty.call(item, key)) visit(item[key]);
+      }
+    }
+    visit(value);
+    return result;
+  }
+
+  function closeLeadDuplicateModal() {
+    var existing = document.getElementById(LEAD_DUPLICATE_MODAL_ID);
+    if (existing) existing.remove();
+  }
+
+  function showLeadDuplicateModal(result) {
+    return new Promise(function (resolve) {
+      closeLeadDuplicateModal();
+      var overlay = document.createElement('div');
+      overlay.id = LEAD_DUPLICATE_MODAL_ID;
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:100005;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:18px;';
+      var card = document.createElement('div');
+      card.style.cssText = 'width:min(560px,100%);max-height:min(620px,90vh);display:flex;flex-direction:column;border-radius:10px;background:#fff;box-shadow:0 18px 50px rgba(0,0,0,.28);overflow:hidden;font-family:inherit;color:#18181b;';
+      var rows = (result.duplicates || []).map(function (item) {
+        return '<div style="padding:10px 0;border-top:1px solid #f0f0f1">' +
+          '<div style="font-size:13px;font-weight:700;color:#18181b">' + escapeHtml(item.name || item.leadNo || '未命名线索') + '</div>' +
+          '<div style="margin-top:4px;font-size:11.5px;color:#71717a;line-height:1.6">匹配：' + escapeHtml(item.matchedBy || '身份字段') +
+            (item.leadNo ? '　线索ID：' + escapeHtml(item.leadNo) : '') + '</div>' +
+        '</div>';
+      }).join('');
+      card.innerHTML =
+        '<div style="padding:18px 20px 12px;border-bottom:1px solid #eee">' +
+          '<div style="font-size:16px;font-weight:700">发现疑似重复线索</div>' +
+          '<div style="margin-top:7px;font-size:12.5px;line-height:1.65;color:#52525b">当前填写的邮箱、WhatsApp/手机号或官网链接，已存在于以下线索。请确认是否继续保存。</div>' +
+        '</div>' +
+        '<div style="padding:12px 20px;overflow:auto;flex:1">' + rows + '</div>' +
+        '<div style="display:flex;justify-content:flex-end;gap:8px;padding:13px 20px 17px;border-top:1px solid #eee">' +
+          '<button data-lead-dup-cancel style="height:32px;padding:0 14px;border-radius:6px;border:1px solid #d4d4d8;background:#fff;color:#52525b;cursor:pointer;font-size:12.5px;font-weight:600">取消保存</button>' +
+          '<button data-lead-dup-continue style="height:32px;padding:0 14px;border-radius:6px;border:1px solid #2563eb;background:#2563eb;color:#fff;cursor:pointer;font-size:12.5px;font-weight:700">仍然保存</button>' +
+        '</div>';
+      function done(allow) { overlay.remove(); resolve(allow); }
+      overlay.appendChild(card);
+      overlay.addEventListener('click', function (event) { if (event.target === overlay) done(false); });
+      card.querySelector('[data-lead-dup-cancel]').addEventListener('click', function () { done(false); });
+      card.querySelector('[data-lead-dup-continue]').addEventListener('click', function () { done(true); });
+      document.body.appendChild(overlay);
+    });
+  }
+
+  function checkLeadDuplicatesBeforeMutation(requestBody) {
+    var query = String(requestBody.query || '');
+    if (!/\b(?:create|update)Opportunity\b/.test(query)) return Promise.resolve(true);
+    var variables = requestBody.variables || {};
+    var input = extractLeadDedupeInput(variables.data || {});
+    // 仅在本次 mutation 携带明确身份字段时检查，普通阶段/负责人修改不弹窗。
+    if (!input.email && !input.phone && !input.websiteUrl) return Promise.resolve(true);
+    return window.fetch('/conv-api/opportunities/check-duplicates', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recordId: variables.id || '', email: input.email, phone: input.phone, websiteUrl: input.websiteUrl }),
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) {
+        if (!response.ok || !data.requiresConfirmation) return true;
+        return showLeadDuplicateModal(data);
+      });
+    }).catch(function (error) {
+      // 去重服务异常时放行原始保存，避免影响线索主流程；错误写入控制台便于排查。
+      console.warn('[opportunity-dedup] check unavailable, allow save:', error && error.message);
+      return true;
+    });
+  }
+
   function closeWebsiteRelatedModal() {
     var existing = document.getElementById(WEBSITE_RELATED_MODAL_ID);
     if (existing) existing.remove();
@@ -151,17 +228,28 @@
     var originalFetch = window.fetch;
     if (typeof originalFetch === 'function') {
       window.fetch = function () {
+        var fetchThis = this;
+        var fetchArgs = arguments;
         try {
-          var input = arguments[0];
-          var init = arguments[1] || {};
+          var input = fetchArgs[0];
+          var init = fetchArgs[1] || {};
           var token = extractBearer(getHeaderValue(init.headers, 'authorization'));
           if (!token && input && input.headers) token = extractBearer(getHeaderValue(input.headers, 'authorization'));
           rememberAuthToken(token);
         } catch (e) {}
-        var result = originalFetch.apply(this, arguments);
-        var input = arguments[0];
-        var init = arguments[1] || {};
-        return result.then(function (response) {
+        var input = fetchArgs[0];
+        var init = fetchArgs[1] || {};
+        var requestBody = null;
+        try {
+          if (init && typeof init.body === 'string') requestBody = JSON.parse(init.body);
+        } catch (e) {}
+        var gate = requestBody && String(input || '').indexOf('/graphql') !== -1
+          ? checkLeadDuplicatesBeforeMutation(requestBody)
+          : Promise.resolve(true);
+        return gate.then(function (allow) {
+          if (!allow) return new Response(JSON.stringify({ errors: [{ message: '用户取消保存重复线索' }] }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+          return originalFetch.apply(fetchThis, fetchArgs);
+        }).then(function (response) {
           inspectWebsiteMutation(input, init, response);
           return response;
         });

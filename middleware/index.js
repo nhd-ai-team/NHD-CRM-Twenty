@@ -5208,6 +5208,57 @@ const CUSTOMER_WEBSITE_OBJECTS = {
   xiangMu: { label: '项目' },
 };
 
+// 线索板块的保存前去重探测：只检查明确身份字段，不自动合并或阻止保存。
+// 官网链接按规范化域名比较，避免协议、www、端口和路径差异造成漏检。
+app.post('/api/opportunities/check-duplicates', requireSameSite, async (req, res) => {
+  const authenticated = await requireAuthenticatedTwentyUser(req, res);
+  if (!authenticated) return;
+  const recordId = String(req.body?.recordId || '').trim();
+  const email = firstValidEmail(req.body?.email);
+  const phone = phoneDigits(req.body?.phone);
+  const websiteUrl = String(req.body?.websiteUrl || '').trim();
+  if (recordId && !/^[0-9a-f-]{36}$/i.test(recordId)) {
+    return res.status(400).json({ error: '线索 ID 格式无效' });
+  }
+
+  try {
+    const schema = await getWorkspaceSchema();
+    const domainResult = await pool.query('SELECT conv.normalized_website_domain($1) AS domain', [websiteUrl]);
+    const domain = domainResult.rows[0]?.domain || null;
+    if (!email && !phone && !domain) return res.json({ duplicates: [], requiresConfirmation: false });
+
+    const result = await pool.query(
+      `SELECT id,
+              COALESCE(NULLIF(name, ''), '未命名线索') AS name,
+              "leadNo" AS "leadNo",
+              "youXiangPrimaryEmail" AS email,
+              "whatsappPrimaryPhoneNumber" AS phone,
+              "guanWangLianJiePrimaryLinkUrl" AS "websiteUrl",
+              "createdAt" AS "createdAt",
+              array_to_string(array_remove(ARRAY[
+                CASE WHEN $1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text) THEN '邮箱' END,
+                CASE WHEN $2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text THEN 'WhatsApp/手机号' END,
+                CASE WHEN $3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text THEN '官网链接' END
+              ]::text[], NULL), '、') AS "matchedBy"
+         FROM ${schema}.opportunity
+        WHERE "deletedAt" IS NULL
+          AND ($4::uuid IS NULL OR id <> $4::uuid)
+          AND (
+            ($1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text))
+            OR ($2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text)
+            OR ($3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text)
+          )
+        ORDER BY "createdAt" DESC
+        LIMIT 20`,
+      [email || '', phone, domain, recordId || null],
+    );
+    res.json({ duplicates: result.rows, requiresConfirmation: result.rowCount > 0 });
+  } catch (error) {
+    console.error('[opportunity-dedup] check failed:', error.message);
+    res.status(500).json({ error: '线索重复检查失败', detail: error.message });
+  }
+});
+
 async function normalizedWebsiteDomain(client, websiteUrl) {
   const result = await client.query(
     'SELECT conv.normalized_website_domain($1) AS domain',
