@@ -14,27 +14,6 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
         AND ${alias}.waha_session = ca.provider_session
     )`;
 
-  if (
-    options.allowPrivilegedAllChannels
-    && ['admin', 'boss', 'manager'].includes(viewer.role)
-  ) {
-    return {
-      sql: `(${memberParam}::text IS NOT NULL OR ${userParam}::text IS NOT NULL OR TRUE)`,
-      params: [viewer.workspaceMemberId, viewer.userId],
-    };
-  }
-
-  // WhatsApp 是个人渠道：不管 admin/boss/sales，都只能看到自己绑定 Session 下的会话。
-  // 不使用 owner_id/channel_owner_id 兜底，避免历史负责人字段错配造成跨账号串看。
-  // 其他渠道仍保留 v2.1 角色规则：admin/boss 可看全部，销售按归属/接管关系看。
-  if (viewer.role === 'admin' || viewer.role === 'boss') {
-    // (${memberParam}::text IS NOT NULL OR TRUE) 恒真，仅用于给 $memberParam 指定类型，
-    // 避免该分支不引用 memberParam 时 PG 报 "could not determine data type of parameter"。
-    return {
-      sql: `((${memberParam}::text IS NOT NULL OR TRUE) AND (${alias}.channel <> 'whatsapp' OR (${alias}.channel = 'whatsapp' AND ${ownWhatsAppSql})))`,
-      params: [viewer.workspaceMemberId, viewer.userId],
-    };
-  }
   const linkedCrmAssigneeSql = /^workspace_[a-z0-9]+$/.test(workspaceSchema)
     ? `OR EXISTS (
           SELECT 1
@@ -71,6 +50,43 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
             )
         )`
     : '';
+
+  // 沟通状态是管理视图：只有 boss/主管可看全部会话；普通销售必须与会话关联。
+  // 这条规则不能复用工作台的 website/email 公共入口规则，否则销售会看到全量历史。
+  if (options.allowPrivilegedAllChannels && ['boss', 'manager'].includes(viewer.role)) {
+    return {
+      sql: `(${memberParam}::text IS NOT NULL OR ${userParam}::text IS NOT NULL OR TRUE)`,
+      params: [viewer.workspaceMemberId, viewer.userId],
+    };
+  }
+
+  // WhatsApp 是个人渠道：不管 admin/boss/sales，都只能看到自己绑定 Session 下的会话。
+  // 不使用 owner_id/channel_owner_id 兜底，避免历史负责人字段错配造成跨账号串看。
+  if (!options.allowPrivilegedAllChannels && (viewer.role === 'admin' || viewer.role === 'boss')) {
+    return {
+      sql: `((${memberParam}::text IS NOT NULL OR TRUE) AND (${alias}.channel <> 'whatsapp' OR (${alias}.channel = 'whatsapp' AND ${ownWhatsAppSql})))`,
+      params: [viewer.workspaceMemberId, viewer.userId],
+    };
+  }
+
+  const relatedConversationSql = `(
+    ${alias}.owner_id = ${userParam}
+    OR ${alias}.agent_id = ${memberParam}
+    OR EXISTS (
+      SELECT 1
+      FROM conv.conversation_participants cp
+      WHERE cp.conversation_id = ${alias}.id
+        AND cp.workspace_member_id = ${memberParam}
+    )
+    ${linkedCrmAssigneeSql}
+  )`;
+  if (options.allowPrivilegedAllChannels) {
+    return {
+      sql: `((${alias}.channel = 'whatsapp' AND ${ownWhatsAppSql}) OR (${alias}.channel <> 'whatsapp' AND ${relatedConversationSql}))`,
+      params: [viewer.workspaceMemberId, viewer.userId],
+    };
+  }
+
   const assignedChannelVisibilitySql = `(
       ${alias}.channel IN ('instagram', 'facebook')
       AND (

@@ -47,3 +47,33 @@ test('communication status can explicitly allow privileged users to see all chan
   assert.doesNotMatch(visibility.sql, /channel_accounts/);
   assert.deepEqual(visibility.params, ['boss-member', 'boss-user']);
 });
+
+test('communication status restricts ordinary sales to related conversations', () => {
+  const visibility = conversationVisibilityWhere({
+    role: 'sales',
+    workspaceMemberId: 'sales-member',
+    userId: 'sales-user',
+  }, 'c', 1, { allowPrivilegedAllChannels: true });
+
+  assert.match(visibility.sql, /c\.owner_id = \$2/);
+  assert.match(visibility.sql, /c\.agent_id = \$1/);
+  assert.match(visibility.sql, /conversation_participants/);
+  assert.doesNotMatch(visibility.sql, /c\.channel IN \('website', 'email'\)/);
+  assert.deepEqual(visibility.params, ['sales-member', 'sales-user']);
+});
+
+test('communication status grants full visibility only to boss and supervisor', () => {
+  for (const role of ['boss', 'manager']) {
+    const visibility = conversationVisibilityWhere({
+      role,
+      workspaceMemberId: `${role}-member`,
+      userId: `${role}-user`,
+    }, 'c', 1, { allowPrivilegedAllChannels: true });
+    assert.doesNotMatch(visibility.sql, /conversation_participants/);
+    assert.doesNotMatch(visibility.sql, /channel_accounts/);
+  }
+  const admin = conversationVisibilityWhere({
+    role: 'admin', workspaceMemberId: 'admin-member', userId: 'admin-user',
+  }, 'c', 1, { allowPrivilegedAllChannels: true });
+  assert.match(admin.sql, /conversation_participants/);
+});
