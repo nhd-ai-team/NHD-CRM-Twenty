@@ -1829,12 +1829,20 @@ async function buildHistoryPayload(conversationId) {
     `SELECT c.id, c.channel, c.status, c.owner_id, c.last_message_at, c.last_message_preview,
             ct.display_name, ct.phone,
             wm.id AS "ownerMemberId",
+            collab_wm.id AS "collaboratorMemberId",
+            collab2_wm.id AS "secondCollaboratorMemberId",
             (SELECT count(*) FROM conv.messages m WHERE m.conversation_id = c.id) AS message_count,
             (SELECT bool_or(m.sender_type = 'agent') FROM conv.messages m WHERE m.conversation_id = c.id) AS has_human
        FROM conv.conversations c
        LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
        LEFT JOIN ${workspaceSchema}."workspaceMember" wm
               ON wm."userId"::text = c.owner_id AND wm."deletedAt" IS NULL
+       LEFT JOIN ${workspaceSchema}."opportunity" o
+              ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
+       LEFT JOIN ${workspaceSchema}."workspaceMember" collab_wm
+              ON collab_wm.id = o."xieBanRenId" AND collab_wm."deletedAt" IS NULL
+       LEFT JOIN ${workspaceSchema}."workspaceMember" collab2_wm
+              ON collab2_wm.id = o."xieZuoRen2Id" AND collab2_wm."deletedAt" IS NULL
       WHERE c.id = $1`,
     [conversationId],
   );
@@ -1850,6 +1858,8 @@ async function buildHistoryPayload(conversationId) {
     // 2026-08-19：负责人字段升级为 RELATION→workspaceMember（ownerMember）。
     // conv.owner_id 存的是 userId，须转成 workspaceMemberId 才能挂 RELATION；查不到则留空。
     ownerMemberId: c.ownerMemberId || null,
+    xieBanRenId: c.collaboratorMemberId || null,
+    xieZuoRen2Id: c.secondCollaboratorMemberId || null,
     lastMessageAt: c.last_message_at ? new Date(c.last_message_at).toISOString() : null,
     lastMessagePreview: c.last_message_preview ? String(c.last_message_preview).slice(0, 1000) : null,
     messageCount: Number(c.message_count) || 0,
