@@ -43,6 +43,8 @@ curl -i http://127.0.0.1:3000/conv-api/events
 
 登录态下应返回 `text/event-stream`；未登录应返回 `401`。发布后还需从 WhatsApp 和官网 Widget 各发送一条测试消息，确认工作台即时刷新。`/conv-api/` 必须保持 `proxy_buffering off`，否则 SSE 会被代理缓存。
 
+钉钉官网通知检查：确认 middleware 日志出现 `website work notifications enabled`；向官网客服发送一条首条访客消息，确认指定销售收到工作通知；重复投递同一事件键不得产生重复通知；临时让钉钉接口失败时，`conv.dingtalk_notification_outbox` 应保留 `retry_pending`，恢复后自动重试并最终标记 `sent`。工作通知和服务窗单聊是两条不同链路，未接入服务窗前不得把工作通知当作独立聊天窗口验收。
+
 Nginx 检查：
 
 ```bash
