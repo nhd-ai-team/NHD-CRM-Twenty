@@ -86,6 +86,15 @@ const IMAP_SYNC_MAILBOXES = String(process.env.IMAP_SYNC_MAILBOXES || `${IMAP_MA
 const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 60));
 const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
 const UPLOAD_DIR = process.env.CONVERSATION_UPLOAD_DIR || '/app/uploads/conversation-files';
+const DINGTALK_ENABLED = String(process.env.DINGTALK_ENABLED || 'false').toLowerCase() === 'true';
+const DINGTALK_APP_KEY = process.env.DINGTALK_APP_KEY || '';
+const DINGTALK_APP_SECRET = process.env.DINGTALK_APP_SECRET || '';
+const DINGTALK_AGENT_ID = process.env.DINGTALK_AGENT_ID || '';
+const DINGTALK_SALES_USER_IDS = String(process.env.DINGTALK_SALES_USER_IDS || '').split(',').map(v => v.trim()).filter(Boolean);
+let dingtalkUserMap = {};
+try { dingtalkUserMap = JSON.parse(process.env.DINGTALK_USER_MAP_JSON || '{}'); } catch (error) { console.error('[dingtalk] invalid DINGTALK_USER_MAP_JSON:', error.message); }
+let dingtalkAccessTokenCache = { value: '', expiresAt: 0 };
+let dingtalkNotificationRunning = false;
 const MAX_UPLOAD_BYTES = Math.max(1, Number(process.env.CONVERSATION_MAX_UPLOAD_MB || 25)) * 1024 * 1024;
 const ALLOWED_UPLOAD_EXTENSIONS = new Set([
   '.pdf',
@@ -1138,6 +1147,24 @@ async function ensureSchema() {
       last_error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+    CREATE TABLE IF NOT EXISTS conv.dingtalk_notification_outbox (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      event_key TEXT NOT NULL,
+      recipient_user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      crm_url TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_error TEXT,
+      sent_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(event_key, recipient_user_id));
+    CREATE INDEX IF NOT EXISTS dingtalk_notification_outbox_due_idx
+      ON conv.dingtalk_notification_outbox(status, next_attempt_at)
+      WHERE status IN ('pending', 'retry_pending');
     ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE conv.outbound_requests ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
@@ -2136,6 +2163,102 @@ async function resolveGeoByIp(ip) {
   return result;
 }
 
+function dingtalkMappedUserId(crmUserId) {
+  const value = dingtalkUserMap[String(crmUserId || '').trim()];
+  if (!value) return '';
+  return typeof value === 'string' ? value.trim() : String(value.userId || value.userid || '').trim();
+}
+
+async function getDingtalkAccessToken() {
+  if (!DINGTALK_APP_KEY || !DINGTALK_APP_SECRET) throw new Error('DingTalk app credentials are not configured');
+  if (dingtalkAccessTokenCache.value && dingtalkAccessTokenCache.expiresAt > Date.now() + 60_000) return dingtalkAccessTokenCache.value;
+  const response = await fetch('https://oapi.dingtalk.com/gettoken?' + new URLSearchParams({ appkey: DINGTALK_APP_KEY, appsecret: DINGTALK_APP_SECRET }));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.errcode) throw new Error(`DingTalk token failed: ${data.errmsg || response.status}`);
+  dingtalkAccessTokenCache = { value: data.access_token, expiresAt: Date.now() + Math.max(60, Number(data.expires_in || 7200) - 60) * 1000 };
+  return dingtalkAccessTokenCache.value;
+}
+
+async function resolveDingtalkRecipients(conversation) {
+  const crmUserIds = [];
+  if (conversation.status === 'takeover' && conversation.agent_id) {
+    const schema = await getWorkspaceSchema();
+    const result = await pool.query(`SELECT "userId" FROM ${schema}."workspaceMember" WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`, [conversation.agent_id]);
+    if (result.rows[0]?.userId) crmUserIds.push(result.rows[0].userId);
+  } else if (conversation.owner_id) {
+    crmUserIds.push(conversation.owner_id);
+  } else {
+    crmUserIds.push(...DINGTALK_SALES_USER_IDS);
+  }
+  return [...new Set(crmUserIds.map(dingtalkMappedUserId).filter(Boolean))];
+}
+
+async function enqueueWebsiteDingtalkNotifications({ conversation, messageId, visitorName, content, isFirstCustomerMessage }) {
+  if (!DINGTALK_ENABLED) return;
+  const recipients = await resolveDingtalkRecipients(conversation);
+  if (!recipients.length) {
+    console.warn('[dingtalk] no mapped recipients for website message:', messageId);
+    return;
+  }
+  const title = isFirstCustomerMessage ? '官网客服收到新访客' : '官网客服收到新消息';
+  const summary = String(content || '').replace(/\s+/g, ' ').trim().slice(0, 180) || '（附件或无文本内容）';
+  const text = `### ${title}\n\n客户：${visitorName || '官网访客'}\n\n消息：${summary}\n\n[打开 CRM 会话](https://crm.chinanhd.com/chat/)`;
+  await Promise.all(recipients.map(recipient => pool.query(
+    `INSERT INTO conv.dingtalk_notification_outbox(event_key, recipient_user_id, title, content, crm_url)
+     VALUES ($1, $2, $3, $4, $5) ON CONFLICT(event_key, recipient_user_id) DO NOTHING`,
+    [`website:${messageId}`, recipient, title, text, 'https://crm.chinanhd.com/chat/'],
+  )));
+}
+
+async function sendDingtalkWorkNotification(row) {
+  const token = await getDingtalkAccessToken();
+  const response = await fetch(`https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2?access_token=${encodeURIComponent(token)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent_id: DINGTALK_AGENT_ID,
+      userid_list: row.recipient_user_id,
+      msg: { msgtype: 'markdown', markdown: { title: row.title, text: row.content } },
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.errcode) throw new Error(`DingTalk notification failed: ${data.errmsg || response.status}`);
+}
+
+async function processDingtalkNotificationOutbox() {
+  if (!DINGTALK_ENABLED || dingtalkNotificationRunning) return;
+  dingtalkNotificationRunning = true;
+  try {
+    const result = await pool.query(
+      `SELECT id, recipient_user_id, title, content
+         FROM conv.dingtalk_notification_outbox
+        WHERE status IN ('pending', 'retry_pending') AND next_attempt_at <= now()
+        ORDER BY created_at LIMIT 20`,
+    );
+    for (const row of result.rows) {
+      const claimed = await pool.query(
+        `UPDATE conv.dingtalk_notification_outbox
+            SET status = 'sending', attempts = attempts + 1, updated_at = now()
+          WHERE id = $1 AND status IN ('pending', 'retry_pending')
+        RETURNING attempts`, [row.id],
+      );
+      if (!claimed.rowCount) continue;
+      try {
+        await sendDingtalkWorkNotification(row);
+        await pool.query(`UPDATE conv.dingtalk_notification_outbox SET status = 'sent', sent_at = now(), updated_at = now() WHERE id = $1`, [row.id]);
+      } catch (error) {
+        const attempts = Number(claimed.rows[0].attempts || 1);
+        const terminal = attempts >= 5;
+        await pool.query(
+          `UPDATE conv.dingtalk_notification_outbox
+              SET status = $2, last_error = $3, next_attempt_at = now() + ($4 * INTERVAL '1 minute'), updated_at = now()
+            WHERE id = $1`, [row.id, terminal ? 'failed' : 'retry_pending', error.message, Math.min(30, 2 ** Math.min(attempts, 4))],
+        );
+        console.error('[dingtalk] notification attempt failed:', error.message);
+      }
+    }
+  } finally { dingtalkNotificationRunning = false; }
+}
+
 async function persistWebsiteMessage(body, clientIp) {
   const visitorId = String(body.visitorId || body.sessionId || '').trim();
   // external_chat_id 优先用 ai-service 的 conversationId，供 CRM 出站回推到同一会话。
@@ -2207,6 +2330,11 @@ async function persistWebsiteMessage(body, clientIp) {
       VALUES ('website', $1, $2) ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
       DO UPDATE SET updated_at = now() RETURNING *`, [sessionId, contact.id]);
     const conversation = conversationResult.rows[0];
+    const customerCount = await client.query(
+      `SELECT count(*)::int AS count FROM conv.messages WHERE conversation_id = $1 AND sender_type = 'customer'`,
+      [conversation.id],
+    );
+    const isFirstCustomerMessage = Number(customerCount.rows[0]?.count || 0) === 0;
     // 按发送方给 external_msg_id 加前缀，避免访客/AI 消息 id 撞车导致漏存。
     const dedupeId = externalMessageId ? `web:${sessionId}:${senderType}:${externalMessageId}` : null;
     const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, attachments, sent_at)
@@ -2235,6 +2363,13 @@ async function persistWebsiteMessage(body, clientIp) {
       const aiMessageId = dedupeId || `web:${conversation.id}:${inserted.rows[0].id}`;
       requestAiReplyIfAllowed(conversation, aiMessageId, content)
         .catch(error => console.error('[ai] website auto reply failed:', error.message));
+      enqueueWebsiteDingtalkNotifications({
+        conversation,
+        messageId: inserted.rows[0].id,
+        visitorName: displayName,
+        content,
+        isFirstCustomerMessage,
+      }).catch(error => console.error('[dingtalk] enqueue website notification failed:', error.message));
     }
     if (inserted.rowCount) {
       publishConversationEvent({
@@ -7108,6 +7243,13 @@ async function startServer() {
   setInterval(() => processPendingSalesHandoffs(), 1000);
   // 主动 WhatsApp 外发失败补偿：短退避重试，最终失败保留记录供审计/人工处理。
   setInterval(() => processPendingOutboundWhatsApp(), 5000);
+  if (DINGTALK_ENABLED) {
+    console.log(`[dingtalk] website work notifications enabled; mapped users=${Object.keys(dingtalkUserMap).length}`);
+    processDingtalkNotificationOutbox().catch(error => console.error('[dingtalk] initial outbox scan failed:', error.message));
+    setInterval(() => processDingtalkNotificationOutbox().catch(error => console.error('[dingtalk] outbox scan failed:', error.message)), 5000);
+  } else {
+    console.log('[dingtalk] website work notifications disabled (set DINGTALK_ENABLED=true after configuring the internal app)');
+  }
   // 启动后及每分钟清理已离线销售仍占用的官网人工会话。
   releaseWebsiteTakeoversForOfflineAgents().catch(() => {});
   setInterval(() => releaseWebsiteTakeoversForOfflineAgents().catch(() => {}), 60 * 1000);
