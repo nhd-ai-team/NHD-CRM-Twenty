@@ -151,6 +151,8 @@ export function MailApp() {
     const names = selected.messages.flatMap(msg => Array.isArray(msg.ccAddresses) ? msg.ccAddresses : [])
       .map(address => String(address?.name || '').trim())
       .filter(Boolean)
+      .map(name => name.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim())
+      .filter(Boolean)
     return [...new Set(names)]
   }, [selected])
   const bottomRef = useRef(null)

@@ -31,7 +31,7 @@ function TextField({ label, value, onChange, onBlur, type = 'text', placeholder 
 
 function CustomerNameField({ value, onChange, onBlur, options = [] }) {
   const [open, setOpen] = useState(false)
-  const visibleOptions = options.filter(Boolean)
+  const visibleOptions = options.filter(Boolean).map(name => String(name).trim().replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')).filter(Boolean)
 
   return (
     <div style={{ marginBottom: 10, position: 'relative' }}>
