@@ -4,8 +4,8 @@
 -- The protected business field IDs are not changed.
 --
 -- Policy:
---   * 总经理 / 销售主管: read all communication-status rows, read-only.
---   * 销售 / Admin: read-only rows whose ownerMember is the current member.
+--   * 总经理 / 销售主管 / Admin: read all communication-status rows, read-only.
+--   * 销售: read-only rows whose ownerMember/collaborator is the current member.
 --   * No role may update, soft-delete, or destroy these rows.
 --
 -- This migration is intentionally data-preserving and idempotent.
@@ -116,7 +116,7 @@ BEGIN
 
     -- A missing predicate means full visibility in native Twenty. Only the
     -- two management roles intentionally use that behavior here.
-    IF v_role.label NOT IN ('总经理', '销售主管') THEN
+    IF v_role.label NOT IN ('Admin', '总经理', '销售主管') THEN
       DELETE FROM core."rowLevelPermissionPredicate"
       WHERE "workspaceId" = v_workspace_id
         AND "roleId" = v_role.id
