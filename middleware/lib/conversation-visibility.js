@@ -51,9 +51,9 @@ function conversationVisibilityWhere(viewer, alias = 'c', startIndex = 1, option
         )`
     : '';
 
-  // 沟通状态是管理视图：只有 boss/主管可看全部会话；普通销售必须与会话关联。
+  // 沟通状态是管理视图：Admin / boss / 主管可看全部会话；普通销售必须与会话关联。
   // 这条规则不能复用工作台的 website/email 公共入口规则，否则销售会看到全量历史。
-  if (options.allowPrivilegedAllChannels && ['boss', 'manager'].includes(viewer.role)) {
+  if (options.allowPrivilegedAllChannels && ['admin', 'boss', 'manager'].includes(viewer.role)) {
     return {
       sql: `(${memberParam}::text IS NOT NULL OR ${userParam}::text IS NOT NULL OR TRUE)`,
       params: [viewer.workspaceMemberId, viewer.userId],
