@@ -8,16 +8,8 @@
       var a = e.target.closest('a[href]');
       if (!a) return;
       var href = a.getAttribute('href') || '';
-      // 沟通状态必须走自研只读视图，原生 duiHuaLiShi 列表没有按销售账号
-      // 过滤会话，直接放行会绕过 middleware 的 history 可见性规则。
-      if (/^\/objects\/duiHuaLiShi[s]?(\?|#|$)/.test(href) ||
-          /^\/duiHuaLiShi[s]?(\?|#|$)/.test(href)) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        showView('history');
-        return;
-      }
-      // 其他原生对象仍按原路由处理；沟通状态入口已在上方统一切到受权限过滤的只读视图。
+      // 「对话历史」(duiHuaLiShi) 走 Twenty 原生表格/看板概览，不再强制气泡视图；
+      // 单条记录详情页由 ensureHistoryDrillButton 注入「查看对话内容」按钮钻取气泡。
       if (a.id !== NAV_ID &&
           a.id !== SETTINGS_NAV_ID &&
           !href.startsWith('/chat') &&
