@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260831-nav-restore-v1';
+  var NHD_VERSION = '20260909-lead-dedupe-v2';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -201,6 +201,12 @@
     var result = { email: '', phone: '', websiteUrl: '' };
     function visit(item) {
       if (!item || typeof item !== 'object') return;
+      var emailKeys = ['email', 'emailPrimaryEmail', 'youXiangPrimaryEmail'];
+      var phoneKeys = ['phone', 'phonePrimaryPhoneNumber', 'whatsapp', 'whatsappPrimaryPhoneNumber'];
+      var websiteKeys = ['websiteUrl', 'guanWangLianJiePrimaryLinkUrl'];
+      emailKeys.forEach(function (key) { if (item[key] && !result.email && typeof item[key] !== 'object') result.email = String(item[key]).trim(); });
+      phoneKeys.forEach(function (key) { if (item[key] && !result.phone && typeof item[key] !== 'object') result.phone = String(item[key]).trim(); });
+      websiteKeys.forEach(function (key) { if (item[key] && !result.websiteUrl && typeof item[key] !== 'object') result.websiteUrl = String(item[key]).trim(); });
       if (item.primaryEmail && !result.email) result.email = String(item.primaryEmail).trim();
       if (item.primaryPhoneNumber && !result.phone) result.phone = String(item.primaryPhoneNumber).trim();
       if (item.primaryLinkUrl && !result.websiteUrl) result.websiteUrl = String(item.primaryLinkUrl).trim();
@@ -272,6 +278,23 @@
       console.warn('[opportunity-dedup] check unavailable, allow save:', error && error.message);
       return true;
     });
+  }
+
+  function requestUrl(input) {
+    try { return String(typeof input === 'string' ? input : (input && input.url) || ''); } catch (e) { return ''; }
+  }
+
+  function readGraphqlRequestBody(input, init) {
+    if (init && typeof init.body === 'string') {
+      try { return Promise.resolve(JSON.parse(init.body)); } catch (e) { return Promise.resolve(null); }
+    }
+    // Apollo 可能传入 Request 实例；读取 clone，避免消耗原请求体。
+    if (input && typeof input.clone === 'function' && requestUrl(input).indexOf('/graphql') !== -1) {
+      try {
+        return input.clone().text().then(function (text) { try { return JSON.parse(text); } catch (e) { return null; } });
+      } catch (e) {}
+    }
+    return Promise.resolve(null);
   }
 
   function closeWebsiteRelatedModal() {
@@ -392,16 +415,14 @@
         } catch (e) {}
         var input = fetchArgs[0];
         var init = fetchArgs[1] || {};
-        var requestBody = null;
-        try {
-          if (init && typeof init.body === 'string') requestBody = JSON.parse(init.body);
-        } catch (e) {}
-        var gate = requestBody && String(input || '').indexOf('/graphql') !== -1
-          ? checkLeadDuplicatesBeforeMutation(requestBody)
-          : Promise.resolve(true);
-        return gate.then(function (allow) {
-          if (!allow) return new Response(JSON.stringify({ errors: [{ message: '用户取消保存重复线索' }] }), { status: 409, headers: { 'Content-Type': 'application/json' } });
-          return originalFetch.apply(fetchThis, fetchArgs);
+        return readGraphqlRequestBody(input, init).then(function (requestBody) {
+          var gate = requestBody && requestUrl(input).indexOf('/graphql') !== -1
+            ? checkLeadDuplicatesBeforeMutation(requestBody)
+            : Promise.resolve(true);
+          return gate.then(function (allow) {
+            if (!allow) return new Response(JSON.stringify({ errors: [{ message: '用户取消保存重复线索' }] }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+            return originalFetch.apply(fetchThis, fetchArgs);
+          });
         }).then(function (response) {
           inspectWebsiteMutation(input, init, response);
           return response;
