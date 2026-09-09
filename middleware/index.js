@@ -5613,8 +5613,22 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const row = cr.rows[0];
   if (!row) return res.status(404).json({ error: 'conversation not found' });
   // 已转过 → 更新既有商机；未转 → 新建。支持二次/三次补填后再次推送。
-  const isUpdate = !!row.twenty_opportunity_id;
-  const oppId = row.twenty_opportunity_id;
+  let isUpdate = !!row.twenty_opportunity_id;
+  let oppId = row.twenty_opportunity_id;
+  // 历史线索被删除后，conv.contacts 的外键式文本关联可能仍保留旧 ID。
+  // 不把悬挂 ID 当成可更新记录：改走新建线索，并在成功后只回写当前联系人关联。
+  if (isUpdate) {
+    const schema = await getWorkspaceSchema();
+    const liveLead = await pool.query(
+      `SELECT 1 FROM ${schema}.opportunity WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`,
+      [oppId],
+    );
+    if (!liveLead.rowCount) {
+      console.warn('[convert-to-lead] stale opportunity link, creating replacement:', { conversationId: req.params.id, staleOpportunityId: oppId });
+      isUpdate = false;
+      oppId = null;
+    }
+  }
 
   // 联系人姓名：转线索阶段只把姓名收口到 opportunity 的「联系人姓名」暂存列，不立即建 Person。
   // Person（客户主数据）统一在"转客户"时由 upsertPersonFromOpportunity 生成，并回填 pointOfContactId。
