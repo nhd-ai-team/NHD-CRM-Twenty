@@ -70,6 +70,26 @@
     if (existing) existing.remove();
   }
 
+  // Apollo 可能会重试同一个 mutation；同一请求只允许用户确认一次，避免取消后重复弹窗。
+  var leadDuplicateDecisions = Object.create(null);
+
+  function leadDuplicateRequestKey(requestBody) {
+    try { return JSON.stringify(requestBody); } catch (e) { return String(requestBody.query || ''); }
+  }
+
+  var leadDuplicateReloadScheduled = false;
+  function cancelLeadDuplicateSave() {
+    // 原生编辑器已经把输入值写进本地状态；取消网络 mutation 后刷新一次，恢复服务端的真实值。
+    if (!leadDuplicateReloadScheduled) {
+      leadDuplicateReloadScheduled = true;
+      window.setTimeout(function () { window.location.reload(); }, 80);
+    }
+    return new Response(JSON.stringify({ data: {} }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   function showLeadDuplicateModal(result) {
     return new Promise(function (resolve) {
       closeLeadDuplicateModal();
@@ -107,6 +127,10 @@
   function checkLeadDuplicatesBeforeMutation(requestBody) {
     var query = String(requestBody.query || '');
     if (!/\b(?:create|update)Opportunity\b/.test(query)) return Promise.resolve(true);
+    var requestKey = leadDuplicateRequestKey(requestBody);
+    if (Object.prototype.hasOwnProperty.call(leadDuplicateDecisions, requestKey)) {
+      return Promise.resolve(leadDuplicateDecisions[requestKey]);
+    }
     var variables = requestBody.variables || {};
     // Twenty 的不同编辑组件可能使用 data/input/opportunity 等变量名；递归扫描整个 variables，避免漏掉真实字段。
     var input = extractLeadDedupeInput(variables);
@@ -122,7 +146,10 @@
     }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
         if (!response.ok || !data.requiresConfirmation) return true;
-        return showLeadDuplicateModal(data);
+        return showLeadDuplicateModal(data).then(function (allow) {
+          leadDuplicateDecisions[requestKey] = allow;
+          return allow;
+        });
       });
     }).catch(function (error) {
       // 去重服务异常时放行原始保存，避免影响线索主流程；错误写入控制台便于排查。
@@ -271,7 +298,7 @@
             ? checkLeadDuplicatesBeforeMutation(requestBody)
             : Promise.resolve(true);
           return gate.then(function (allow) {
-            if (!allow) return new Response(JSON.stringify({ errors: [{ message: '用户取消保存重复线索' }] }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+            if (!allow) return cancelLeadDuplicateSave();
             return originalFetch.apply(fetchThis, fetchArgs);
           });
         }).then(function (response) {
@@ -306,22 +333,8 @@
           originalSend.call(xhr, body);
           return;
         }
-        // Apollo 通过 XHR 等待一次完整响应；用合成的 409 响应结束请求，避免原始 mutation 被发送。
-        var payload = JSON.stringify({ errors: [{ message: '用户取消保存重复线索' }] });
-        try {
-          Object.defineProperties(xhr, {
-            readyState: { configurable: true, value: 4 },
-            status: { configurable: true, value: 409 },
-            statusText: { configurable: true, value: 'Conflict' },
-            responseText: { configurable: true, value: payload },
-            response: { configurable: true, value: payload },
-          });
-        } catch (e) {}
-        window.setTimeout(function () {
-          ['readystatechange', 'load', 'loadend'].forEach(function (type) {
-            try { xhr.dispatchEvent(new Event(type)); } catch (e) {}
-          });
-        }, 0);
+        // 取消时直接中止原请求：不发送 mutation，也不伪造 409，避免 UI 把取消误报成保存失败。
+        try { xhr.abort(); } catch (e) {}
       }).catch(function (error) {
         // 去重检查异常时放行，避免检查服务故障阻断正常线索保存。
         console.warn('[opportunity-dedup] XHR check unavailable, allow save:', error && error.message);
