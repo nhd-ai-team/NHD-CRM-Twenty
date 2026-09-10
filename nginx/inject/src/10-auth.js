@@ -108,13 +108,17 @@
     var query = String(requestBody.query || '');
     if (!/\b(?:create|update)Opportunity\b/.test(query)) return Promise.resolve(true);
     var variables = requestBody.variables || {};
-    var input = extractLeadDedupeInput(variables.data || {});
+    // Twenty 的不同编辑组件可能使用 data/input/opportunity 等变量名；递归扫描整个 variables，避免漏掉真实字段。
+    var input = extractLeadDedupeInput(variables);
     // 仅在本次 mutation 携带明确身份字段时检查，普通阶段/负责人修改不弹窗。
     if (!input.email && !input.phone && !input.websiteUrl) return Promise.resolve(true);
     return window.fetch('/conv-api/opportunities/check-duplicates', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recordId: variables.id || '', email: input.email, phone: input.phone, websiteUrl: input.websiteUrl }),
+      body: JSON.stringify({
+        recordId: variables.id || (variables.input && variables.input.id) || (variables.data && variables.data.id) || '',
+        email: input.email, phone: input.phone, websiteUrl: input.websiteUrl,
+      }),
     }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
         if (!response.ok || !data.requiresConfirmation) return true;
