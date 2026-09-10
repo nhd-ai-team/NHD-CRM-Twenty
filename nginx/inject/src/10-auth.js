@@ -65,6 +65,23 @@
     return result;
   }
 
+  function extractLeadRecordId(value) {
+    var found = '';
+    function visit(item) {
+      if (found || !item || typeof item !== 'object') return;
+      for (var key in item) {
+        if (!Object.prototype.hasOwnProperty.call(item, key)) continue;
+        if ((key === 'id' || key === 'opportunityId' || key === 'recordId') && /^[0-9a-f-]{36}$/i.test(String(item[key] || ''))) {
+          found = String(item[key]);
+          return;
+        }
+        visit(item[key]);
+      }
+    }
+    visit(value);
+    return found;
+  }
+
   function closeLeadDuplicateModal() {
     var existing = document.getElementById(LEAD_DUPLICATE_MODAL_ID);
     if (existing) existing.remove();
@@ -82,6 +99,7 @@
     var targetValue = currentValue == null ? '' : String(currentValue);
     var editedText = editedValue == null ? '' : String(editedValue);
     var fields = document.querySelectorAll('input, textarea');
+    var restored = false;
     for (var i = 0; i < fields.length; i++) {
       var field = fields[i];
       if (String(field.value || '') !== editedText) continue;
@@ -93,8 +111,9 @@
         field.dispatchEvent(new Event('input', { bubbles: true }));
         field.dispatchEvent(new Event('change', { bubbles: true }));
       } catch (e) {}
-      return;
+      restored = true;
     }
+    return restored;
   }
 
   function restoreLeadInputs(currentValues, editedValues) {
@@ -163,7 +182,7 @@
       method: 'POST', credentials: 'same-origin',
       headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
-        recordId: variables.id || (variables.input && variables.input.id) || (variables.data && variables.data.id) || '',
+        recordId: extractLeadRecordId(variables),
         email: input.email, phone: input.phone, websiteUrl: input.websiteUrl,
       }),
     }).then(function (response) {
