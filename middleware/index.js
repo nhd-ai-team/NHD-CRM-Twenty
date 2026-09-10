@@ -2818,8 +2818,11 @@ app.get('/api/conversations', async (req, res) => {
     const channelScopeSql = requestedChannel
       ? `AND c.channel = '${requestedChannel}'`
       : includeEmail ? '' : `AND c.channel <> 'email'`;
-    const requestedConversationSql = requestedConversationId ? 'AND c.id = $7::uuid' : '';
-    if (requestedConversationId) listParams.push(null, null, requestedConversationId);
+    const requestedConversationParamIndex = visibilityParams.length + (cursor ? 2 : 0) + 1;
+    const requestedConversationSql = requestedConversationId
+      ? `AND c.id = $${requestedConversationParamIndex}::uuid`
+      : '';
+    if (requestedConversationId) listParams.push(requestedConversationId);
     const emailCategory = ['inbox', 'outbound', 'flagged', 'customer', 'junk', 'all'].includes(String(req.query?.emailCategory || '').trim())
       ? String(req.query.emailCategory).trim()
       : 'inbox';
