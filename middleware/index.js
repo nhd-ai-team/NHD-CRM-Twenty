@@ -2198,7 +2198,8 @@ async function resolveDingtalkRecipients(conversation, isFirstCustomerMessage) {
     const schema = await getWorkspaceSchema();
     const result = await pool.query(`SELECT "userId", "userEmail" AS email FROM ${schema}."workspaceMember" WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`, [conversation.agent_id]);
     if (result.rows[0]) recipients.push(result.rows[0]);
-  } else if (isFirstCustomerMessage) {
+  } else if (!conversation.owner_id) {
+    // 未分配会话的每条客户消息都通知默认销售；分配后改走负责人/协办人映射。
     recipients.push(...DINGTALK_SALES_USER_EMAILS.map(email => ({ email })));
     // 兼容旧配置：只有明确传入钉钉 userid 时，允许其直接作为收件人。
     recipients.push(...DINGTALK_SALES_USER_IDS.map(userId => ({ directDingtalkUserId: userId })));
