@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260910-lead-dedupe-v8';
+  var NHD_VERSION = '20260910-lead-dedupe-v6';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -225,41 +225,18 @@
 
   // Apollo 可能会重试同一个 mutation；同一请求只允许用户确认一次，避免取消后重复弹窗。
   var leadDuplicateDecisions = Object.create(null);
-  var leadDuplicateRestoreValues = Object.create(null);
 
   function leadDuplicateRequestKey(requestBody) {
     try { return JSON.stringify(requestBody); } catch (e) { return String(requestBody.query || ''); }
   }
 
-  function restoreLeadInputValue(currentValue, editedValue) {
-    var targetValue = currentValue == null ? '' : String(currentValue);
-    var editedText = editedValue == null ? '' : String(editedValue);
-    var fields = document.querySelectorAll('input, textarea');
-    for (var i = 0; i < fields.length; i++) {
-      var field = fields[i];
-      if (String(field.value || '') !== editedText) continue;
-      try {
-        var prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        var setter = Object.getOwnPropertyDescriptor(prototype, 'value');
-        if (setter && setter.set) setter.set.call(field, targetValue);
-        else field.value = targetValue;
-        field.dispatchEvent(new Event('input', { bubbles: true }));
-        field.dispatchEvent(new Event('change', { bubbles: true }));
-      } catch (e) {}
-      return;
+  var leadDuplicateReloadScheduled = false;
+  function cancelLeadDuplicateSave() {
+    // 原生编辑器已经把输入值写进本地状态；取消网络 mutation 后刷新一次，恢复服务端的真实值。
+    if (!leadDuplicateReloadScheduled) {
+      leadDuplicateReloadScheduled = true;
+      window.setTimeout(function () { window.location.reload(); }, 80);
     }
-  }
-
-  function restoreLeadInputs(currentValues, editedValues) {
-    if (!currentValues || !editedValues) return;
-    restoreLeadInputValue(currentValues.email, editedValues.email);
-    restoreLeadInputValue(currentValues.phone, editedValues.phone);
-    restoreLeadInputValue(currentValues.websiteUrl, editedValues.websiteUrl);
-  }
-
-  function cancelLeadDuplicateSave(currentValues, editedValues) {
-    // 只拦截 mutation，不刷新页面；避免取消保存打断用户当前的浏览位置和编辑上下文。
-    restoreLeadInputs(currentValues, editedValues);
     return new Response(JSON.stringify({ data: {} }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -322,10 +299,8 @@
     }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
         if (!response.ok || !data.requiresConfirmation) return true;
-        leadDuplicateRestoreValues[requestKey] = data.currentValues || null;
         return showLeadDuplicateModal(data).then(function (allow) {
           leadDuplicateDecisions[requestKey] = allow;
-          if (!allow) restoreLeadInputs(data.currentValues, input);
           return allow;
         });
       });
@@ -476,10 +451,7 @@
             ? checkLeadDuplicatesBeforeMutation(requestBody)
             : Promise.resolve(true);
           return gate.then(function (allow) {
-            if (!allow) {
-              var requestKey = leadDuplicateRequestKey(requestBody);
-              return cancelLeadDuplicateSave(leadDuplicateRestoreValues[requestKey], extractLeadDedupeInput(requestBody));
-            }
+            if (!allow) return cancelLeadDuplicateSave();
             return originalFetch.apply(fetchThis, fetchArgs);
           });
         }).then(function (response) {
