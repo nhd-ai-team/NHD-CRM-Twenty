@@ -37,6 +37,20 @@ function FiledTag({ status }) {
   return null
 }
 
+function RelatedVisitorTag({ visitors = [] }) {
+  if (!visitors.length) return null
+  const names = visitors.slice(0, 5).map(item => item.visitorName || '官网访客').join('、')
+  const suffix = visitors.length > 5 ? ` 等 ${visitors.length} 个会话` : ''
+  return (
+    <span
+      title={`同一公网 IP 下存在其他官网会话：${names}${suffix}`}
+      style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: '#fff7ed', color: '#c2410c', fontWeight: 600, whiteSpace: 'nowrap' }}
+    >
+      疑似关联 {visitors.length}
+    </span>
+  )
+}
+
 function ConvCard({ conv, isSelected, onSelect, onRename }) {
   const timeStr = formatDistanceToNow(conv.lastMessageAt, { locale: zhCN, addSuffix: false })
   // 需求三：列表显示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示），缺失时明确标示「未知地区」
@@ -97,7 +111,10 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
               textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160,
               fontWeight: conv.unread > 0 ? 500 : 400,
             }}>{conv.lastMessage}</p>
-            <FiledTag status={conv.contact.filedStatus} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+              <RelatedVisitorTag visitors={conv.relatedVisitors} />
+              <FiledTag status={conv.contact.filedStatus} />
+            </div>
           </div>
 
           {/* 地域行仅官网渠道展示（其他渠道无 IP 概念，显示「未知地区」是噪音）；官网无地域时明确标示 */}

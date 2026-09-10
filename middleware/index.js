@@ -2884,6 +2884,25 @@ app.get('/api/conversations', async (req, res) => {
       'isAssignedToMe', ${assignedToMeExpression},
       'hasTakenOverBefore', ${takenBeforeExpression}
     ) AS permissions,
+    CASE WHEN c.channel = 'website' AND ct.ip_address IS NOT NULL THEN COALESCE((
+      SELECT json_agg(json_build_object(
+        'conversationId', related.id,
+        'visitorName', COALESCE(NULLIF(related.display_name, ''), NULLIF(related.channel_display_name, ''), NULLIF(related.external_id, ''), '官网访客'),
+        'lastMessageAt', related.last_message_at,
+        'pageUrl', COALESCE(related.landing_page_url, '')
+      ) ORDER BY related.last_message_at DESC NULLS LAST)
+      FROM (
+        SELECT c2.id, c2.last_message_at, ct2.display_name, ct2.channel_display_name, ct2.external_id,
+               ct2.landing_page_url
+          FROM conv.conversations c2
+          JOIN conv.contacts ct2 ON ct2.id = c2.contact_id
+         WHERE c2.channel = 'website'
+           AND c2.id <> c.id
+           AND ct2.ip_address = ct.ip_address
+         ORDER BY c2.last_message_at DESC NULLS LAST
+         LIMIT 10
+      ) related
+    ), '[]'::json) ELSE '[]'::json END AS "relatedVisitors",
     CASE WHEN pending_handoff.id IS NULL THEN NULL ELSE json_build_object(
       'status', pending_handoff.status,
       'id', pending_handoff.id,

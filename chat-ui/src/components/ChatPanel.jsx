@@ -495,6 +495,12 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{conv.contact.phone}</span>
             )}
             <StatusBadge status={conv.status} aiControl={conv.aiControl} />
+            {conv.relatedVisitors?.length > 0 && (
+              <span
+                title={`同一公网 IP 下存在其他官网会话：${conv.relatedVisitors.map(item => item.visitorName || '官网访客').join('、')}`}
+                style={{ fontSize: 11, color: '#c2410c', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 4, padding: '2px 6px', whiteSpace: 'nowrap' }}
+              >疑似关联访客 {conv.relatedVisitors.length}</span>
+            )}
             {conv.status === 'takeover' && conv.permissions?.isSupervisor && conv.currentAgentName && (
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>由 {conv.currentAgentName} 接管</span>
             )}
