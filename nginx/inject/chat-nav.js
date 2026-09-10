@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260910-lead-dedupe-v4';
+  var NHD_VERSION = '20260910-lead-dedupe-v5';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -267,7 +267,7 @@
     if (!input.email && !input.phone && !input.websiteUrl) return Promise.resolve(true);
     return window.fetch('/conv-api/opportunities/check-duplicates', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         recordId: variables.id || (variables.input && variables.input.id) || (variables.data && variables.data.id) || '',
         email: input.email, phone: input.phone, websiteUrl: input.websiteUrl,

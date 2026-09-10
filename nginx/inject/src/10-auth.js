@@ -114,7 +114,7 @@
     if (!input.email && !input.phone && !input.websiteUrl) return Promise.resolve(true);
     return window.fetch('/conv-api/opportunities/check-duplicates', {
       method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         recordId: variables.id || (variables.input && variables.input.id) || (variables.data && variables.data.id) || '',
         email: input.email, phone: input.phone, websiteUrl: input.websiteUrl,
