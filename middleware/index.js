@@ -2247,11 +2247,11 @@ async function enqueueWebsiteDingtalkNotifications({ conversation, messageId, vi
   }
   const title = isFirstCustomerMessage ? '官网客服收到新访客' : '官网客服收到新消息';
   const summary = String(content || '').replace(/\s+/g, ' ').trim().slice(0, 180) || '（附件或无文本内容）';
-  const text = `### ${title}\n\n客户：${visitorName || '官网访客'}\n\n消息：${summary}\n\n[打开 CRM 会话](https://crm.chinanhd.com/chat/)`;
+  const text = `### ${title}\n\n客户：${visitorName || '官网访客'}\n\n消息：${summary}`;
   await Promise.all(recipients.map(recipient => pool.query(
     `INSERT INTO conv.dingtalk_notification_outbox(event_key, recipient_user_id, title, content, crm_url)
      VALUES ($1, $2, $3, $4, $5) ON CONFLICT(event_key, recipient_user_id) DO NOTHING`,
-    [`website:${messageId}`, recipient, title, text, 'https://crm.chinanhd.com/chat/'],
+    [`website:${messageId}`, recipient, title, text, null],
   )));
 }
 
