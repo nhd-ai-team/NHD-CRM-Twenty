@@ -309,6 +309,7 @@ export default function App() {
             onTakeover={(action) => setTakeover(selected?.id, action)}
             onMarkHandoffNoticeSeen={(noticeId) => markHandoffNoticeSeen(selected?.id, noticeId)}
             onRename={renameConversation}
+            onSelectConversation={selectConversation}
             layout={layout}
             onToggleSidebar={() => setSidebarOpen(o => !o)}
             presence={presence}

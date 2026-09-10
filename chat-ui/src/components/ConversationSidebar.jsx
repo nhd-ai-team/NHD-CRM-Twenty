@@ -6,6 +6,7 @@ import { STATUS_FILTERS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
 import { fmtTimezone } from '../utils/timezone'
+import { RelatedVisitorsPopover } from './RelatedVisitorsPopover'
 
 function Avatar({ contact, size = 36 }) {
   const name = String(contact?.name || '')
@@ -35,20 +36,6 @@ function FiledTag({ status }) {
     </span>
   )
   return null
-}
-
-function RelatedVisitorTag({ visitors = [] }) {
-  if (!visitors.length) return null
-  const names = visitors.slice(0, 5).map(item => item.visitorName || '官网访客').join('、')
-  const suffix = visitors.length > 5 ? ` 等 ${visitors.length} 个会话` : ''
-  return (
-    <span
-      title={`同一公网 IP 下存在其他官网会话：${names}${suffix}`}
-      style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: '#fff7ed', color: '#c2410c', fontWeight: 600, whiteSpace: 'nowrap' }}
-    >
-      疑似关联 {visitors.length}
-    </span>
-  )
 }
 
 function ConvCard({ conv, isSelected, onSelect, onRename }) {
@@ -112,7 +99,7 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
               fontWeight: conv.unread > 0 ? 500 : 400,
             }}>{conv.lastMessage}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-              <RelatedVisitorTag visitors={conv.relatedVisitors} />
+              <RelatedVisitorsPopover visitors={conv.relatedVisitors} compact onSelect={onSelect} />
               <FiledTag status={conv.contact.filedStatus} />
             </div>
           </div>
