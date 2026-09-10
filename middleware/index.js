@@ -5227,7 +5227,20 @@ app.post('/api/opportunities/check-duplicates', requireSameSite, async (req, res
     const domain = domainResult.rows[0]?.domain || null;
     if (!email && !phone && !domain) return res.json({ duplicates: [], requiresConfirmation: false });
     const result = await findDuplicateLeadRecords({ schema, email, phone, domain, recordId });
-    res.json({ duplicates: result.rows, requiresConfirmation: result.rowCount > 0 });
+    let currentValues = null;
+    if (recordId) {
+      const currentResult = await pool.query(
+        `SELECT "youXiangPrimaryEmail" AS email,
+                "whatsappPrimaryPhoneNumber" AS phone,
+                "guanWangLianJiePrimaryLinkUrl" AS "websiteUrl"
+           FROM ${schema}.opportunity
+          WHERE id = $1::uuid AND "deletedAt" IS NULL
+          LIMIT 1`,
+        [recordId],
+      );
+      currentValues = currentResult.rows[0] || null;
+    }
+    res.json({ duplicates: result.rows, requiresConfirmation: result.rowCount > 0, currentValues });
   } catch (error) {
     console.error('[opportunity-dedup] check failed:', error.message);
     res.status(500).json({ error: '线索重复检查失败', detail: error.message });

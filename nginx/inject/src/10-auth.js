@@ -72,13 +72,41 @@
 
   // Apollo 可能会重试同一个 mutation；同一请求只允许用户确认一次，避免取消后重复弹窗。
   var leadDuplicateDecisions = Object.create(null);
+  var leadDuplicateRestoreValues = Object.create(null);
 
   function leadDuplicateRequestKey(requestBody) {
     try { return JSON.stringify(requestBody); } catch (e) { return String(requestBody.query || ''); }
   }
 
-  function cancelLeadDuplicateSave() {
+  function restoreLeadInputValue(currentValue, editedValue) {
+    var targetValue = currentValue == null ? '' : String(currentValue);
+    var editedText = editedValue == null ? '' : String(editedValue);
+    var fields = document.querySelectorAll('input, textarea');
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i];
+      if (String(field.value || '') !== editedText) continue;
+      try {
+        var prototype = field instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        var setter = Object.getOwnPropertyDescriptor(prototype, 'value');
+        if (setter && setter.set) setter.set.call(field, targetValue);
+        else field.value = targetValue;
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (e) {}
+      return;
+    }
+  }
+
+  function restoreLeadInputs(currentValues, editedValues) {
+    if (!currentValues || !editedValues) return;
+    restoreLeadInputValue(currentValues.email, editedValues.email);
+    restoreLeadInputValue(currentValues.phone, editedValues.phone);
+    restoreLeadInputValue(currentValues.websiteUrl, editedValues.websiteUrl);
+  }
+
+  function cancelLeadDuplicateSave(currentValues, editedValues) {
     // 只拦截 mutation，不刷新页面；避免取消保存打断用户当前的浏览位置和编辑上下文。
+    restoreLeadInputs(currentValues, editedValues);
     return new Response(JSON.stringify({ data: {} }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
@@ -141,8 +169,10 @@
     }).then(function (response) {
       return response.json().catch(function () { return {}; }).then(function (data) {
         if (!response.ok || !data.requiresConfirmation) return true;
+        leadDuplicateRestoreValues[requestKey] = data.currentValues || null;
         return showLeadDuplicateModal(data).then(function (allow) {
           leadDuplicateDecisions[requestKey] = allow;
+          if (!allow) restoreLeadInputs(data.currentValues, input);
           return allow;
         });
       });
@@ -293,7 +323,10 @@
             ? checkLeadDuplicatesBeforeMutation(requestBody)
             : Promise.resolve(true);
           return gate.then(function (allow) {
-            if (!allow) return cancelLeadDuplicateSave();
+            if (!allow) {
+              var requestKey = leadDuplicateRequestKey(requestBody);
+              return cancelLeadDuplicateSave(leadDuplicateRestoreValues[requestKey], extractLeadDedupeInput(requestBody));
+            }
             return originalFetch.apply(fetchThis, fetchArgs);
           });
         }).then(function (response) {
