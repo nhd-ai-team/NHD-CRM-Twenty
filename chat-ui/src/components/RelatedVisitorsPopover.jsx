@@ -6,7 +6,6 @@ import { zhCN } from 'date-fns/locale'
 export function RelatedVisitorsPopover({ visitors = [], compact = false, onSelect }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
-  if (!visitors.length) return null
 
   useEffect(() => {
     if (!open) return undefined
@@ -16,6 +15,8 @@ export function RelatedVisitorsPopover({ visitors = [], compact = false, onSelec
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [open])
+
+  if (!visitors.length) return null
 
   const count = visitors.length
   return (
