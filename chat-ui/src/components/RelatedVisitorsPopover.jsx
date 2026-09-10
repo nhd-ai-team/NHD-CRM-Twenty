@@ -21,21 +21,25 @@ export function RelatedVisitorsPopover({ visitors = [], compact = false, onSelec
   const count = visitors.length
   return (
     <span ref={rootRef} style={{ position: 'relative', display: 'inline-flex' }} onClick={event => event.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => setOpen(value => !value)}
-        aria-expanded={open}
-        title="查看疑似关联访客会话"
-        style={{
+      {onSelect ? <button
+          type="button"
+          onClick={() => setOpen(value => !value)}
+          aria-expanded={open}
+          title="查看疑似关联访客会话"
+          style={{
           display: 'inline-flex', alignItems: 'center', gap: 3,
           padding: compact ? '1px 5px' : '2px 6px', borderRadius: 4,
           border: '1px solid #fed7aa', background: '#fff7ed', color: '#c2410c',
           fontSize: compact ? 10 : 11, fontWeight: 600, whiteSpace: 'nowrap', cursor: 'pointer',
-        }}
-      >
-        <Users size={compact ? 11 : 12} /> 疑似关联 {count}
-      </button>
-      {open && (
+          }}
+        >
+          <Users size={compact ? 11 : 12} /> 疑似关联 {count}
+        </button> : (
+          <span title="同一公网 IP 下存在其他官网会话" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: '#c2410c', fontSize: compact ? 10 : 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            <Users size={compact ? 11 : 12} /> 疑似关联 {count}
+          </span>
+        )}
+      {onSelect && open && (
         <div
           role="dialog"
           aria-label="疑似关联访客会话"

@@ -2811,9 +2811,15 @@ app.get('/api/conversations', async (req, res) => {
     const requestedChannel = ['website', 'whatsapp', 'email', 'instagram', 'facebook'].includes(String(req.query?.channel || '').trim())
       ? String(req.query.channel).trim()
       : '';
+    const requestedConversationId = String(req.query?.conversationId || '').trim();
+    if (requestedConversationId && !/^[0-9a-f-]{36}$/i.test(requestedConversationId)) {
+      return res.status(400).json({ error: '会话 ID 格式无效' });
+    }
     const channelScopeSql = requestedChannel
       ? `AND c.channel = '${requestedChannel}'`
       : includeEmail ? '' : `AND c.channel <> 'email'`;
+    const requestedConversationSql = requestedConversationId ? 'AND c.id = $7::uuid' : '';
+    if (requestedConversationId) listParams.push(null, null, requestedConversationId);
     const emailCategory = ['inbox', 'outbound', 'flagged', 'customer', 'junk', 'all'].includes(String(req.query?.emailCategory || '').trim())
       ? String(req.query.emailCategory).trim()
       : 'inbox';
@@ -2986,7 +2992,8 @@ app.get('/api/conversations', async (req, res) => {
         AND (read_state.last_read_at IS NULL OR unread_message.sent_at > read_state.last_read_at)
     ) unread ON TRUE
     WHERE ${visibility.sql}
-    ${channelScopeSql}
+      ${requestedConversationSql}
+      ${channelScopeSql}
     ${emailCategorySql}
     ${cursorSql}
     ORDER BY c.last_message_at DESC NULLS LAST, c.id::text DESC

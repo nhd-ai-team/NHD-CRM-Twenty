@@ -37,7 +37,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     return token
   }
 
-  async function loadConversations({ append = false } = {}) {
+  async function loadConversations({ append = false, conversationId = '' } = {}) {
     if (authExpired) return
     if (append && (!hasMoreRef.current || loadingMoreRef.current)) return
     if (append) {
@@ -50,6 +50,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
       const params = new URLSearchParams({ _: String(Date.now()), limit: '30', includeEmail: String(includeEmail) })
       if (view === 'history') params.set('view', 'history')
+      if (conversationId) params.set('conversationId', conversationId)
       if (append && nextCursorRef.current) params.set('cursor', nextCursorRef.current)
       const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
         cache: 'no-store',
@@ -89,6 +90,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       })
       if (!append) {
         setSelectedId(current => {
+          if (conversationId && page.some(conv => conv.id === conversationId)) return conversationId
           if (current && page.some(conv => conv.id === current)) return current
           return current || page[0]?.id || null
         })
@@ -432,7 +434,12 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     }
   }
   function selectConversation(id) {
-    setSelectedId(id)
+    if (!id) return
+    if (conversations.some(conversation => conversation.id === id)) {
+      setSelectedId(id)
+      return
+    }
+    loadConversations({ conversationId: id }).catch(error => console.error('[conversation] related visitor load failed:', error))
   }
 
   return {

@@ -99,7 +99,7 @@ function ConvCard({ conv, isSelected, onSelect, onRename }) {
               fontWeight: conv.unread > 0 ? 500 : 400,
             }}>{conv.lastMessage}</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-              <RelatedVisitorsPopover visitors={conv.relatedVisitors} compact onSelect={onSelect} />
+              <RelatedVisitorsPopover visitors={conv.relatedVisitors} compact />
               <FiledTag status={conv.contact.filedStatus} />
             </div>
           </div>
