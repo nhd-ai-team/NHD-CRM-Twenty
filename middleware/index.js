@@ -91,6 +91,7 @@ const DINGTALK_APP_KEY = process.env.DINGTALK_APP_KEY || '';
 const DINGTALK_APP_SECRET = process.env.DINGTALK_APP_SECRET || '';
 const DINGTALK_AGENT_ID = process.env.DINGTALK_AGENT_ID || '';
 const DINGTALK_SALES_USER_IDS = String(process.env.DINGTALK_SALES_USER_IDS || '').split(',').map(v => v.trim()).filter(Boolean);
+const DINGTALK_SALES_USER_EMAILS = String(process.env.DINGTALK_SALES_USER_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
 let dingtalkUserMap = {};
 try { dingtalkUserMap = JSON.parse(process.env.DINGTALK_USER_MAP_JSON || '{}'); } catch (error) { console.error('[dingtalk] invalid DINGTALK_USER_MAP_JSON:', error.message); }
 let dingtalkAccessTokenCache = { value: '', expiresAt: 0 };
@@ -2173,8 +2174,10 @@ async function resolveGeoByIp(ip) {
   return result;
 }
 
-function dingtalkMappedUserId(crmUserId) {
-  const value = dingtalkUserMap[String(crmUserId || '').trim()];
+function dingtalkMappedUserId(crmUserId, email) {
+  const userIdKey = String(crmUserId || '').trim();
+  const emailKey = String(email || '').trim().toLowerCase();
+  const value = dingtalkUserMap[userIdKey] ?? dingtalkUserMap[emailKey];
   if (!value) return '';
   return typeof value === 'string' ? value.trim() : String(value.userId || value.userid || '').trim();
 }
@@ -2190,17 +2193,48 @@ async function getDingtalkAccessToken() {
 }
 
 async function resolveDingtalkRecipients(conversation, isFirstCustomerMessage) {
-  const crmUserIds = [];
+  const recipients = [];
   if (conversation.status === 'takeover' && conversation.agent_id) {
     const schema = await getWorkspaceSchema();
-    const result = await pool.query(`SELECT "userId" FROM ${schema}."workspaceMember" WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`, [conversation.agent_id]);
-    if (result.rows[0]?.userId) crmUserIds.push(result.rows[0].userId);
-  } else if (conversation.owner_id) {
-    crmUserIds.push(conversation.owner_id);
+    const result = await pool.query(`SELECT "userId", "userEmail" AS email FROM ${schema}."workspaceMember" WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`, [conversation.agent_id]);
+    if (result.rows[0]) recipients.push(result.rows[0]);
   } else if (isFirstCustomerMessage) {
-    crmUserIds.push(...DINGTALK_SALES_USER_IDS);
+    recipients.push(...DINGTALK_SALES_USER_EMAILS.map(email => ({ email })));
+    // 兼容旧配置：只有明确传入钉钉 userid 时，允许其直接作为收件人。
+    recipients.push(...DINGTALK_SALES_USER_IDS.map(userId => ({ directDingtalkUserId: userId })));
+  } else {
+    const schema = await getWorkspaceSchema();
+    const result = await pool.query(
+      `SELECT c.owner_id AS "ownerUserId",
+              owner_member."userEmail" AS "ownerEmail",
+              collab_member."userId" AS "collaboratorUserId",
+              collab_member."userEmail" AS "collaboratorEmail",
+              collab2_member."userId" AS "secondCollaboratorUserId",
+              collab2_member."userEmail" AS "secondCollaboratorEmail"
+         FROM conv.conversations c
+         LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
+         LEFT JOIN ${schema}."workspaceMember" owner_member
+                ON owner_member."userId"::text = c.owner_id AND owner_member."deletedAt" IS NULL
+         LEFT JOIN ${schema}."opportunity" o
+                ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
+         LEFT JOIN ${schema}."workspaceMember" collab_member
+                ON collab_member.id = o."xieBanRenId" AND collab_member."deletedAt" IS NULL
+         LEFT JOIN ${schema}."workspaceMember" collab2_member
+                ON collab2_member.id = o."xieZuoRen2Id" AND collab2_member."deletedAt" IS NULL
+        WHERE c.id = $1
+        LIMIT 1`,
+      [conversation.id],
+    );
+    const row = result.rows[0];
+    if (row) recipients.push(
+      { crmUserId: row.ownerUserId, email: row.ownerEmail },
+      { crmUserId: row.collaboratorUserId, email: row.collaboratorEmail },
+      { crmUserId: row.secondCollaboratorUserId, email: row.secondCollaboratorEmail },
+    );
   }
-  return [...new Set(crmUserIds.map(dingtalkMappedUserId).filter(Boolean))];
+  return [...new Set(recipients.map(recipient => (
+    recipient.directDingtalkUserId || dingtalkMappedUserId(recipient.crmUserId, recipient.email)
+  )).filter(Boolean))];
 }
 
 async function enqueueWebsiteDingtalkNotifications({ conversation, messageId, visitorName, content, isFirstCustomerMessage }) {
