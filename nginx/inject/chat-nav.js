@@ -3,7 +3,7 @@
   'use strict';
 
   // 版本戳：硬刷新后对照 window.__NHD_VERSION__ 即可确认当前执行的是哪一版。
-  var NHD_VERSION = '20260909-lead-dedupe-v2';
+  var NHD_VERSION = '20260910-lead-dedupe-v3';
   if (window.__NHD_CHAT_NAV_BOOTED__) {
     try {
       window.__NHD_ERRORS__ = window.__NHD_ERRORS__ || [];
@@ -439,6 +439,43 @@
     XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
       if (String(name || '').toLowerCase() === 'authorization') rememberAuthToken(extractBearer(value));
       return originalSetRequestHeader.apply(this, arguments);
+    };
+    var originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (body) {
+      var xhr = this;
+      var url = String(xhr.__chatRequestUrl || '');
+      if (url.indexOf('/graphql') === -1 || typeof body !== 'string') {
+        return originalSend.call(xhr, body);
+      }
+      var requestBody = null;
+      try { requestBody = JSON.parse(body); } catch (e) {}
+      if (!requestBody) return originalSend.call(xhr, body);
+      checkLeadDuplicatesBeforeMutation(requestBody).then(function (allow) {
+        if (allow) {
+          originalSend.call(xhr, body);
+          return;
+        }
+        // Apollo 通过 XHR 等待一次完整响应；用合成的 409 响应结束请求，避免原始 mutation 被发送。
+        var payload = JSON.stringify({ errors: [{ message: '用户取消保存重复线索' }] });
+        try {
+          Object.defineProperties(xhr, {
+            readyState: { configurable: true, value: 4 },
+            status: { configurable: true, value: 409 },
+            statusText: { configurable: true, value: 'Conflict' },
+            responseText: { configurable: true, value: payload },
+            response: { configurable: true, value: payload },
+          });
+        } catch (e) {}
+        window.setTimeout(function () {
+          ['readystatechange', 'load', 'loadend'].forEach(function (type) {
+            try { xhr.dispatchEvent(new Event(type)); } catch (e) {}
+          });
+        }, 0);
+      }).catch(function (error) {
+        // 去重检查异常时放行，避免检查服务故障阻断正常线索保存。
+        console.warn('[opportunity-dedup] XHR check unavailable, allow save:', error && error.message);
+        originalSend.call(xhr, body);
+      });
     };
   }
 
