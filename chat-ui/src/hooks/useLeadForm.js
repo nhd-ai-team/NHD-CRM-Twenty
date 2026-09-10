@@ -8,6 +8,7 @@ export function useLeadForm({ selected, selectedId, onConverted, onNameChanged, 
   const [draft, setDraft] = useState({})
   const [converting, setConverting] = useState(false)
   const [convertConfirmOpen, setConvertConfirmOpen] = useState(false)
+  const [duplicateLead, setDuplicateLead] = useState(null)
   const [toast, setToast] = useState(null) // { type: 'ok' | 'err', msg }
   const nameDirtyRef = useRef(false)
 
@@ -62,17 +63,26 @@ export function useLeadForm({ selected, selectedId, onConverted, onNameChanged, 
     setConvertConfirmOpen(true)
   }, [selected, converting])
 
-  const convertLead = useCallback(async () => {
+  const convertLead = useCallback(async ({ allowDuplicate = false } = {}) => {
     if (!selected || converting) return
     setConvertConfirmOpen(false)
     setConverting(true)
     try {
       await saveDraft(draft) // 先确保最新草稿落库
       const res = await fetch(`/conv-api/conversations/${selectedId}/convert-to-lead`, {
-        method: 'POST', headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(draft),
+        method: 'POST', headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(allowDuplicate ? { ...draft, allowDuplicate: true } : draft),
       })
       const d = await res.json().catch(() => ({}))
-      if (!res.ok) { setToast({ type: 'err', msg: [d.error, d.detail].filter(Boolean).join('：') || `转化失败 (${res.status})` }); return }
+      if (!res.ok) {
+        if (res.status === 409 && d.code === 'DUPLICATE_LEAD') {
+          setDuplicateLead(d)
+          return
+        }
+        setToast({ type: 'err', msg: [d.error, d.detail].filter(Boolean).join('：') || `转化失败 (${res.status})` })
+        return
+      }
+      setDuplicateLead(null)
       setToast({ type: 'ok', msg: (d.updated ? '已更新到线索' : '已转为线索并写入线索') })
       onConverted?.()
     } catch (e) {
@@ -82,10 +92,16 @@ export function useLeadForm({ selected, selectedId, onConverted, onNameChanged, 
     }
   }, [selected, selectedId, draft, converting, saveDraft, onConverted])
 
+  const continueDuplicateLead = useCallback(() => {
+    if (!duplicateLead || converting) return
+    setDuplicateLead(null)
+    convertLead({ allowDuplicate: true })
+  }, [duplicateLead, converting, convertLead])
+
   return {
     draft, setField, setFields, saveDraft,
     converting, convertConfirmOpen, setConvertConfirmOpen,
-    requestConvertLead, convertLead,
+    requestConvertLead, convertLead, duplicateLead, setDuplicateLead, continueDuplicateLead,
     toast, setToast,
   }
 }

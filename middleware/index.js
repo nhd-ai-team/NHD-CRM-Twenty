@@ -5226,32 +5226,7 @@ app.post('/api/opportunities/check-duplicates', requireSameSite, async (req, res
     const domainResult = await pool.query('SELECT conv.normalized_website_domain($1) AS domain', [websiteUrl]);
     const domain = domainResult.rows[0]?.domain || null;
     if (!email && !phone && !domain) return res.json({ duplicates: [], requiresConfirmation: false });
-
-    const result = await pool.query(
-      `SELECT id,
-              COALESCE(NULLIF(name, ''), '未命名线索') AS name,
-              "leadNo" AS "leadNo",
-              "youXiangPrimaryEmail" AS email,
-              "whatsappPrimaryPhoneNumber" AS phone,
-              "guanWangLianJiePrimaryLinkUrl" AS "websiteUrl",
-              "createdAt" AS "createdAt",
-              array_to_string(array_remove(ARRAY[
-                CASE WHEN $1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text) THEN '邮箱' END,
-                CASE WHEN $2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text THEN 'WhatsApp/手机号' END,
-                CASE WHEN $3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text THEN '官网链接' END
-              ]::text[], NULL), '、') AS "matchedBy"
-         FROM ${schema}.opportunity
-        WHERE "deletedAt" IS NULL
-          AND ($4::uuid IS NULL OR id <> $4::uuid)
-          AND (
-            ($1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text))
-            OR ($2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text)
-            OR ($3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text)
-          )
-        ORDER BY "createdAt" DESC
-        LIMIT 20`,
-      [email || '', phone, domain, recordId || null],
-    );
+    const result = await findDuplicateLeadRecords({ schema, email, phone, domain, recordId });
     res.json({ duplicates: result.rows, requiresConfirmation: result.rowCount > 0 });
   } catch (error) {
     console.error('[opportunity-dedup] check failed:', error.message);
@@ -5464,6 +5439,34 @@ const firstValidEmail = (...values) => {
   return null;
 };
 const phoneDigits = (value) => String(value || '').replace(/\D/g, '');
+
+async function findDuplicateLeadRecords({ schema, email, phone, domain, recordId = '' }) {
+  return pool.query(
+    `SELECT id,
+            COALESCE(NULLIF(name, ''), '未命名线索') AS name,
+            "leadNo" AS "leadNo",
+            "youXiangPrimaryEmail" AS email,
+            "whatsappPrimaryPhoneNumber" AS phone,
+            "guanWangLianJiePrimaryLinkUrl" AS "websiteUrl",
+            "createdAt" AS "createdAt",
+            array_to_string(array_remove(ARRAY[
+              CASE WHEN $1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text) THEN '邮箱' END,
+              CASE WHEN $2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text THEN 'WhatsApp/手机号' END,
+              CASE WHEN $3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text THEN '官网链接' END
+            ]::text[], NULL), '、') AS "matchedBy"
+       FROM ${schema}.opportunity
+      WHERE "deletedAt" IS NULL
+        AND ($4::uuid IS NULL OR id <> $4::uuid)
+        AND (
+          ($1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text))
+          OR ($2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text)
+          OR ($3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text)
+        )
+      ORDER BY "createdAt" DESC
+      LIMIT 20`,
+    [email || '', phone || '', domain || null, recordId || null],
+  );
+}
 
 async function workspaceColumnExists(tableName, columnName) {
   const schema = await getWorkspaceSchema();
@@ -5691,6 +5694,33 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   const country = String(b.country || '').trim();
   if (country) data.guoJiaDiQu = { addressCountry: country };
   await stripUnavailableOpportunityFields(data, skipped);
+
+  // 对话工作台转化也必须经过同一套身份字段去重检查。
+  // 只在用户明确确认后放行，避免同一 WhatsApp/邮箱/官网被静默写成多条线索。
+  if (b.allowDuplicate !== true) {
+    const duplicateEmail = firstValidEmail(email);
+    const duplicatePhone = /^\+?\d{5,15}$/.test(rawPhone) ? phoneDigits(rawPhone) : '';
+    const duplicateWebsiteUrl = String(b.websiteUrl || '').trim();
+    const duplicateDomain = duplicateWebsiteUrl ? await normalizedWebsiteDomain(pool, duplicateWebsiteUrl) : null;
+    if (duplicateEmail || duplicatePhone || duplicateDomain) {
+      const schema = await getWorkspaceSchema();
+      const duplicateResult = await findDuplicateLeadRecords({
+        schema,
+        email: duplicateEmail,
+        phone: duplicatePhone,
+        domain: duplicateDomain,
+        recordId: isUpdate ? oppId : '',
+      });
+      if (duplicateResult.rowCount > 0) {
+        return res.status(409).json({
+          code: 'DUPLICATE_LEAD',
+          error: '发现疑似重复线索',
+          detail: '当前资料与已有线索的身份字段相同，请确认是否仍要转化。',
+          duplicates: duplicateResult.rows,
+        });
+      }
+    }
+  }
 
   // [DEBUG] 临时日志：定位 phone/message/country 字段错误来源
   const invalidFields = Object.keys(data).filter(k => ['phone','message','country'].includes(k));
