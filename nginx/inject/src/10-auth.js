@@ -77,13 +77,8 @@
     try { return JSON.stringify(requestBody); } catch (e) { return String(requestBody.query || ''); }
   }
 
-  var leadDuplicateReloadScheduled = false;
   function cancelLeadDuplicateSave() {
-    // 原生编辑器已经把输入值写进本地状态；取消网络 mutation 后刷新一次，恢复服务端的真实值。
-    if (!leadDuplicateReloadScheduled) {
-      leadDuplicateReloadScheduled = true;
-      window.setTimeout(function () { window.location.reload(); }, 80);
-    }
+    // 只拦截 mutation，不刷新页面；避免取消保存打断用户当前的浏览位置和编辑上下文。
     return new Response(JSON.stringify({ data: {} }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
