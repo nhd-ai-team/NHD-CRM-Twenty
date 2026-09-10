@@ -5215,7 +5215,7 @@ app.post('/api/opportunities/check-duplicates', requireSameSite, async (req, res
   if (!authenticated) return;
   const recordId = String(req.body?.recordId || '').trim();
   const email = firstValidEmail(req.body?.email);
-  const phone = phoneDigits(req.body?.phone);
+  const phone = canonicalPhone(req.body?.phone);
   const websiteUrl = String(req.body?.websiteUrl || '').trim();
   if (recordId && !/^[0-9a-f-]{36}$/i.test(recordId)) {
     return res.status(400).json({ error: '线索 ID 格式无效' });
@@ -5439,6 +5439,11 @@ const firstValidEmail = (...values) => {
   return null;
 };
 const phoneDigits = (value) => String(value || '').replace(/\D/g, '');
+// CRM 中历史手机号既有「173...」也有「+86173...」格式；仅对中国 86 + 11 位号码折叠为同一个比较键。
+const canonicalPhone = (value) => {
+  const digits = phoneDigits(value);
+  return /^86\d{11}$/.test(digits) ? digits.slice(2) : digits;
+};
 
 async function findDuplicateLeadRecords({ schema, email, phone, domain, recordId = '' }) {
   return pool.query(
@@ -5451,7 +5456,11 @@ async function findDuplicateLeadRecords({ schema, email, phone, domain, recordId
             "createdAt" AS "createdAt",
             array_to_string(array_remove(ARRAY[
               CASE WHEN $1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text) THEN '邮箱' END,
-              CASE WHEN $2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text THEN 'WhatsApp/手机号' END,
+              CASE WHEN $2::text <> '' AND (
+                CASE WHEN regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') ~ '^86\\d{11}$'
+                  THEN right(regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g'), 11)
+                  ELSE regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') END
+              ) = $2::text THEN 'WhatsApp/手机号' END,
               CASE WHEN $3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text THEN '官网链接' END
             ]::text[], NULL), '、') AS "matchedBy"
        FROM ${schema}.opportunity
@@ -5459,7 +5468,11 @@ async function findDuplicateLeadRecords({ schema, email, phone, domain, recordId
         AND ($4::uuid IS NULL OR id <> $4::uuid)
         AND (
           ($1::text <> '' AND lower(btrim(COALESCE("youXiangPrimaryEmail", ''))) = lower($1::text))
-          OR ($2::text <> '' AND regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') = $2::text)
+          OR ($2::text <> '' AND (
+            CASE WHEN regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') ~ '^86\\d{11}$'
+              THEN right(regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g'), 11)
+              ELSE regexp_replace(COALESCE("whatsappPrimaryPhoneNumber", ''), '\\D', '', 'g') END
+          ) = $2::text)
           OR ($3::text IS NOT NULL AND conv.normalized_website_domain("guanWangLianJiePrimaryLinkUrl") = $3::text)
         )
       ORDER BY "createdAt" DESC
@@ -5699,7 +5712,7 @@ app.post('/api/conversations/:id/convert-to-lead', requireSameSite, async (req, 
   // 只在用户明确确认后放行，避免同一 WhatsApp/邮箱/官网被静默写成多条线索。
   if (b.allowDuplicate !== true) {
     const duplicateEmail = firstValidEmail(email);
-    const duplicatePhone = /^\+?\d{5,15}$/.test(rawPhone) ? phoneDigits(rawPhone) : '';
+    const duplicatePhone = /^\+?\d{5,15}$/.test(rawPhone) ? canonicalPhone(rawPhone) : '';
     const duplicateWebsiteUrl = String(b.websiteUrl || '').trim();
     const duplicateDomain = duplicateWebsiteUrl ? await normalizedWebsiteDomain(pool, duplicateWebsiteUrl) : null;
     if (duplicateEmail || duplicatePhone || duplicateDomain) {
