@@ -2863,7 +2863,11 @@ app.get('/api/conversations', async (req, res) => {
       : 'inbox';
     const emailCategorySql = requestedChannel === 'email' && emailCategory !== 'all'
       ? emailCategory === 'junk'
-        ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.source_is_junk, false) = true)`
+        ? `AND (SELECT COALESCE(m.source_is_junk, false)
+                 FROM conv.messages m
+                WHERE m.conversation_id = c.id
+                ORDER BY m.sent_at DESC, m.id DESC
+                LIMIT 1) = true`
         : emailCategory === 'outbound'
           ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) = 'outbound')`
           : emailCategory === 'flagged'
