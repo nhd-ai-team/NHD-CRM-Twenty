@@ -29,6 +29,12 @@ BEGIN
       "updatedAt" = now()
   WHERE id = v_company_object_id;
 
+  -- Keep the object active for relation lookups, but do not expose a standalone
+  -- Company board in the CRM navigation. The lead relation picker is the UI entry point.
+  DELETE FROM core."navigationMenuItem"
+  WHERE "workspaceId" = v_workspace_id
+    AND "targetObjectMetadataId" = v_company_object_id;
+
   SELECT id INTO v_role
   FROM core.role
   WHERE "workspaceId" = v_workspace_id
