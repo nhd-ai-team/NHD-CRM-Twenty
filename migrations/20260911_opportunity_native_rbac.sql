@@ -14,6 +14,7 @@ DECLARE
   v_second_collaborator_field_id uuid;
   v_workspace_member_id_field_id uuid;
   v_group_id uuid;
+  v_unassigned_group_id uuid;
   v_field_id uuid;
   v_role record;
 BEGIN
@@ -157,6 +158,37 @@ BEGIN
           gen_random_uuid(), v_application_id, gen_random_uuid(), v_field_id,
           v_object_id, 'IS', NULL, NULL, v_workspace_member_id_field_id, NULL,
           v_group_id, 0, v_workspace_id, v_role.id, now(), now(), NULL
+        );
+      END LOOP;
+
+      -- Unassigned leads remain visible to every sales user. This is a
+      -- nested AND group under the root OR group: owner, collaborator, and
+      -- collaborator 2 must all be empty.
+      v_unassigned_group_id := gen_random_uuid();
+      INSERT INTO core."rowLevelPermissionPredicateGroup" (
+        "universalIdentifier", "applicationId", id, "logicalOperator",
+        "positionInRowLevelPermissionPredicateGroup", "workspaceId", "roleId",
+        "createdAt", "updatedAt", "deletedAt", "objectMetadataId",
+        "parentRowLevelPermissionPredicateGroupId"
+      ) VALUES (
+        v_unassigned_group_id, v_application_id, v_unassigned_group_id, 'AND', 1,
+        v_workspace_id, v_role.id, now(), now(), NULL, v_object_id, v_group_id
+      );
+
+      FOREACH v_field_id IN ARRAY ARRAY[
+        v_owner_field_id, v_collaborator_field_id, v_second_collaborator_field_id
+      ] LOOP
+        INSERT INTO core."rowLevelPermissionPredicate" (
+          "universalIdentifier", "applicationId", id, "fieldMetadataId",
+          "objectMetadataId", operand, value, "subFieldName",
+          "workspaceMemberFieldMetadataId", "workspaceMemberSubFieldName",
+          "rowLevelPermissionPredicateGroupId",
+          "positionInRowLevelPermissionPredicateGroup", "workspaceId", "roleId",
+          "createdAt", "updatedAt", "deletedAt"
+        ) VALUES (
+          gen_random_uuid(), v_application_id, gen_random_uuid(), v_field_id,
+          v_object_id, 'IS_EMPTY', NULL, NULL, NULL, NULL,
+          v_unassigned_group_id, 0, v_workspace_id, v_role.id, now(), now(), NULL
         );
       END LOOP;
     ELSE
