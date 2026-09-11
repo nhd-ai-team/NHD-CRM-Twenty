@@ -46,7 +46,7 @@ function hasCustomerFormValue(draft) {
     .some(key => String(draft?.[key] || '').trim())
 }
 
-function EmailListItem({ conv, active, onClick, onToggleFlag, onToggleCustomerMail }) {
+function EmailListItem({ conv, active, onClick, onToggleFlag, onToggleCustomerMail, onToggleJunkMail }) {
   const [hovered, setHovered] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const last = conv.messages[conv.messages.length - 1]
@@ -69,8 +69,9 @@ function EmailListItem({ conv, active, onClick, onToggleFlag, onToggleCustomerMa
             <button type="button" title={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} aria-label={conv.sourceIsFlagged ? '取消重点' : '标记为重点'} onClick={event => { event.stopPropagation(); onToggleFlag(conv) }} style={{ border: 'none', background: 'transparent', padding: 1, color: conv.sourceIsFlagged ? '#f04438' : 'var(--text-muted)', cursor: 'pointer', display: 'inline-flex' }}>
               <Flag size={15} fill={conv.sourceIsFlagged ? 'currentColor' : 'none'} strokeWidth={1.8} />
             </button>
-            {menuOpen && onToggleCustomerMail && <div onClick={event => event.stopPropagation()} style={{ position: 'absolute', top: 24, right: 0, zIndex: 5, minWidth: 132, padding: 5, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', boxShadow: 'var(--shadow-md)' }}>
-              <button type="button" onClick={() => { setMenuOpen(false); onToggleCustomerMail(conv) }} style={{ width: '100%', border: 'none', borderRadius: 4, padding: '7px 9px', textAlign: 'left', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12 }}>{conv.isCustomerMail ? '取消客户邮件' : '设为客户邮件'}</button>
+            {menuOpen && (onToggleCustomerMail || onToggleJunkMail) && <div onClick={event => event.stopPropagation()} style={{ position: 'absolute', top: 24, right: 0, zIndex: 5, minWidth: 150, padding: 5, border: '1px solid var(--border)', borderRadius: 6, background: 'var(--bg-primary)', boxShadow: 'var(--shadow-md)' }}>
+              {onToggleCustomerMail && <button type="button" onClick={() => { setMenuOpen(false); onToggleCustomerMail(conv) }} style={{ width: '100%', border: 'none', borderRadius: 4, padding: '7px 9px', textAlign: 'left', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12 }}>{conv.isCustomerMail ? '取消客户邮件' : '设为客户邮件'}</button>}
+              {onToggleJunkMail && <button type="button" onClick={() => { setMenuOpen(false); onToggleJunkMail(conv) }} style={{ width: '100%', border: 'none', borderRadius: 4, padding: '7px 9px', textAlign: 'left', background: 'transparent', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 12 }}>{conv.sourceIsJunk ? '标记为非垃圾邮件' : '这是垃圾邮件'}</button>}
             </div>}
           </div>
         )}
@@ -140,7 +141,7 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
 }
 
 export function MailApp() {
-  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, loadMore, hasMore, loadingMore, totalCount } = useEmails()
+  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, loadMore, hasMore, loadingMore, totalCount } = useEmails()
   const markCustomerMailAfterFormSave = useCallback(async (conversationId, draft) => {
     if (!selected?.latestMessageId || selected.isCustomerMail || !hasCustomerFormValue(draft)) return
     await toggleCustomerMail(conversationId, selected.latestMessageId, true)
@@ -201,7 +202,7 @@ export function MailApp() {
           {filtered.length === 0
             ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>暂无邮件</div>
             : filtered.map(conv => (
-                <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} onToggleFlag={conv => toggleFlag(conv.id, conv.latestMessageId, !conv.sourceIsFlagged)} onToggleCustomerMail={conv => toggleCustomerMail(conv.id, conv.latestMessageId, !conv.isCustomerMail)} />
+                <EmailListItem key={conv.id} conv={conv} active={conv.id === selectedId} onClick={() => setSelectedId(conv.id)} onToggleFlag={conv => toggleFlag(conv.id, conv.latestMessageId, !conv.sourceIsFlagged)} onToggleCustomerMail={conv => toggleCustomerMail(conv.id, conv.latestMessageId, !conv.isCustomerMail)} onToggleJunkMail={conv => toggleJunkMail(conv.id, conv.latestMessageId, !conv.sourceIsJunk)} />
               ))
           }
           {hasMore && <div ref={listBottomRef} style={{ padding: '10px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{loadingMore ? '正在加载…' : '继续下拉加载更多'}</div>}
