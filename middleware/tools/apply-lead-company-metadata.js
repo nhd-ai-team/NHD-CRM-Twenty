@@ -40,7 +40,7 @@ async function main() {
 
     await client.query(
       `UPDATE core."fieldMetadata"
-       SET label = '公司名称',
+       SET label = '线索名称',
            "isLabelSyncedWithName" = false,
            "updatedAt" = now()
        WHERE id = $1`,
@@ -100,33 +100,6 @@ async function main() {
                AND vf."deletedAt" IS NULL
            )`,
         [opportunity.id, leadNoFieldId],
-      );
-    }
-
-    if (companyFieldId) {
-      await client.query(
-        `UPDATE core."viewField" vf
-         SET "isVisible" = false,
-             "updatedAt" = now()
-         FROM core."view" v
-         WHERE vf."viewId" = v.id
-           AND v."objectMetadataId" = $1
-           AND v.type = 'TABLE'
-           AND vf."fieldMetadataId" = $2`,
-        [opportunity.id, companyFieldId],
-      );
-      await client.query(
-        `UPDATE core."pageLayoutWidget" plw
-         SET "deletedAt" = COALESCE(plw."deletedAt", now()),
-             "updatedAt" = now()
-         FROM core."pageLayoutTab" plt
-         JOIN core."pageLayout" pl ON pl.id = plt."pageLayoutId"
-         WHERE plw."pageLayoutTabId" = plt.id
-           AND pl."objectMetadataId" = $1
-           AND plw.type = 'FIELD'
-           AND plw.configuration->>'fieldMetadataId' = $2
-           AND plw."deletedAt" IS NULL`,
-        [opportunity.id, companyFieldId],
       );
     }
 

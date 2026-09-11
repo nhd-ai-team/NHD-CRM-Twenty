@@ -3779,8 +3779,8 @@
     try { window.__NHD_ERRORS__.push({ name: 'installAuthCapture', msg: String(e), at: Date.now() }); } catch (_) {}
   }
 
-  // ── 线索字段显示兜底：服务端 metadata 已改为「公司名称」，但 Twenty 前端可能长期持有旧缓存。
-  // 这里只处理可见文案，不改数据；并隐藏右侧记录页的 Company 关系卡片，避免和公司名称主列重复。
+  // ── 线索字段显示兜底：服务端 metadata 已改为「线索名称」，但 Twenty 前端可能长期持有旧缓存。
+  // 这里只处理旧缓存中的可见文案；公司关系字段由原生 CRM 展示和编辑。
   (function () {
     if (window.__NHD_LEAD_COMPANY_UI_FIX__) return;
     window.__NHD_LEAD_COMPANY_UI_FIX__ = true;
@@ -3794,30 +3794,11 @@
       var nodes = scope.querySelectorAll('span, div, button, th, label, p');
       for (var i = 0; i < nodes.length; i++) {
         var node = nodes[i];
-        if (textOf(node) === '访客ID') node.textContent = '公司名称';
+        if (textOf(node) === '访客ID') node.textContent = '线索名称';
       }
     }
 
-    function hideCompanyRelationCards(root) {
-      var scope = root && root.querySelectorAll ? root : document;
-      var nodes = scope.querySelectorAll('span, div, button, label, p');
-      for (var i = 0; i < nodes.length; i++) {
-        var node = nodes[i];
-        if (textOf(node) !== 'Company') continue;
-        var card = node.closest('[data-testid], [role="button"], section, article, div');
-        for (var depth = 0; card && depth < 6; depth++) {
-          var cardText = textOf(card);
-          if (cardText === 'Company' || /^Company\s*$/.test(cardText)) {
-            card.style.display = 'none';
-            card.setAttribute('data-nhd-hidden-company-relation', '1');
-            break;
-          }
-          card = card.parentElement;
-        }
-      }
-    }
-
-    // 仅「机会(线索)」对象需要这个兜底（列表列头 + 详情字段 label + 详情 Company 卡片）。
+    // 仅「机会(线索)」对象需要这个兜底（列表列头 + 详情字段 label）。
     function isOpportunityPage() {
       var r = parseRoute();
       return !!r && canonicalObject(r.slug) === 'opportunity';
@@ -3826,7 +3807,6 @@
     function applyLeadCompanyUiFix(root) {
       if (!isOpportunityPage()) return;
       replaceVisitorIdLabels(root || document);
-      hideCompanyRelationCards(root || document);
     }
 
     applyLeadCompanyUiFix();
@@ -3865,7 +3845,6 @@
           var list = _lcTargets; _lcTargets = [];
           for (var k = 0; k < list.length; k++) {
             replaceVisitorIdLabels(list[k]);
-            hideCompanyRelationCards(list[k]);
           }
         }, 120);
       }).observe(document.body, { childList: true, subtree: true, characterData: true });
