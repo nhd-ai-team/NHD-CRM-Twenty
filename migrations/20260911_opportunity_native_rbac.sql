@@ -66,6 +66,41 @@ BEGIN
     RAISE EXCEPTION 'opportunity owner/collaborator/member metadata not found';
   END IF;
 
+  -- A role-level "read all" flag bypasses row predicates entirely. Keep the
+  -- sales role object-scoped so the opportunity predicates below are applied.
+  -- The primary customer/project objects receive explicit object permissions
+  -- below so their existing pages remain available while their own row rules
+  -- are completed separately.
+  UPDATE core.role
+     SET "canReadAllObjectRecords" = false,
+         "canUpdateAllObjectRecords" = false,
+         "canSoftDeleteAllObjectRecords" = false,
+         "canDestroyAllObjectRecords" = false
+   WHERE "workspaceId" = v_workspace_id
+     AND label = '销售';
+
+  INSERT INTO core."objectPermission" (
+    id, "roleId", "objectMetadataId", "canReadObjectRecords",
+    "canUpdateObjectRecords", "canSoftDeleteObjectRecords",
+    "canDestroyObjectRecords", "workspaceId", "createdAt", "updatedAt",
+    "universalIdentifier", "applicationId"
+  )
+  SELECT gen_random_uuid(), r.id, om.id, true, true, true, true,
+         v_workspace_id, now(), now(), gen_random_uuid(), om."applicationId"
+    FROM core.role r
+    JOIN core."objectMetadata" om
+      ON om."workspaceId" = v_workspace_id
+     AND om."nameSingular" IN ('person', 'xiangMu')
+     AND om."isActive" = true
+   WHERE r."workspaceId" = v_workspace_id
+     AND r.label = '销售'
+  ON CONFLICT ("objectMetadataId", "roleId") DO UPDATE
+    SET "canReadObjectRecords" = true,
+        "canUpdateObjectRecords" = true,
+        "canSoftDeleteObjectRecords" = true,
+        "canDestroyObjectRecords" = true,
+        "updatedAt" = now();
+
   FOR v_role IN
     SELECT id, label
     FROM core.role
