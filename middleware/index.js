@@ -7449,6 +7449,10 @@ async function reconcileEmailMailboxState(client, mailbox, mailboxType, uidValid
               source_flags = $5::jsonb,
               source_is_junk = $6,
               source_is_flagged = $7,
+              crm_is_flagged_override = CASE
+                WHEN COALESCE(m.source_is_flagged, false) IS DISTINCT FROM $7 THEN false
+                ELSE COALESCE(m.crm_is_flagged_override, false)
+              END,
               mail_direction = CASE WHEN $8 = 'outbound' THEN 'outbound' ELSE 'inbound' END
         FROM conv.conversations c
        WHERE m.conversation_id = c.id
