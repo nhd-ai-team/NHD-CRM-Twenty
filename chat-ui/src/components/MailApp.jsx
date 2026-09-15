@@ -141,7 +141,7 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
 }
 
 export function MailApp() {
-  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, loadMore, hasMore, loadingMore, totalCount } = useEmails()
+  const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, loadMore, hasMore, loadingMore, totalCount, emailSyncHealth } = useEmails()
   const markCustomerMailAfterFormSave = useCallback(async (conversationId, draft) => {
     if (!selected?.latestMessageId || selected.isCustomerMail || !hasCustomerFormValue(draft)) return
     await toggleCustomerMail(conversationId, selected.latestMessageId, true)
@@ -183,6 +183,10 @@ export function MailApp() {
           <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>{totalCount || filtered.length}</span>
         </div>
         <div style={{ padding: '8px 12px', flexShrink: 0 }}>
+          {emailSyncHealth?.status === 'degraded' && <div role="alert" style={{ marginBottom: 8, padding: '8px 10px', borderRadius: 6, background: '#fff4e5', border: '1px solid #f0b35a', color: '#8a4b08', fontSize: 11, lineHeight: 1.45 }}>
+            {emailSyncHealth.errorKind === 'rate_limited' ? '网易邮箱同步受到频率限制，红旗和分类同步可能暂时延迟。' : '网易邮箱同步异常，邮件状态可能暂时延迟。'}
+            {emailSyncHealth.consecutiveFailures > 1 ? ` 已连续失败 ${emailSyncHealth.consecutiveFailures} 次。` : ''}
+          </div>}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 6, background: 'var(--bg-active)' }}>
             <Search size={13} style={{ color: 'var(--text-muted)' }} />
             <input

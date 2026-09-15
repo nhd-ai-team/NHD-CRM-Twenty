@@ -15,6 +15,7 @@ export function useEmails() {
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
+  const [emailSyncHealth, setEmailSyncHealth] = useState(null)
 
   const requireAccessToken = useCallback(async () => {
     const token = await waitForTwentyAccessToken()
@@ -65,6 +66,13 @@ export function useEmails() {
       if (append) { loadingMoreRef.current = false; setLoadingMore(false) }
     }
   }, [authExpired, emailCategory, requireAccessToken])
+
+  const loadEmailSyncHealth = useCallback(async () => {
+    try {
+      const response = await fetch(`/conv-api/email/status?_=${Date.now()}`, { cache: 'no-store', headers: withTwentyAuthHeaders() })
+      if (response.ok) setEmailSyncHealth(await response.json())
+    } catch (_) {}
+  }, [])
 
   const loadMessages = useCallback(async (convId) => {
     if (!convId || authExpired) return
@@ -147,9 +155,11 @@ export function useEmails() {
   useEffect(() => {
     if (authExpired) return undefined
     load().catch(error => console.error(error))
+    loadEmailSyncHealth()
     const timer = setInterval(() => load().catch(() => {}), 15000)
-    return () => clearInterval(timer)
-  }, [load, authExpired])
+    const healthTimer = setInterval(loadEmailSyncHealth, 5000)
+    return () => { clearInterval(timer); clearInterval(healthTimer) }
+  }, [load, loadEmailSyncHealth, authExpired])
 
   useEffect(() => {
     if (!selectedId || authExpired) return undefined
@@ -169,5 +179,5 @@ export function useEmails() {
 
   const selected = emails.find(c => c.id === selectedId) ?? null
 
-  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount }
+  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount, emailSyncHealth }
 }

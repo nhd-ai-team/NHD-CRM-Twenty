@@ -3920,6 +3920,7 @@ app.get('/api/email/status', async (_req, res) => {
       mailbox: IMAP_MAILBOX,
       pollSeconds: IMAP_POLL_SECONDS,
       initialFetchLimit: IMAP_INITIAL_FETCH_LIMIT,
+      syncHealth: emailSyncHealth,
       sync,
       counts: counts.rows[0],
     });
@@ -7381,6 +7382,35 @@ function getInitialStartUid(uidNext) {
 }
 
 let emailPolling = false;
+const emailSyncHealth = {
+  status: IMAP_USER && IMAP_PASSWORD ? 'starting' : 'disabled',
+  error: null,
+  errorKind: null,
+  consecutiveFailures: 0,
+  lastSuccessAt: null,
+  lastFailureAt: null,
+};
+
+function classifyEmailSyncError(error) {
+  const message = String(error?.message || error || 'unknown error');
+  return /limit|rate|too many|throttl|频率|超限|连接数|connection limit/i.test(message) ? 'rate_limited' : 'connection_error';
+}
+
+function markEmailSyncSuccess() {
+  emailSyncHealth.status = 'healthy';
+  emailSyncHealth.error = null;
+  emailSyncHealth.errorKind = null;
+  emailSyncHealth.consecutiveFailures = 0;
+  emailSyncHealth.lastSuccessAt = new Date().toISOString();
+}
+
+function markEmailSyncFailure(error) {
+  emailSyncHealth.status = 'degraded';
+  emailSyncHealth.error = String(error?.message || error || 'unknown error');
+  emailSyncHealth.errorKind = classifyEmailSyncError(error);
+  emailSyncHealth.consecutiveFailures += 1;
+  emailSyncHealth.lastFailureAt = new Date().toISOString();
+}
 async function syncEmailMailbox(client, mailbox) {
   const lock = await client.getMailboxLock(mailbox);
   try {
@@ -7489,14 +7519,20 @@ async function pollEmailsOnce() {
   try {
     await client.connect();
     const results = [];
+    const errors = [];
     const targetMailboxes = [...new Set(IMAP_SYNC_MAILBOXES)].filter(mailbox => classifySyncMailbox(mailbox));
     const ignoredMailboxes = [...new Set(IMAP_SYNC_MAILBOXES)].filter(mailbox => !classifySyncMailbox(mailbox));
     if (ignoredMailboxes.length) console.log(`[email] ignored non-target mailboxes: ${ignoredMailboxes.join(', ')}`);
     for (const mailbox of targetMailboxes) {
       try { results.push(await syncEmailMailbox(client, mailbox)); }
-      catch (error) { console.error(`[email] mailbox ${mailbox} failed:`, error.message); }
+      catch (error) { console.error(`[email] mailbox ${mailbox} failed:`, error.message); errors.push({ mailbox, error: error.message }); }
     }
-    return { skipped: false, mailboxes: results, fetched: results.reduce((sum, item) => sum + item.fetched, 0), inserted: results.reduce((sum, item) => sum + item.inserted, 0) };
+    if (errors.length) markEmailSyncFailure(new Error(errors.map(item => `${item.mailbox}: ${item.error}`).join('; ')));
+    else markEmailSyncSuccess();
+    return { skipped: false, mailboxes: results, errors, fetched: results.reduce((sum, item) => sum + item.fetched, 0), inserted: results.reduce((sum, item) => sum + item.inserted, 0) };
+  } catch (error) {
+    markEmailSyncFailure(error);
+    throw error;
   } finally {
     try { await client.logout(); } catch (e) {}
     emailPolling = false;
@@ -7509,7 +7545,7 @@ function startEmailPoller() {
     return;
   }
   console.log(`[email] poller enabled: ${IMAP_USER}@${IMAP_HOST}:${IMAP_PORT} mailbox=${IMAP_MAILBOX} every ${IMAP_POLL_SECONDS}s`);
-  const run = () => pollEmailsOnce().catch(e => console.error('[email] poll cycle failed:', e.message));
+  const run = () => pollEmailsOnce().catch(e => console.error(`[email] poll cycle failed (${emailSyncHealth.errorKind}):`, e.message));
   run();
   setInterval(run, IMAP_POLL_SECONDS * 1000);
 }
