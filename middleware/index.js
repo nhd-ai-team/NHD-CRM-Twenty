@@ -85,7 +85,7 @@ const IMAP_MAILBOX = process.env.IMAP_MAILBOX || 'INBOX';
 const IMAP_SYNC_MAILBOXES = String(process.env.IMAP_SYNC_MAILBOXES || `${IMAP_MAILBOX},已发送,垃圾邮件`)
   .split(',').map(item => item.trim()).filter(Boolean);
 const IMAP_STATE_SYNC_LIMIT = Math.max(100, Number(process.env.IMAP_STATE_SYNC_LIMIT || 5000));
-const IMAP_POLL_SECONDS = Math.max(3, Number(process.env.IMAP_POLL_SECONDS || 60));
+const IMAP_POLL_SECONDS = Math.max(2, Number(process.env.IMAP_POLL_SECONDS || 60));
 const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
 const UPLOAD_DIR = process.env.CONVERSATION_UPLOAD_DIR || '/app/uploads/conversation-files';
 const DINGTALK_ENABLED = String(process.env.DINGTALK_ENABLED || 'false').toLowerCase() === 'true';
