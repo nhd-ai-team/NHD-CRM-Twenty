@@ -1219,7 +1219,11 @@ async function ensureSchema() {
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS source_is_flagged BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS crm_is_flagged BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS crm_is_flagged_override BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS crm_flag_override_source_is_flagged BOOLEAN;
     UPDATE conv.messages SET crm_is_flagged_override = true WHERE crm_is_flagged = true AND crm_is_flagged_override = false;
+    UPDATE conv.messages
+       SET crm_flag_override_source_is_flagged = source_is_flagged
+     WHERE crm_is_flagged_override = true AND crm_flag_override_source_is_flagged IS NULL;
     ALTER TABLE conv.messages ADD COLUMN IF NOT EXISTS crm_is_customer BOOLEAN NOT NULL DEFAULT false;
     UPDATE conv.messages m SET source_mailbox = 'INBOX'
       FROM conv.conversations c
@@ -2905,7 +2909,7 @@ app.get('/api/conversations', async (req, res) => {
         : emailCategory === 'outbound'
           ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) = 'outbound')`
           : emailCategory === 'flagged'
-            ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND (COALESCE(m.crm_is_flagged, false) = true OR COALESCE(m.source_is_flagged, false) = true))`
+            ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND CASE WHEN COALESCE(m.crm_is_flagged_override, false) THEN COALESCE(m.crm_is_flagged, false) ELSE COALESCE(m.source_is_flagged, false) END)`
           : emailCategory === 'customer'
             ? `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.crm_is_customer, false) = true)`
           : `AND EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id
@@ -2927,7 +2931,7 @@ app.get('/api/conversations', async (req, res) => {
     CASE WHEN c.channel = 'email' THEN (SELECT m.id FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "latestMessageId",
       CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE NULL END AS "mailDirection",
     CASE WHEN c.channel = 'email' THEN (SELECT COALESCE(m.crm_is_junk, m.source_is_junk, false) FROM conv.messages m WHERE m.conversation_id = c.id ORDER BY m.sent_at DESC, m.id DESC LIMIT 1) ELSE false END AS "sourceIsJunk",
-    CASE WHEN c.channel = 'email' THEN EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false))) ELSE false END AS "sourceIsFlagged",
+    CASE WHEN c.channel = 'email' THEN EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND CASE WHEN COALESCE(m.crm_is_flagged_override, false) THEN COALESCE(m.crm_is_flagged, false) ELSE COALESCE(m.source_is_flagged, false) END) ELSE false END AS "sourceIsFlagged",
     CASE WHEN c.channel = 'email' THEN EXISTS (SELECT 1 FROM conv.messages m WHERE m.conversation_id = c.id AND COALESCE(m.crm_is_customer, false)) ELSE false END AS "isCustomerMail",
     COALESCE(unread.unread_count, 0)::int AS "unreadCount",
     CASE WHEN o.id IS NULL THEN NULL ELSE json_build_object(
@@ -3174,7 +3178,7 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments,
       CASE WHEN c.channel = 'email' THEN COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) ELSE NULL END AS "mailDirection",
       m.from_address AS "fromAddress", m.to_addresses AS "toAddresses", m.cc_addresses AS "ccAddresses", m.sent_at AS "sentAt",
-      m.source_mailbox AS "sourceMailbox", m.source_uid AS "sourceUid", m.source_uid_validity AS "sourceUidValidity", m.source_flags AS "sourceFlags", COALESCE(m.crm_is_junk, m.source_is_junk, false) AS "sourceIsJunk", m.crm_is_junk AS "crmIsJunk", m.source_is_flagged AS "sourceIsFlagged", (COALESCE(m.source_is_flagged, false) OR COALESCE(m.crm_is_flagged, false)) AS "isFlagged", COALESCE(m.crm_is_customer, false) AS "isCustomerMail",
+      m.source_mailbox AS "sourceMailbox", m.source_uid AS "sourceUid", m.source_uid_validity AS "sourceUidValidity", m.source_flags AS "sourceFlags", COALESCE(m.crm_is_junk, m.source_is_junk, false) AS "sourceIsJunk", m.crm_is_junk AS "crmIsJunk", m.source_is_flagged AS "sourceIsFlagged", CASE WHEN COALESCE(m.crm_is_flagged_override, false) THEN COALESCE(m.crm_is_flagged, false) ELSE COALESCE(m.source_is_flagged, false) END AS "isFlagged", COALESCE(m.crm_is_customer, false) AS "isCustomerMail",
       m.raw_message_type AS "rawMessageType", m.message_summary AS "messageSummary",
       CASE WHEN m.sender_type = 'agent' THEN COALESCE(
         NULLIF(CONCAT_WS(' ', sender_member."nameFirstName", sender_member."nameLastName"), ''),
@@ -3206,9 +3210,9 @@ app.post('/api/conversations/:id/messages/:messageId/flag', requireSameSite, asy
   if (access.conversation.channel !== 'email') return res.status(400).json({ error: '仅支持标记邮件' });
   const flagged = req.body?.flagged === true;
   const result = await pool.query(
-    `UPDATE conv.messages SET crm_is_flagged = $1, crm_is_flagged_override = false
+    `UPDATE conv.messages SET crm_is_flagged = $1, crm_is_flagged_override = true, crm_flag_override_source_is_flagged = source_is_flagged
       WHERE id = $2 AND conversation_id = $3 AND content_type = 'email'
-      RETURNING id, (COALESCE(source_is_flagged, false) OR COALESCE(crm_is_flagged, false)) AS "isFlagged"`,
+      RETURNING id, CASE WHEN COALESCE(crm_is_flagged_override, false) THEN COALESCE(crm_is_flagged, false) ELSE COALESCE(source_is_flagged, false) END AS "isFlagged"`,
     [flagged, req.params.messageId, req.params.id],
   );
   if (!result.rowCount) return res.status(404).json({ error: '邮件不存在' });
@@ -7449,6 +7453,16 @@ async function reconcileEmailMailboxState(client, mailbox, mailboxType, uidValid
               source_flags = $5::jsonb,
               source_is_junk = $6,
               source_is_flagged = $7,
+              crm_is_flagged_override = CASE
+                WHEN COALESCE(m.crm_is_flagged_override, false)
+                 AND m.crm_flag_override_source_is_flagged IS NOT DISTINCT FROM $7
+                THEN true ELSE false
+              END,
+              crm_flag_override_source_is_flagged = CASE
+                WHEN COALESCE(m.crm_is_flagged_override, false)
+                 AND m.crm_flag_override_source_is_flagged IS NOT DISTINCT FROM $7
+                THEN m.crm_flag_override_source_is_flagged ELSE NULL
+              END,
               mail_direction = CASE WHEN $8 = 'outbound' THEN 'outbound' ELSE 'inbound' END
         FROM conv.conversations c
        WHERE m.conversation_id = c.id
