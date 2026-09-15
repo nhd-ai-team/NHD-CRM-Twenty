@@ -41,6 +41,8 @@ curl -i http://127.0.0.1:3000/conv-api/events
 
 主动 WhatsApp 外发补偿检查：模拟 WAHA 首次发送失败，确认请求进入 `conv.outbound_requests` 的 `retry_pending`，后台按退避策略重试；成功后只创建一条 CRM 消息，达到上限后状态为 `failed` 并保留 `last_error`。
 
+邮箱状态同步检查：确认同步目标仅为 `INBOX/收件箱`、已发送、垃圾邮件；在网易端对已有邮件加红旗、取消红旗，或在收件/发件/垃圾之间移动后执行一次同步，确认 CRM 的来源文件夹、红旗、垃圾和收发分类更新；确认地区文件夹不会进入 CRM，CRM 的客户邮件标记不被状态回扫覆盖。
+
 登录态下应返回 `text/event-stream`；未登录应返回 `401`。发布后还需从 WhatsApp 和官网 Widget 各发送一条测试消息，确认工作台即时刷新。`/conv-api/` 必须保持 `proxy_buffering off`，否则 SSE 会被代理缓存。
 
 钉钉官网通知检查：确认 middleware 日志出现 `website work notifications enabled` 或机器人通知 worker 已启用；向官网客服发送一条首条访客消息，确认指定销售收到企业内部机器人单聊；重复投递同一事件键不得产生重复通知；临时让钉钉接口失败时，`conv.dingtalk_notification_outbox` 应保留 `retry_pending`，恢复后自动重试并最终标记 `sent`，同时保存 `provider_response`。机器人单聊、旧版工作通知和服务窗单聊是三条不同链路，不能混淆验收。

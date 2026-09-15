@@ -33,6 +33,7 @@ const {
   normalizeUploadFilename,
   publicFileUrl,
 } = require('./lib/files');
+const { classifySyncMailbox } = require('./lib/email-sync');
 
 const app = express();
 // verify 回调保留原始 body，供 Instagram/Meta 的 X-Hub-Signature-256 校验使用。
@@ -83,6 +84,7 @@ const IMAP_PASSWORD = process.env.IMAP_PASSWORD || '';
 const IMAP_MAILBOX = process.env.IMAP_MAILBOX || 'INBOX';
 const IMAP_SYNC_MAILBOXES = String(process.env.IMAP_SYNC_MAILBOXES || `${IMAP_MAILBOX},已发送,垃圾邮件`)
   .split(',').map(item => item.trim()).filter(Boolean);
+const IMAP_STATE_SYNC_LIMIT = Math.max(100, Number(process.env.IMAP_STATE_SYNC_LIMIT || 5000));
 const IMAP_POLL_SECONDS = Math.max(15, Number(process.env.IMAP_POLL_SECONDS || 60));
 const IMAP_INITIAL_FETCH_LIMIT = Math.max(1, Number(process.env.IMAP_INITIAL_FETCH_LIMIT || 20));
 const UPLOAD_DIR = process.env.CONVERSATION_UPLOAD_DIR || '/app/uploads/conversation-files';
@@ -7384,8 +7386,10 @@ async function syncEmailMailbox(client, mailbox) {
     let startUid = Number(sync.lastUid) || 0;
     if (sync.uidValidity != null && uidValidity != null && Number(sync.uidValidity) !== uidValidity) startUid = getInitialStartUid(uidNext);
     if (firstRun && uidNext) startUid = getInitialStartUid(uidNext);
-    const outbound = /sent|已发送/i.test(mailbox);
-    const junk = /junk|垃圾|spam|广告/i.test(mailbox);
+    const mailboxType = classifySyncMailbox(mailbox);
+    if (!mailboxType) return { mailbox, fetched: 0, inserted: 0, stateUpdated: 0, skipped: true };
+    const outbound = mailboxType === 'outbound';
+    const junk = mailboxType === 'junk';
     let maxUid = startUid, fetchedCount = 0, insertedCount = 0;
     for await (const msg of client.fetch(`${startUid + 1}:*`, { uid: true, source: true, flags: true }, { uid: true })) {
       if (msg.uid <= startUid) continue;
@@ -7421,8 +7425,39 @@ async function syncEmailMailbox(client, mailbox) {
       } catch (error) { console.error('[email] parse/persist failed mailbox/uid', mailbox, msg.uid, error.message); }
     }
     if (maxUid > startUid) await setEmailSync(syncKey, uidValidity, maxUid);
-    return { mailbox, fetched: fetchedCount, inserted: insertedCount, lastUid: maxUid };
+    const stateUpdated = await reconcileEmailMailboxState(client, mailbox, mailboxType, uidValidity, uidNext);
+    return { mailbox, fetched: fetchedCount, inserted: insertedCount, stateUpdated, lastUid: maxUid };
   } finally { lock.release(); }
+}
+
+// 网易邮箱中的红旗、收发箱和垃圾分类可能在首次同步后发生变化。
+// 这里只读取目标文件夹的 envelope/flags，不重新下载正文和附件，也不触碰 CRM 人工覆盖字段。
+async function reconcileEmailMailboxState(client, mailbox, mailboxType, uidValidity, uidNext) {
+  const firstUid = Math.max(1, Number(uidNext || 1) - IMAP_STATE_SYNC_LIMIT);
+  let updated = 0;
+  for await (const msg of client.fetch(`${firstUid}:*`, { uid: true, flags: true, envelope: true }, { uid: true })) {
+    const messageId = String(msg.envelope?.messageId || '').trim();
+    if (!messageId) continue;
+    const sourceFlags = msg.flags ? Array.from(msg.flags) : [];
+    const result = await pool.query(
+      `UPDATE conv.messages m
+          SET source_mailbox = $2,
+              source_uid = $3,
+              source_uid_validity = $4,
+              source_flags = $5::jsonb,
+              source_is_junk = $6,
+              source_is_flagged = $7,
+              mail_direction = CASE WHEN $8 = 'outbound' THEN 'outbound' ELSE 'inbound' END
+        FROM conv.conversations c
+       WHERE m.conversation_id = c.id
+         AND c.channel = 'email'
+         AND (m.external_msg_id = $1 OR (m.source_mailbox = $2 AND m.source_uid = $3 AND m.source_uid_validity = $4))
+       RETURNING m.id`,
+      [messageId, mailbox, msg.uid, uidValidity, JSON.stringify(sourceFlags), mailboxType === 'junk', sourceFlags.includes('\\Flagged'), mailboxType],
+    );
+    updated += result.rowCount;
+  }
+  return updated;
 }
 
 async function pollEmailsOnce() {
@@ -7438,7 +7473,10 @@ async function pollEmailsOnce() {
   try {
     await client.connect();
     const results = [];
-    for (const mailbox of IMAP_SYNC_MAILBOXES) {
+    const targetMailboxes = [...new Set(IMAP_SYNC_MAILBOXES)].filter(mailbox => classifySyncMailbox(mailbox));
+    const ignoredMailboxes = [...new Set(IMAP_SYNC_MAILBOXES)].filter(mailbox => !classifySyncMailbox(mailbox));
+    if (ignoredMailboxes.length) console.log(`[email] ignored non-target mailboxes: ${ignoredMailboxes.join(', ')}`);
+    for (const mailbox of targetMailboxes) {
       try { results.push(await syncEmailMailbox(client, mailbox)); }
       catch (error) { console.error(`[email] mailbox ${mailbox} failed:`, error.message); }
     }
