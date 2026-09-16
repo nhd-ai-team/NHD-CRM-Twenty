@@ -155,7 +155,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
         aria-label="AI自动回复配置"
         style={{
           position: 'fixed', top: 62, right: 24, bottom: 24, zIndex: 201,
-          width: 'min(680px, calc(100vw - 48px))', display: 'flex', flexDirection: 'column',
+          width: 'min(820px, calc(100vw - 48px))', display: 'flex', flexDirection: 'column',
           background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 8,
           boxShadow: '0 18px 42px rgba(0,0,0,.22)', overflow: 'hidden',
         }}
@@ -201,8 +201,8 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
             return (
               <div key={ch.id} style={{
                 display: 'grid',
-                gridTemplateColumns: 'minmax(150px, 1fr) minmax(150px, .8fr) minmax(320px, 1.3fr)',
-                alignItems: 'center', gap: 14, minHeight: 74,
+                gridTemplateColumns: '170px minmax(250px, 1fr) minmax(240px, .9fr)',
+                alignItems: 'start', gap: 18, padding: '14px 0', minHeight: 92,
                 borderBottom: '1px solid var(--border-soft)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
@@ -224,7 +224,8 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
                     <button
                       disabled={disabled}
                       onClick={() => patchDraft(ch.id, { scheduleEnabled: false })}
@@ -239,34 +240,37 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                     >
                       按时段
                     </button>
+                    </div>
+                    {draft.scheduleEnabled && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
+                        <input
+                          type="time"
+                          value={draft.scheduleStart}
+                          disabled={disabled}
+                          onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
+                          style={timeInputStyle(disabled)}
+                        />
+                        <span>至</span>
+                        <input
+                          type="time"
+                          value={draft.scheduleEnd}
+                          disabled={disabled}
+                          onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
+                          style={timeInputStyle(disabled)}
+                        />
+                      </div>
+                    )}
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7, color: 'var(--text-muted)', fontSize: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <input
-                        type="time"
-                        value={draft.scheduleStart}
-                        disabled={disabled || !draft.scheduleEnabled}
-                        onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
-                        style={timeInputStyle(disabled || !draft.scheduleEnabled)}
-                      />
-                      <span>至</span>
-                      <input
-                        type="time"
-                        value={draft.scheduleEnd}
-                        disabled={disabled || !draft.scheduleEnabled}
-                        onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
-                        style={timeInputStyle(disabled || !draft.scheduleEnabled)}
-                      />
-                    </div>
+                  <div style={{ minWidth: 0 }}>
                     {ch.id === 'website' && (
                       <div style={{
-                        display: 'flex', flexDirection: 'column', gap: 7,
+                        display: 'flex', flexDirection: 'column', gap: 8,
                         border: '1px solid var(--border)', borderRadius: 6,
-                        padding: '8px 10px', background: 'var(--bg-secondary)',
+                        padding: '10px 12px', background: 'var(--bg-secondary)',
                       }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>人工接管兜底</div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>人工接待未回复时长</div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', color: 'var(--text-muted)', fontSize: 12 }}>
                           <span>销售未回复</span>
                           <input
                             type="number"
@@ -286,6 +290,12 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                 </div>
               )
           })}
+        </div>
+
+        <div style={{ padding: '12px 18px', borderTop: '1px solid var(--border-soft)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', fontSize: 11.5, lineHeight: 1.65 }}>
+          <div style={{ fontWeight: 700, color: 'var(--text-primary)', marginBottom: 3 }}>规则说明</div>
+          <div>人工接待时，销售在线但超过设定时长未回复，AI 会回复客户消息，销售状态保持在线。</div>
+          <div>连续 120 分钟无人回复时，会话自动转为 AI 接待，并将销售状态切换为离线。</div>
         </div>
 
           {error && (
