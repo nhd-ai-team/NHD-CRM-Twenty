@@ -98,13 +98,14 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
   const directionLabel = quoted ? `引用历史（${outbound ? '发件' : '收件'}）` : (outbound ? '发件邮件' : '收件邮件')
   const directionColor = outbound ? '#1677ff' : '#16834b'
   const directionBackground = outbound ? '#f4f8ff' : '#f5fbf7'
+  const cardBackground = quoted ? 'var(--bg-primary)' : directionBackground
   const from = msg.fromAddress || (outbound ? '' : fromLabel)
   const to = addressesLabel(msg.toAddresses)
   const cc = addressesLabel(msg.ccAddresses)
   return (
     <div style={{
-      border: quoted ? `1px dashed ${directionColor}` : '1px solid var(--border)', borderLeft: `4px solid ${directionColor}`, borderRadius: 8, background: directionBackground,
-      marginBottom: 14, overflow: 'hidden', boxShadow: 'var(--shadow-sm)',
+      border: quoted ? '1px solid var(--border)' : '1px solid var(--border)', borderLeft: `4px solid ${quoted ? 'var(--border)' : directionColor}`, borderRadius: 8, background: cardBackground,
+      marginBottom: 14, overflow: 'hidden', boxShadow: quoted ? 'none' : 'var(--shadow-sm)',
     }}>
       <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border-soft)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, minWidth: 0 }}>
