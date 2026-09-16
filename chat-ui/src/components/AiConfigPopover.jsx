@@ -201,8 +201,8 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
             return (
               <div key={ch.id} style={{
                 display: 'grid',
-                gridTemplateColumns: '170px minmax(250px, 1fr) minmax(240px, .9fr)',
-                alignItems: 'start', gap: 14, padding: '10px 0', minHeight: 82,
+                gridTemplateColumns: '170px minmax(250px, .78fr) minmax(240px, 1fr)',
+                alignItems: 'center', gap: 8, padding: '10px 0', minHeight: 82,
                 borderBottom: '1px solid var(--border-soft)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
@@ -260,7 +260,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                     </div>
                   </div>
 
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, display: 'flex', alignItems: 'center' }}>
                     {ch.id === 'website' && (
                       <div style={{
                         display: 'flex', flexDirection: 'column', gap: 8,
