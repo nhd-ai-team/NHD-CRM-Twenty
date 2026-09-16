@@ -3240,11 +3240,18 @@ app.post('/api/conversations/:id/messages/:messageId/flag', requireSameSite, asy
     [flagged, req.params.messageId, req.params.id],
   );
   if (!result.rowCount) return res.status(404).json({ error: '邮件不存在' });
+  let imapSync = { synced: false, reason: '未执行网易邮箱回写' };
+  try {
+    imapSync = await writeEmailFlagToImap(req.params.messageId, flagged);
+  } catch (error) {
+    imapSync = { synced: false, reason: error.message || '网易邮箱回写失败' };
+    console.error('[email] IMAP flag write failed:', req.params.messageId, error.message);
+  }
   await recordAuditEvent(flagged ? 'email.flagged' : 'email.unflagged', {
     channel: 'email', conversationId: req.params.id, messageId: req.params.messageId,
     actor: access.viewer, requestSummary: auditRequestSummary(req), payload: { flagged },
   });
-  res.json(result.rows[0]);
+  res.json({ ...result.rows[0], imapSync });
 });
 
 app.post('/api/conversations/:id/messages/:messageId/customer-mail', requireSameSite, async (req, res) => {
@@ -7403,6 +7410,41 @@ function getEmailSyncKey() {
 function getInitialStartUid(uidNext) {
   const next = Number(uidNext || 1);
   return Math.max(0, next - 1 - IMAP_INITIAL_FETCH_LIMIT);
+}
+
+async function writeEmailFlagToImap(messageId, flagged) {
+  if (!IMAP_USER || !IMAP_PASSWORD) return { synced: false, reason: 'IMAP 未配置' };
+  const result = await pool.query(
+    `SELECT source_mailbox AS mailbox, source_uid AS uid, source_uid_validity AS "uidValidity"
+       FROM conv.messages
+      WHERE id = $1 AND content_type = 'email'
+      LIMIT 1`,
+    [messageId],
+  );
+  const source = result.rows[0];
+  if (!source?.mailbox || !Number.isFinite(Number(source.uid))) {
+    return { synced: false, reason: '邮件缺少网易邮箱 UID，无法回写' };
+  }
+
+  const client = new ImapFlow({
+    host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_TLS,
+    auth: { user: IMAP_USER, pass: IMAP_PASSWORD }, logger: false,
+  });
+  let lock;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock(source.mailbox);
+    const currentUidValidity = client.mailbox.uidValidity == null ? null : Number(client.mailbox.uidValidity);
+    if (source.uidValidity != null && currentUidValidity != null && Number(source.uidValidity) !== currentUidValidity) {
+      return { synced: false, reason: '网易邮箱 UIDVALIDITY 已变化，邮件定位已失效' };
+    }
+    if (flagged) await client.messageFlagsAdd(Number(source.uid), ['\\Flagged'], { uid: true });
+    else await client.messageFlagsRemove(Number(source.uid), ['\\Flagged'], { uid: true });
+    return { synced: true };
+  } finally {
+    try { lock?.release(); } catch (error) {}
+    try { await client.logout(); } catch (error) {}
+  }
 }
 
 let emailPolling = false;

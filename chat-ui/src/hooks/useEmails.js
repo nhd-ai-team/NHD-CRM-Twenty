@@ -16,6 +16,7 @@ export function useEmails() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [totalCount, setTotalCount] = useState(0)
   const [emailSyncHealth, setEmailSyncHealth] = useState(null)
+  const [emailActionNotice, setEmailActionNotice] = useState(null)
 
   const requireAccessToken = useCallback(async () => {
     const token = await waitForTwentyAccessToken()
@@ -93,6 +94,7 @@ export function useEmails() {
 
   const toggleFlag = useCallback(async (convId, messageId, flagged) => {
     await requireAccessToken()
+    setEmailActionNotice(null)
     const response = await fetch(`/conv-api/conversations/${encodeURIComponent(convId)}/messages/${encodeURIComponent(messageId)}/flag`, {
       method: 'POST', cache: 'no-store',
       headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
@@ -105,6 +107,9 @@ export function useEmails() {
     }
     if (!response.ok) throw new Error('重点标记失败')
     const result = await response.json()
+    if (result.imapSync && !result.imapSync.synced) {
+      setEmailActionNotice(`CRM 已更新，但网易邮箱同步失败：${result.imapSync.reason || '未知原因'}`)
+    }
     setEmails(current => current.map(conv => conv.id === convId
       ? { ...conv, sourceIsFlagged: result.isFlagged, messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, isFlagged: result.isFlagged } : msg) }
       : conv))
@@ -179,5 +184,5 @@ export function useEmails() {
 
   const selected = emails.find(c => c.id === selectedId) ?? null
 
-  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount, emailSyncHealth }
+  return { emails, filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, reload: load, loadMore: () => load({ append: true }), hasMore, loadingMore, totalCount, emailSyncHealth, emailActionNotice }
 }
