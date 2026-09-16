@@ -142,11 +142,11 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
   )
 }
 
-function EmailQuoteDivider() {
+function EmailSectionDivider({ label }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 2px 14px', color: 'var(--text-muted)' }} aria-label="以下为引用历史邮件">
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 2px 14px', color: 'var(--text-muted)' }} aria-label={label}>
       <span style={{ flex: 1, borderTop: '1px solid var(--border)' }} />
-      <span style={{ padding: '3px 9px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-active)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>以下为引用历史邮件</span>
+      <span style={{ padding: '3px 9px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-active)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</span>
       <span style={{ flex: 1, borderTop: '1px solid var(--border)' }} />
     </div>
   )
@@ -241,11 +241,17 @@ export function MailApp() {
             <div style={{ flex: 1, overflowY: 'auto', padding: 16, minHeight: 0 }}>
               {selected.messages.map((msg, i) => {
                 const parts = splitQuotedEmail(msg.content)
+                const hasQuotedPart = parts.some(part => part.quoted)
+                // 网易邮件通常把引用放在回复前；按这个顺序渲染，避免当前回复和历史内容混成一块。
+                const orderedParts = hasQuotedPart
+                  ? [...parts.filter(part => part.quoted), ...parts.filter(part => !part.quoted)]
+                  : parts
                 return (
                   <div key={`thread-message-${msg.id ?? i}`}>
-                    {parts.map((part, partIndex) => (
+                    {orderedParts.map((part, partIndex) => (
                       <div key={`${msg.id ?? i}-${partIndex}`}>
-                        {part.quoted && <EmailQuoteDivider />}
+                        {part.quoted && partIndex === orderedParts.findIndex(item => item.quoted) && <EmailSectionDivider label="引用历史邮件" />}
+                        {!part.quoted && hasQuotedPart && partIndex === orderedParts.findIndex(item => !item.quoted) && <EmailSectionDivider label="当前回复" />}
                         <EmailCard
                           msg={{ ...msg, content: part.content }}
                           fromLabel={fromLabel}
