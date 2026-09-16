@@ -2227,26 +2227,25 @@ async function resolveDingtalkRecipients(conversation, isFirstCustomerMessage) {
     const schema = await getWorkspaceSchema();
     const result = await pool.query(`SELECT "userId", "userEmail" AS email FROM ${schema}."workspaceMember" WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`, [conversation.agent_id]);
     if (result.rows[0]) recipients.push(result.rows[0]);
-  } else if (!conversation.owner_id) {
-    // 未分配会话的每条客户消息都通知默认销售；分配后改走负责人/协办人映射。
-    recipients.push(...DINGTALK_SALES_USER_EMAILS.map(email => ({ email })));
-    // 兼容旧配置：只有明确传入钉钉 userid 时，允许其直接作为收件人。
-    recipients.push(...DINGTALK_SALES_USER_IDS.map(userId => ({ directDingtalkUserId: userId })));
   } else {
     const schema = await getWorkspaceSchema();
     const result = await pool.query(
-      `SELECT c.owner_id AS "ownerUserId",
-              owner_member."userEmail" AS "ownerEmail",
+      `SELECT c.owner_id AS "conversationOwnerUserId",
+              conversation_owner."userEmail" AS "conversationOwnerEmail",
+              opportunity_owner."userId" AS "ownerUserId",
+              opportunity_owner."userEmail" AS "ownerEmail",
               collab_member."userId" AS "collaboratorUserId",
               collab_member."userEmail" AS "collaboratorEmail",
               collab2_member."userId" AS "secondCollaboratorUserId",
               collab2_member."userEmail" AS "secondCollaboratorEmail"
          FROM conv.conversations c
          LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
-         LEFT JOIN ${schema}."workspaceMember" owner_member
-                ON owner_member."userId"::text = c.owner_id AND owner_member."deletedAt" IS NULL
          LEFT JOIN ${schema}."opportunity" o
                 ON o.id::text = ct.twenty_opportunity_id AND o."deletedAt" IS NULL
+         LEFT JOIN ${schema}."workspaceMember" conversation_owner
+                ON conversation_owner."userId"::text = c.owner_id AND conversation_owner."deletedAt" IS NULL
+         LEFT JOIN ${schema}."workspaceMember" opportunity_owner
+                ON opportunity_owner.id = o."ownerId" AND opportunity_owner."deletedAt" IS NULL
          LEFT JOIN ${schema}."workspaceMember" collab_member
                 ON collab_member.id = o."xieBanRenId" AND collab_member."deletedAt" IS NULL
          LEFT JOIN ${schema}."workspaceMember" collab2_member
@@ -2256,11 +2255,26 @@ async function resolveDingtalkRecipients(conversation, isFirstCustomerMessage) {
       [conversation.id],
     );
     const row = result.rows[0];
-    if (row) recipients.push(
-      { crmUserId: row.ownerUserId, email: row.ownerEmail },
+    const assignedRecipients = row ? [
+      { crmUserId: row.ownerUserId || row.conversationOwnerUserId, email: row.ownerEmail || row.conversationOwnerEmail },
       { crmUserId: row.collaboratorUserId, email: row.collaboratorEmail },
       { crmUserId: row.secondCollaboratorUserId, email: row.secondCollaboratorEmail },
-    );
+    ].filter(recipient => recipient.crmUserId || recipient.email) : [];
+
+    if (assignedRecipients.length) {
+      recipients.push(...assignedRecipients);
+    } else {
+      // 未分配负责人和协办人的每条客户消息都通知所有已配置钉钉映射的有效成员。
+      const allMembers = await pool.query(
+        `SELECT "userId", "userEmail" AS email
+           FROM ${schema}."workspaceMember"
+          WHERE "deletedAt" IS NULL AND "userEmail" IS NOT NULL`,
+      );
+      recipients.push(...allMembers.rows);
+      // 兼容旧配置：默认邮箱和直发 userid 也纳入未分配通知。
+      recipients.push(...DINGTALK_SALES_USER_EMAILS.map(email => ({ email })));
+      recipients.push(...DINGTALK_SALES_USER_IDS.map(userId => ({ directDingtalkUserId: userId })));
+    }
   }
   return [...new Set(recipients.map(recipient => (
     recipient.directDingtalkUserId || dingtalkMappedUserId(recipient.crmUserId, recipient.email)
