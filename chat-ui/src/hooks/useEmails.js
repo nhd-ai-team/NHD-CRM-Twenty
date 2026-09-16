@@ -148,14 +148,19 @@ export function useEmails() {
       notifyTwentyAuthExpired()
       throw new Error('登录状态已失效，请刷新 CRM 后重试')
     }
-    if (!response.ok) throw new Error('垃圾邮件标记失败')
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}))
+      throw new Error(detail.detail || detail.error || '垃圾邮件标记失败')
+    }
     const result = await response.json()
     setEmails(current => current.map(conv => conv.id === convId
       ? { ...conv, sourceIsJunk: result.isJunk, messages: conv.messages.map(msg => msg.id === messageId ? { ...msg, sourceIsJunk: result.isJunk, crmIsJunk: result.crmIsJunk } : msg) }
       : conv))
+    const shouldRemoveFromCategory = emailCategory !== 'all' && ((junk && emailCategory !== 'junk') || (!junk && emailCategory === 'junk'))
+    if (shouldRemoveFromCategory) setEmails(current => current.filter(conv => conv.id !== convId))
     await load()
     return result
-  }, [authExpired, load, requireAccessToken])
+  }, [authExpired, emailCategory, load, requireAccessToken])
 
   useEffect(() => {
     if (authExpired) return undefined

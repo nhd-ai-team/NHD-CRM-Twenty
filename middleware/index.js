@@ -3278,8 +3278,15 @@ app.post('/api/conversations/:id/messages/:messageId/junk-mail', requireSameSite
   if (!access) return;
   if (access.conversation.channel !== 'email') return res.status(400).json({ error: '仅支持标记邮件' });
   const junk = req.body?.junk === true;
+  let imapMove;
+  try {
+    imapMove = await moveEmailToImapMailbox(req.params.messageId, junk ? 'junk' : 'inbox');
+  } catch (error) {
+    console.error('[email] IMAP junk mailbox move failed:', req.params.messageId, error.message);
+    return res.status(502).json({ error: '网易邮箱移动失败', detail: error.message });
+  }
   const result = await pool.query(
-    `UPDATE conv.messages SET crm_is_junk = $1
+    `UPDATE conv.messages SET crm_is_junk = NULL, source_is_junk = $1
       WHERE id = $2 AND conversation_id = $3 AND content_type = 'email'
       RETURNING id, COALESCE(crm_is_junk, source_is_junk, false) AS "isJunk", crm_is_junk AS "crmIsJunk"`,
     [junk, req.params.messageId, req.params.id],
@@ -7447,6 +7454,41 @@ async function writeEmailFlagToImap(messageId, flagged) {
   }
 }
 
+async function moveEmailToImapMailbox(messageId, targetType) {
+  if (!IMAP_USER || !IMAP_PASSWORD) throw new Error('IMAP 未配置');
+  const targetMailbox = IMAP_SYNC_MAILBOXES.find(mailbox => classifySyncMailbox(mailbox) === targetType);
+  if (!targetMailbox) throw new Error(`未配置 ${targetType === 'junk' ? '垃圾邮件' : '收件箱'} IMAP 文件夹`);
+  const result = await pool.query(
+    `SELECT source_mailbox AS mailbox, source_uid AS uid, source_uid_validity AS "uidValidity"
+       FROM conv.messages
+      WHERE id = $1 AND content_type = 'email'
+      LIMIT 1`,
+    [messageId],
+  );
+  const source = result.rows[0];
+  if (!source?.mailbox || !Number.isFinite(Number(source.uid))) throw new Error('邮件缺少网易邮箱 UID，无法移动');
+  if (String(source.mailbox).toLowerCase() === String(targetMailbox).toLowerCase()) return { synced: true, targetMailbox };
+
+  const client = new ImapFlow({
+    host: IMAP_HOST, port: IMAP_PORT, secure: IMAP_TLS,
+    auth: { user: IMAP_USER, pass: IMAP_PASSWORD }, logger: false,
+  });
+  let lock;
+  try {
+    await client.connect();
+    lock = await client.getMailboxLock(source.mailbox);
+    const currentUidValidity = client.mailbox.uidValidity == null ? null : Number(client.mailbox.uidValidity);
+    if (source.uidValidity != null && currentUidValidity != null && Number(source.uidValidity) !== currentUidValidity) {
+      throw new Error('网易邮箱 UIDVALIDITY 已变化，邮件定位已失效');
+    }
+    await client.messageMove(Number(source.uid), targetMailbox, { uid: true });
+    return { synced: true, targetMailbox };
+  } finally {
+    try { lock?.release(); } catch (error) {}
+    try { await client.logout(); } catch (error) {}
+  }
+}
+
 let emailPolling = false;
 const emailSyncHealth = {
   status: IMAP_USER && IMAP_PASSWORD ? 'starting' : 'disabled',
@@ -7548,6 +7590,7 @@ async function reconcileEmailMailboxState(client, mailbox, mailboxType, uidValid
               source_uid_validity = $4,
               source_flags = $5::jsonb,
               source_is_junk = $6,
+              crm_is_junk = NULL,
               source_is_flagged = $7,
               crm_is_flagged_override = CASE
                 WHEN COALESCE(m.crm_is_flagged_override, false)
