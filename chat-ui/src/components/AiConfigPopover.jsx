@@ -261,29 +261,27 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                   </div>
 
                   <div style={{ minWidth: 0, display: 'flex', alignItems: 'center' }}>
-                    {ch.id === 'website' && (
-                      <div style={{
-                        display: 'flex', flexDirection: 'column', gap: 8,
-                        border: '1px solid var(--border)', borderRadius: 6,
-                        padding: '10px 12px', background: 'var(--bg-secondary)',
-                      }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>人工接待未回复时长</div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', color: 'var(--text-muted)', fontSize: 12 }}>
-                          <span>销售未回复</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="120"
-                            step="1"
-                            value={draft.takeoverAiFallbackMinutes}
-                            disabled={disabled}
-                            onChange={e => patchDraft(ch.id, { takeoverAiFallbackMinutes: Number(e.target.value) })}
-                            style={numberInputStyle(disabled)}
-                          />
-                          <span>分钟后由 AI 回复</span>
-                        </label>
-                      </div>
-                    )}
+                    <div style={{
+                      display: 'flex', flexDirection: 'column', gap: 8,
+                      border: '1px solid var(--border)', borderRadius: 6,
+                      padding: '10px 12px', background: 'var(--bg-secondary)',
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-secondary)' }}>人工接待未回复时长</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', color: 'var(--text-muted)', fontSize: 12 }}>
+                        <span>销售未回复</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="120"
+                          step="1"
+                          value={draft.takeoverAiFallbackMinutes}
+                          disabled={disabled}
+                          onChange={e => patchDraft(ch.id, { takeoverAiFallbackMinutes: Number(e.target.value) })}
+                          style={numberInputStyle(disabled)}
+                        />
+                        <span>分钟后由 AI 回复</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               )
