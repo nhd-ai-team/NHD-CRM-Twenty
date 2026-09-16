@@ -202,7 +202,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
               <div key={ch.id} style={{
                 display: 'grid',
                 gridTemplateColumns: '170px minmax(250px, 1fr) minmax(240px, .9fr)',
-                alignItems: 'start', gap: 18, padding: '14px 0', minHeight: 92,
+                alignItems: 'start', gap: 14, padding: '10px 0', minHeight: 82,
                 borderBottom: '1px solid var(--border-soft)',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
@@ -241,25 +241,23 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
                       按时段
                     </button>
                     </div>
-                    {draft.scheduleEnabled && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-muted)', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: draft.scheduleEnabled ? 'var(--text-muted)' : 'var(--text-muted)', fontSize: 12 }}>
                         <input
                           type="time"
                           value={draft.scheduleStart}
-                          disabled={disabled}
+                          disabled={disabled || !draft.scheduleEnabled}
                           onChange={e => patchDraft(ch.id, { scheduleStart: e.target.value })}
-                          style={timeInputStyle(disabled)}
+                          style={timeInputStyle(disabled || !draft.scheduleEnabled)}
                         />
                         <span>至</span>
                         <input
                           type="time"
                           value={draft.scheduleEnd}
-                          disabled={disabled}
+                          disabled={disabled || !draft.scheduleEnabled}
                           onChange={e => patchDraft(ch.id, { scheduleEnd: e.target.value })}
-                          style={timeInputStyle(disabled)}
+                          style={timeInputStyle(disabled || !draft.scheduleEnabled)}
                         />
-                      </div>
-                    )}
+                    </div>
                   </div>
 
                   <div style={{ minWidth: 0 }}>
