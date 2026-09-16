@@ -19,12 +19,17 @@ function addressesLabel(addresses) {
 function splitQuotedEmail(content) {
   const text = String(content || '')
   const lines = text.split(/\r?\n/)
-  const quoteStart = lines.findIndex((line, index) => index > 0 && (
+  let quoteStart = lines.findIndex((line, index) => index > 0 && (
     /^\s*>/.test(line) ||
     /^\s*(From|发件人)\s*:/i.test(line) ||
     /^\s*-{2,}\s*(Replied Message|Original Message|回复邮件|原始邮件)\s*-{2,}\s*$/i.test(line) ||
     /^\s*[_-]{20,}\s*$/.test(line)
   ))
+  // 某些邮件客户端会清洗引用标记前后的换行或空格，按标记文本再做一次兜底定位。
+  if (quoteStart < 1) {
+    const markerIndex = text.search(/Replied Message|Original Message|回复邮件|原始邮件/i)
+    if (markerIndex > 0) quoteStart = text.slice(0, markerIndex).split(/\r?\n/).length - 1
+  }
   if (quoteStart <= 0) return [{ content: text, quoted: false }]
   const current = lines.slice(0, quoteStart).join('\n').trim()
   const quoted = lines.slice(quoteStart).join('\n').trim()
