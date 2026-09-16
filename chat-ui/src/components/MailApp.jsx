@@ -257,7 +257,6 @@ export function MailApp() {
                     {orderedParts.map((part, partIndex) => (
                       <div key={`${msg.id ?? i}-${partIndex}`}>
                         {part.quoted && partIndex === orderedParts.findIndex(item => item.quoted) && <EmailSectionDivider label="引用历史邮件" />}
-                        {!part.quoted && hasQuotedPart && partIndex === orderedParts.findIndex(item => !item.quoted) && <EmailSectionDivider label="当前回复" />}
                         <EmailCard
                           msg={{ ...msg, content: part.content }}
                           fromLabel={fromLabel}
