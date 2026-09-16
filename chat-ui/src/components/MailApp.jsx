@@ -21,7 +21,9 @@ function splitQuotedEmail(content) {
   const lines = text.split(/\r?\n/)
   const quoteStart = lines.findIndex((line, index) => index > 0 && (
     /^\s*>/.test(line) ||
-    /^\s*(From|发件人)\s*:/i.test(line)
+    /^\s*(From|发件人)\s*:/i.test(line) ||
+    /^\s*-{2,}\s*(Replied Message|Original Message|回复邮件|原始邮件)\s*-{2,}\s*$/i.test(line) ||
+    /^\s*[_-]{20,}\s*$/.test(line)
   ))
   if (quoteStart <= 0) return [{ content: text, quoted: false }]
   const current = lines.slice(0, quoteStart).join('\n').trim()
@@ -140,6 +142,16 @@ function EmailCard({ msg, fromLabel, directionOverride, quoted = false, onToggle
   )
 }
 
+function EmailQuoteDivider() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 2px 14px', color: 'var(--text-muted)' }} aria-label="以下为引用历史邮件">
+      <span style={{ flex: 1, borderTop: '1px solid var(--border)' }} />
+      <span style={{ padding: '3px 9px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-active)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>以下为引用历史邮件</span>
+      <span style={{ flex: 1, borderTop: '1px solid var(--border)' }} />
+    </div>
+  )
+}
+
 export function MailApp() {
   const { filtered, selected, selectedId, setSelectedId, search, setSearch, emailCategory, setEmailCategory, toggleFlag, toggleCustomerMail, toggleJunkMail, loadMore, hasMore, loadingMore, totalCount, emailSyncHealth, emailActionNotice } = useEmails()
   const markCustomerMailAfterFormSave = useCallback(async (conversationId, draft) => {
@@ -227,17 +239,24 @@ export function MailApp() {
               </div>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: 16, minHeight: 0 }}>
-              {selected.messages.map((msg, i) => (
-                splitQuotedEmail(msg.content).map((part, partIndex) => (
-                  <EmailCard
-                    key={`${msg.id ?? i}-${partIndex}`}
-                    msg={{ ...msg, content: part.content }}
-                    fromLabel={fromLabel}
-                    directionOverride={part.direction}
-                    quoted={part.quoted}
-                  />
-                ))
-              ))}
+              {selected.messages.map((msg, i) => {
+                const parts = splitQuotedEmail(msg.content)
+                return (
+                  <div key={`thread-message-${msg.id ?? i}`}>
+                    {parts.map((part, partIndex) => (
+                      <div key={`${msg.id ?? i}-${partIndex}`}>
+                        {part.quoted && <EmailQuoteDivider />}
+                        <EmailCard
+                          msg={{ ...msg, content: part.content }}
+                          fromLabel={fromLabel}
+                          directionOverride={part.direction}
+                          quoted={part.quoted}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
               <div ref={bottomRef} />
             </div>
           </>
