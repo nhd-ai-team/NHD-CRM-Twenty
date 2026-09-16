@@ -96,6 +96,7 @@ const DINGTALK_AGENT_ID = process.env.DINGTALK_AGENT_ID || '';
 const DINGTALK_ROBOT_CODE = process.env.DINGTALK_ROBOT_CODE || DINGTALK_APP_KEY;
 const DINGTALK_SALES_USER_IDS = String(process.env.DINGTALK_SALES_USER_IDS || '').split(',').map(v => v.trim()).filter(Boolean);
 const DINGTALK_SALES_USER_EMAILS = String(process.env.DINGTALK_SALES_USER_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
+const DINGTALK_DISABLED_USER_EMAILS = String(process.env.DINGTALK_DISABLED_USER_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
 let dingtalkUserMap = {};
 for (const [name, raw] of [['DINGTALK_USER_MAP_JSON', process.env.DINGTALK_USER_MAP_JSON], ['DINGTALK_EXTRA_USER_MAP_JSON', process.env.DINGTALK_EXTRA_USER_MAP_JSON]]) {
   if (!raw) continue;
@@ -2200,6 +2201,7 @@ async function resolveGeoByIp(ip) {
 function dingtalkMappedUserId(crmUserId, email) {
   const userIdKey = String(crmUserId || '').trim();
   const emailKey = String(email || '').trim().toLowerCase();
+  if (DINGTALK_DISABLED_USER_EMAILS.includes(emailKey)) return '';
   const value = dingtalkUserMap[userIdKey] ?? dingtalkUserMap[emailKey];
   if (!value) return '';
   return typeof value === 'string' ? value.trim() : String(value.userId || value.userid || '').trim();
