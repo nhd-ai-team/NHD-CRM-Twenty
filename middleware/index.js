@@ -97,7 +97,15 @@ const DINGTALK_ROBOT_CODE = process.env.DINGTALK_ROBOT_CODE || DINGTALK_APP_KEY;
 const DINGTALK_SALES_USER_IDS = String(process.env.DINGTALK_SALES_USER_IDS || '').split(',').map(v => v.trim()).filter(Boolean);
 const DINGTALK_SALES_USER_EMAILS = String(process.env.DINGTALK_SALES_USER_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean);
 let dingtalkUserMap = {};
-try { dingtalkUserMap = JSON.parse(process.env.DINGTALK_USER_MAP_JSON || '{}'); } catch (error) { console.error('[dingtalk] invalid DINGTALK_USER_MAP_JSON:', error.message); }
+for (const [name, raw] of [['DINGTALK_USER_MAP_JSON', process.env.DINGTALK_USER_MAP_JSON], ['DINGTALK_EXTRA_USER_MAP_JSON', process.env.DINGTALK_EXTRA_USER_MAP_JSON]]) {
+  if (!raw) continue;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) Object.assign(dingtalkUserMap, parsed);
+  } catch (error) {
+    console.error(`[dingtalk] invalid ${name}:`, error.message);
+  }
+}
 let dingtalkAccessTokenCache = { value: '', expiresAt: 0 };
 let dingtalkNotificationRunning = false;
 const MAX_UPLOAD_BYTES = Math.max(1, Number(process.env.CONVERSATION_MAX_UPLOAD_MB || 25)) * 1024 * 1024;
