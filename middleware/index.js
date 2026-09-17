@@ -2284,7 +2284,8 @@ async function resolveDingtalkRecipients(conversation, isFirstCustomerMessage) {
 }
 
 async function enqueueWebsiteDingtalkNotifications({ conversation, messageId, visitorName, content, isFirstCustomerMessage }) {
-  if (!DINGTALK_ENABLED) return;
+  // 钉钉提醒只服务官网客服；WhatsApp、Instagram、Facebook 等渠道不入通知队列。
+  if (!DINGTALK_ENABLED || conversation?.channel !== 'website') return;
   const recipients = await resolveDingtalkRecipients(conversation, isFirstCustomerMessage);
   if (!recipients.length) {
     console.warn('[dingtalk] no mapped recipients for website message:', messageId);
