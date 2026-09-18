@@ -1676,6 +1676,43 @@ async function importHistoricalWhatsAppMessages(session, scanned) {
   }
   return result;
 }
+
+const autoWhatsAppHistoryBackfills = new Set();
+
+async function getWhatsAppHistoryBackfillStartMs(session) {
+  const result = await pool.query(
+    `SELECT max(m.sent_at) AS last_message_at
+       FROM conv.messages m
+       JOIN conv.conversations c ON c.id = m.conversation_id
+      WHERE c.channel = 'whatsapp' AND c.waha_session = $1`,
+    [session],
+  );
+  const lastMessageAt = result.rows[0]?.last_message_at ? new Date(result.rows[0].last_message_at).getTime() : 0;
+  // 新绑定且 CRM 尚无历史时只回补最近 30 天，防止首次绑定触发全库扫描。
+  return lastMessageAt > 0 ? Math.max(0, lastMessageAt - 1000) : Date.now() - 30 * 24 * 60 * 60 * 1000;
+}
+
+async function autoBackfillWhatsAppHistory(sessionName, previousStatus) {
+  if (autoWhatsAppHistoryBackfills.has(sessionName)) return;
+  autoWhatsAppHistoryBackfills.add(sessionName);
+  try {
+    const binding = await getActiveWhatsAppBindingBySession(sessionName);
+    if (!binding) return;
+    const fromMs = await getWhatsAppHistoryBackfillStartMs(sessionName);
+    const toMs = Date.now() + 60 * 1000;
+    const scanned = await fetchWahaHistoryMessages(sessionName, fromMs, toMs);
+    if (!scanned.messages.length) {
+      console.log(`[whatsapp-history] auto backfill found no messages for ${sessionName} (previous=${previousStatus || 'unknown'})`);
+      return;
+    }
+    const imported = await importHistoricalWhatsAppMessages(sessionName, scanned);
+    console.log(`[whatsapp-history] auto backfill completed for ${sessionName}: found=${scanned.messages.length}, inserted=${imported.inserted}, existing=${imported.existing}, mediaFailed=${imported.mediaFailed}, errors=${imported.errors.length}`);
+  } catch (error) {
+    console.error(`[whatsapp-history] auto backfill failed for ${sessionName}:`, error.message);
+  } finally {
+    autoWhatsAppHistoryBackfills.delete(sessionName);
+  }
+}
 // WAHA `message` 事件为扁平 payload：{ from, body, hasMedia, media: { url, mimetype }, type }。
 // 非文本消息的原始类型可能位于 type 或 _data.type，两个位置都兼容。
 function whatsappRawMessageType(payload = {}) {
@@ -4762,6 +4799,14 @@ function normalizeWahaSessionStatusPayload(payload = {}, sessionName = WAHA_SESS
 
 async function syncWahaBindingStatus(sessionName, normalized, source = 'status') {
   if (!sessionName || !normalized?.status) return null;
+  const previousResult = await pool.query(
+    `SELECT status FROM conv.channel_accounts
+      WHERE channel = 'whatsapp' AND provider = 'waha'
+        AND provider_session = $1 AND status <> 'unbound'
+      ORDER BY updated_at DESC LIMIT 1`,
+    [sessionName],
+  );
+  const previousStatus = previousResult.rows[0]?.status || null;
   const metadataPatch = {
     lastWahaStatus: normalized.status,
     lastWahaStatusAt: new Date().toISOString(),
@@ -4792,6 +4837,12 @@ async function syncWahaBindingStatus(sessionName, normalized, source = 'status')
   if (!result.rowCount) {
     console.warn('[whatsapp-status] no active CRM binding for WAHA session:', sessionName, normalized.status);
     return null;
+  }
+  if (normalized.status === 'WORKING' && previousStatus && previousStatus !== 'WORKING') {
+    // 状态恢复后异步回补断联期间的 WAHA 历史；不阻塞状态接口，也不触发实时消息副作用。
+    autoBackfillWhatsAppHistory(sessionName, previousStatus).catch(error => {
+      console.error(`[whatsapp-history] auto backfill dispatch failed for ${sessionName}:`, error.message);
+    });
   }
   return result.rows[0];
 }
