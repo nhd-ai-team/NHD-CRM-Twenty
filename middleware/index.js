@@ -1476,6 +1476,206 @@ async function resolveWhatsAppChatKey(jid, session) {
   );
   return alias.rows[0]?.canonical_chat_id || jid;
 }
+
+const WHATSAPP_HISTORY_MAX_CHATS = Number(process.env.WHATSAPP_HISTORY_MAX_CHATS || 2000);
+const WHATSAPP_HISTORY_MAX_MESSAGES = Number(process.env.WHATSAPP_HISTORY_MAX_MESSAGES || 10000);
+
+function normalizeWahaMessageId(data = {}) {
+  const id = data.id || data._data?.id;
+  if (typeof id === 'string') return id.trim() || null;
+  return String(id?._serialized || data._data?.id?._serialized || '').trim() || null;
+}
+
+function wahaMessageTimestampMs(data = {}) {
+  const seconds = Number(data.timestamp || data._data?.t || 0);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+}
+
+function normalizeHistoryWindow(from, to) {
+  const fromMs = Date.parse(String(from || ''));
+  const toMs = Date.parse(String(to || ''));
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
+    return { error: 'from/to 必须是有效的 ISO 时间，且 from 早于 to' };
+  }
+  return { fromMs, toMs };
+}
+
+async function fetchWahaHistoryMessages(session, fromMs, toMs) {
+  const chatsResponse = await fetchWaha(`/api/${encodeURIComponent(session)}/chats?limit=${WHATSAPP_HISTORY_MAX_CHATS}`);
+  if (!chatsResponse.ok) throw new Error(`WAHA chats ${chatsResponse.status}: ${await chatsResponse.text()}`);
+  const chatsPayload = await chatsResponse.json();
+  const chats = Array.isArray(chatsPayload) ? chatsPayload : (chatsPayload.data || chatsPayload.chats || []);
+  if (chats.length > WHATSAPP_HISTORY_MAX_CHATS) throw new Error(`WAHA 会话数超过上限 ${WHATSAPP_HISTORY_MAX_CHATS}`);
+
+  const messages = [];
+  const messageIds = new Set();
+  const errors = [];
+  for (const chat of chats) {
+    const chatId = String(chat?.id?._serialized || chat?.id || chat?.chatId || '').trim();
+    if (!chatId || chatId.endsWith('@g.us') || chatId === 'status@broadcast') continue;
+    try {
+      const response = await fetchWaha(`/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(chatId)}/messages?limit=1000&downloadMedia=false`);
+      if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+      const payload = await response.json();
+      const chatMessages = Array.isArray(payload) ? payload : (payload.data || payload.messages || []);
+      for (const item of chatMessages) {
+        const data = item?.payload || item;
+        const timestampMs = wahaMessageTimestampMs(data);
+        if (!timestampMs || timestampMs < fromMs || timestampMs >= toMs) continue;
+        const messageId = normalizeWahaMessageId(data);
+        if (!messageId || messageIds.has(messageId)) continue;
+        if (['e2e_notification', 'notification_template'].includes(whatsappRawMessageType(data))) continue;
+        messageIds.add(messageId);
+        messages.push({ data, chatId });
+        if (messages.length > WHATSAPP_HISTORY_MAX_MESSAGES) {
+          throw new Error(`历史消息超过上限 ${WHATSAPP_HISTORY_MAX_MESSAGES}`);
+        }
+      }
+    } catch (error) {
+      errors.push({ chatId, error: error.message });
+    }
+  }
+  messages.sort((a, b) => wahaMessageTimestampMs(a.data) - wahaMessageTimestampMs(b.data));
+  return { chatsScanned: chats.length, messages, errors };
+}
+
+async function summarizeWhatsAppHistory(session, fromMs, toMs) {
+  const scanned = await fetchWahaHistoryMessages(session, fromMs, toMs);
+  const ids = scanned.messages.map(({ data }) => normalizeWahaMessageId(data)).filter(Boolean);
+  let existingIds = new Set();
+  if (ids.length) {
+    const result = await pool.query('SELECT external_msg_id FROM conv.messages WHERE external_msg_id = ANY($1::text[])', [ids]);
+    existingIds = new Set(result.rows.map(row => row.external_msg_id));
+  }
+  const summary = {
+    session,
+    from: new Date(fromMs).toISOString(),
+    to: new Date(toMs).toISOString(),
+    chatsScanned: scanned.chatsScanned,
+    messagesFound: scanned.messages.length,
+    messagesExisting: 0,
+    messagesMissing: 0,
+    fromMe: 0,
+    fromCustomer: 0,
+    withMedia: 0,
+    earliest: null,
+    latest: null,
+    chatIds: new Set(),
+    errors: scanned.errors,
+  };
+  for (const item of scanned.messages) {
+    const data = item.data;
+    const id = normalizeWahaMessageId(data);
+    const timestampMs = wahaMessageTimestampMs(data);
+    const rawType = whatsappRawMessageType(data);
+    if (existingIds.has(id)) summary.messagesExisting += 1;
+    else summary.messagesMissing += 1;
+    if (data.fromMe) summary.fromMe += 1;
+    else summary.fromCustomer += 1;
+    if (data.hasMedia || data.media) summary.withMedia += 1;
+    if (!summary.earliest || timestampMs < summary.earliest) summary.earliest = timestampMs;
+    if (!summary.latest || timestampMs > summary.latest) summary.latest = timestampMs;
+    if (!['e2e_notification', 'notification_template'].includes(rawType)) summary.chatIds.add(item.chatId);
+  }
+  summary.chatsWithMessages = summary.chatIds.size;
+  delete summary.chatIds;
+  summary.earliest = summary.earliest ? new Date(summary.earliest).toISOString() : null;
+  summary.latest = summary.latest ? new Date(summary.latest).toISOString() : null;
+  return { ...summary, scanned };
+}
+
+async function importHistoricalWhatsAppMessages(session, scanned) {
+  const binding = await getActiveWhatsAppBindingBySession(session);
+  if (!binding) throw new Error('指定 WAHA session 没有有效的 CRM 绑定');
+  const ownerUserId = binding.user_id;
+  const result = { inserted: 0, existing: 0, skipped: 0, mediaDownloaded: 0, mediaFailed: 0, errors: [] };
+
+  for (const item of scanned.messages) {
+    const data = item.data;
+    const rawType = whatsappRawMessageType(data);
+    if (['e2e_notification', 'notification_template'].includes(rawType)) {
+      result.skipped += 1;
+      continue;
+    }
+    const externalMessageId = normalizeWahaMessageId(data);
+    const fromMe = Boolean(data.fromMe);
+    const counterpartyJid = data._data?.id?.remote || (fromMe ? data.to : data.from) || item.chatId;
+    if (!externalMessageId || !counterpartyJid || counterpartyJid.endsWith('@g.us') || counterpartyJid === 'status@broadcast') {
+      result.skipped += 1;
+      continue;
+    }
+    try {
+      const parsed = messageContent(data);
+      if (parsed.mediaUrl) {
+        try {
+          const localUrl = await downloadWahaMediaToLocalFile(parsed.mediaUrl, data.media?.mimetype, data.media?.filename);
+          if (localUrl) {
+            parsed.mediaUrl = localUrl;
+            result.mediaDownloaded += 1;
+          } else {
+            parsed.mediaUrl = null;
+            result.mediaFailed += 1;
+          }
+        } catch (error) {
+          parsed.mediaUrl = null;
+          result.mediaFailed += 1;
+        }
+      }
+      const chatKey = await resolveWhatsAppChatKey(counterpartyJid, session);
+      const phone = chatKey.endsWith('@c.us') ? phoneFromJid(chatKey) : null;
+      const channelName = (!fromMe && String(data.notifyName || data._data?.notifyName || '').trim()) || null;
+      const displayName = channelName || phone || counterpartyJid;
+      const sentAtMs = wahaMessageTimestampMs(data);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const contactResult = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, channel_display_name, phone, owner_id)
+          VALUES ('whatsapp', $1, $2, $2, $3, $4)
+          ON CONFLICT(channel, external_id) DO UPDATE SET
+            channel_display_name = COALESCE($5::text, conv.contacts.channel_display_name, EXCLUDED.channel_display_name),
+            display_name = CASE WHEN conv.contacts.display_name_source = 'manual' THEN conv.contacts.display_name
+              ELSE COALESCE($5::text, conv.contacts.display_name, EXCLUDED.display_name) END,
+            phone = COALESCE(EXCLUDED.phone, conv.contacts.phone),
+            owner_id = COALESCE(conv.contacts.owner_id, EXCLUDED.owner_id), updated_at = now()
+          RETURNING *`, [chatKey, displayName, phone ? `+${phone}` : null, ownerUserId, channelName]);
+        const contact = contactResult.rows[0];
+        const conversationResult = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id, owner_id, channel_owner_id, waha_session)
+          VALUES ('whatsapp', $1, $2, $3, $3, $4)
+          ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id) DO UPDATE SET
+            updated_at = now(), owner_id = COALESCE(conv.conversations.owner_id, EXCLUDED.owner_id),
+            channel_owner_id = COALESCE(conv.conversations.channel_owner_id, EXCLUDED.channel_owner_id),
+            waha_session = COALESCE(conv.conversations.waha_session, EXCLUDED.waha_session)
+          RETURNING *`, [chatKey, contact.id, ownerUserId, session]);
+        const conversation = conversationResult.rows[0];
+        const inserted = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, media_url, sent_at, owner_id, raw_message_type, message_summary)
+          VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7 / 1000.0), $8, $9, $10)
+          ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+          [externalMessageId, conversation.id, fromMe ? 'agent' : 'customer', parsed.content, parsed.type, parsed.mediaUrl || null,
+            sentAtMs, ownerUserId, parsed.rawType, parsed.summary]);
+        if (inserted.rowCount) {
+          await client.query(`UPDATE conv.conversations
+            SET last_message_at = CASE WHEN last_message_at IS NULL OR last_message_at < to_timestamp($2 / 1000.0)
+              THEN to_timestamp($2 / 1000.0) ELSE last_message_at END,
+                last_message_preview = CASE WHEN last_message_at IS NULL OR last_message_at < to_timestamp($2 / 1000.0)
+                  THEN $3 ELSE last_message_preview END,
+                updated_at = now() WHERE id = $1`, [conversation.id, sentAtMs, parsed.content]);
+          result.inserted += 1;
+        } else {
+          result.existing += 1;
+        }
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      result.errors.push({ externalMessageId, error: error.message });
+    }
+  }
+  return result;
+}
 // WAHA `message` 事件为扁平 payload：{ from, body, hasMedia, media: { url, mimetype }, type }。
 // 非文本消息的原始类型可能位于 type 或 _data.type，两个位置都兼容。
 function whatsappRawMessageType(payload = {}) {
@@ -2013,6 +2213,70 @@ async function receiveWhatsAppWebhook(req, res) {
 }
 app.post('/api/whatsapp/webhook', receiveWhatsAppWebhook);
 app.post('/api/whatsapp/webhook/:event', receiveWhatsAppWebhook);
+
+// 历史消息恢复：仅允许 admin/boss 使用，且必须明确指定 session 与时间窗。
+// 预览和导入都直接读取 WAHA；导入只写 conv.*，不触发 AI、线索、钉钉通知或审计事件。
+async function authorizeWhatsAppHistoryBackfill(req, res) {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) {
+    res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+    return null;
+  }
+  if (!(viewer.role === 'admin' || viewer.isBoss)) {
+    res.status(403).json({ error: '仅管理员或 Boss 可以恢复 WhatsApp 历史消息' });
+    return null;
+  }
+  return viewer;
+}
+
+function historyBackfillInput(req) {
+  const session = String(req.body?.session || req.query?.session || '').trim();
+  const from = String(req.body?.from || req.query?.from || '').trim();
+  const to = String(req.body?.to || req.query?.to || '').trim();
+  const window = normalizeHistoryWindow(from, to);
+  if (!session) return { error: 'session 不能为空' };
+  if (window.error) return { error: window.error };
+  return { session, ...window };
+}
+
+function publicHistorySummary(summary) {
+  const { scanned, ...publicSummary } = summary;
+  return publicSummary;
+}
+
+app.get('/api/whatsapp/history-backfill/preview', requireSameSite, async (req, res) => {
+  const viewer = await authorizeWhatsAppHistoryBackfill(req, res);
+  if (!viewer) return;
+  const input = historyBackfillInput(req);
+  if (input.error) return res.status(400).json({ error: input.error });
+  try {
+    const binding = await getActiveWhatsAppBindingBySession(input.session);
+    if (!binding) return res.status(404).json({ error: '指定 WAHA session 没有有效的 CRM 绑定' });
+    const summary = await summarizeWhatsAppHistory(input.session, input.fromMs, input.toMs);
+    return res.json(publicHistorySummary(summary));
+  } catch (error) {
+    console.error('[whatsapp-history] preview failed:', error.message);
+    return res.status(502).json({ error: 'WhatsApp 历史消息预览失败', detail: error.message });
+  }
+});
+
+app.post('/api/whatsapp/history-backfill', requireSameSite, async (req, res) => {
+  const viewer = await authorizeWhatsAppHistoryBackfill(req, res);
+  if (!viewer) return;
+  const input = historyBackfillInput(req);
+  if (input.error) return res.status(400).json({ error: input.error });
+  try {
+    const binding = await getActiveWhatsAppBindingBySession(input.session);
+    if (!binding) return res.status(404).json({ error: '指定 WAHA session 没有有效的 CRM 绑定' });
+    const summary = await summarizeWhatsAppHistory(input.session, input.fromMs, input.toMs);
+    if (req.body?.dryRun === true) return res.json({ dryRun: true, summary: publicHistorySummary(summary) });
+    const imported = await importHistoricalWhatsAppMessages(input.session, summary.scanned);
+    return res.json({ dryRun: false, summary: publicHistorySummary(summary), imported });
+  } catch (error) {
+    console.error('[whatsapp-history] import failed:', error.message);
+    return res.status(502).json({ error: 'WhatsApp 历史消息恢复失败', detail: error.message });
+  }
+});
 
 // 官网客服（AI 客服服务的 website 渠道）访客消息 → CRM 会话工作台。
 // AI 服务在存下访客消息后转发到此端点；middleware 按 channel='website' 落入同一 conv 库。
