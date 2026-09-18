@@ -85,6 +85,7 @@ function settingsEqual(a, b) {
 export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, onClose }) {
   const [drafts, setDrafts] = useState({})
   const [saving, setSaving] = useState(false)
+  const [saveNotice, setSaveNotice] = useState('')
 
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose() }
@@ -107,8 +108,10 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
     setDrafts(next)
   }, [settings])
 
-  const patchDraft = (channel, patch) =>
+  const patchDraft = (channel, patch) => {
+    setSaveNotice('')
     setDrafts(prev => ({ ...prev, [channel]: { ...prev[channel], ...patch } }))
+  }
 
   const settingOf = (id) => settings.find(s => s.channel === id) || {
     channel: id,
@@ -129,6 +132,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
   const handleSaveAll = async () => {
     if (!dirty || disabled) return
     setSaving(true)
+    setSaveNotice('')
     try {
       if (onSaveAll) {
         const ok = await onSaveAll(dirtyChannels.map(ch => ({ channel: ch.id, ...draftOf(ch.id) })))
@@ -140,7 +144,7 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
           if (ok === false) return
         }
       }
-      onClose()
+      setSaveNotice('配置已保存')
     } finally {
       setSaving(false)
     }
@@ -188,6 +192,15 @@ export function AiConfigPopover({ settings, loading, error, onSave, onSaveAll, o
             <X size={17} />
           </button>
         </header>
+
+        {saveNotice && (
+          <div style={{
+            padding: '8px 18px', borderBottom: '1px solid rgba(22,163,74,.2)',
+            background: 'rgba(22,163,74,.08)', color: '#15803d', fontSize: 12, fontWeight: 600,
+          }} role="status">
+            {saveNotice}
+          </div>
+        )}
 
         <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border-soft)', fontSize: 11.5, color: 'var(--text-secondary)' }}>
           时间按中国时间 Asia/Shanghai 生效。开始时间晚于结束时间时，系统会按跨天时间段处理，例如 18:00 到 09:00。

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { MessageCircle, Search } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { zhCN } from 'date-fns/locale'
+import { format, isToday } from 'date-fns'
 import { STATUS_FILTERS } from '../data/mock'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
@@ -39,7 +38,12 @@ function FiledTag({ status }) {
 }
 
 function ConvCard({ conv, isSelected, onSelect, onRename }) {
-  const timeStr = formatDistanceToNow(conv.lastMessageAt, { locale: zhCN, addSuffix: false })
+  const messageDate = conv.lastMessageAt ? new Date(conv.lastMessageAt) : null
+  const timeStr = messageDate
+    ? (isToday(messageDate)
+      ? format(messageDate, 'HH:mm')
+      : format(messageDate, messageDate.getFullYear() === new Date().getFullYear() ? 'MM-dd' : 'yyyy-MM-dd'))
+    : ''
   // 需求三：列表显示推断地域（国家/地区/城市/时区——时区为用户明确要求保留字段，转 UTC±H 友好显示），缺失时明确标示「未知地区」
   const geoParts = [conv.contact?.country, conv.contact?.region, conv.contact?.city, fmtTimezone(conv.contact?.timezone)].filter(Boolean)
   const utmSource = conv.contact?.utmSource || conv.contact?.utmCampaign || ''
