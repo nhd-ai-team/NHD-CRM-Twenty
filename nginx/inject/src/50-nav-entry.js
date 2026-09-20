@@ -1,6 +1,55 @@
 // ===== chat-nav 模块: 50-nav-entry — tryInsert：导航注入主入口 =====
+  function ensureTopUserGuideNav() {
+    var id = '__nhd_crm_user_guide_nav__';
+    var existing = document.getElementById(id);
+    if (isSettingsPage()) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      return;
+    }
+    var guide = document.createElement('a');
+    guide.id = id;
+    guide.href = '/crm-user-guide/';
+    guide.title = '操作手册';
+    guide.setAttribute('aria-label', '打开 CRM 操作手册');
+    guide.style.cssText = [
+      'position:fixed',
+      'left:16px',
+      'bottom:16px',
+      'z-index:31',
+      'display:flex',
+      'align-items:center',
+      'justify-content:center',
+      'width:34px',
+      'height:34px',
+      'box-sizing:border-box',
+      'border-radius:8px',
+      'background:var(--twenty-background-primary,#fff)',
+      'color:var(--twenty-font-color-secondary,#52525b)',
+      'text-decoration:none',
+      'box-shadow:0 1px 3px rgba(0,0,0,.12)',
+    ].join(';');
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '18');
+    svg.setAttribute('height', '18');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.innerHTML = '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5z"/><path d="M8 7h8M8 11h8M8 15h5"/>';
+    guide.appendChild(svg);
+    guide.addEventListener('mouseenter', function () { guide.style.background = 'var(--twenty-background-tertiary,rgba(0,0,0,.06))'; });
+    guide.addEventListener('mouseleave', function () { guide.style.background = 'var(--twenty-background-primary,#fff)'; });
+    document.body.appendChild(guide);
+  }
+
   function tryInsert() {
     try { var _s = window.__NHD_STATE__; if (_s) { _s.lastTryInsertAt = Date.now(); _s.lastSettings = isSettingsPage(); } } catch (_) {}
+    ensureTopUserGuideNav();
     hideDisabledNativeNavItems();
     if (isSettingsPage()) {
       removeStandaloneMainNav();
