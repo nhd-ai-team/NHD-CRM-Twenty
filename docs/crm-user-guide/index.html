@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CRM 使用手册 | Chinanhd</title>
+  <style>
+    :root{--ink:#202124;--muted:#68707a;--line:#e5e7eb;--soft:#f6f8f9;--green:#16a34a;--purple:#6d28d9;--max:1420px}
+    *{box-sizing:border-box} html{scroll-behavior:smooth} body{margin:0;color:var(--ink);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:#fff}
+    button,input{font:inherit}.shell{min-height:100vh;display:grid;grid-template-columns:260px minmax(0,1fr) 220px}
+    .sidebar{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);padding:22px 18px;background:#fbfcfc;overflow:auto}.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;margin:0 0 28px}.brand-mark{width:30px;height:30px;border-radius:7px;background:#111;color:#fff;display:grid;place-items:center;font-size:12px}.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:18px 10px 8px}.nav a{display:block;color:#4b5563;text-decoration:none;padding:8px 10px;border-radius:7px}.nav a:hover,.nav a.active{background:#ece9ff;color:var(--purple);font-weight:600}.main{min-width:0}.topbar{position:sticky;top:0;z-index:5;height:76px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.96);display:flex;align-items:center;gap:20px;padding:0 clamp(24px,4vw,72px)}.topbar h1{font-size:18px;margin:0;white-space:nowrap}.search{margin-left:auto;width:min(330px,45vw);position:relative}.search input{width:100%;border:1px solid var(--line);border-radius:7px;padding:9px 12px 9px 36px;outline:0;background:#fff}.search input:focus{border-color:#a78bfa;box-shadow:0 0 0 3px #ede9fe}.search span{position:absolute;left:12px;top:7px;color:var(--muted)}.content{max-width:900px;padding:70px clamp(24px,6vw,100px) 100px}.hero{padding-bottom:48px;border-bottom:1px solid var(--line);margin-bottom:48px}.kicker{color:var(--purple);font-weight:700;font-size:13px}.hero h2{font-size:42px;line-height:1.18;letter-spacing:-.02em;margin:12px 0 18px}.hero p{font-size:18px;color:#4b5563;max-width:700px;margin:0}.section{scroll-margin-top:100px;margin:58px 0}.section h2{font-size:28px;line-height:1.3;margin:0 0 14px}.section h3{font-size:19px;margin:30px 0 8px}.section p{margin:8px 0;color:#424952}.section ul,.section ol{padding-left:24px}.section li{margin:5px 0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:18px 0}.tile{border:1px solid var(--line);padding:16px;border-radius:8px;background:#fff}.tile strong{display:block;margin-bottom:4px}.tile span{color:var(--muted);font-size:14px}.callout{border-left:3px solid var(--green);background:#f0fdf4;padding:14px 16px;margin:18px 0}.note{border-left-color:#a78bfa;background:#f5f3ff}.steps{counter-reset:step;list-style:none;padding:0;margin:16px 0}.steps li{counter-increment:step;display:grid;grid-template-columns:30px 1fr;gap:10px;align-items:start;margin:10px 0}.steps li:before{content:counter(step);display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#ede9fe;color:var(--purple);font-weight:700;font-size:13px}.figure{margin:20px 0}.figure img{display:block;width:100%;max-height:570px;object-fit:contain;object-position:left top;border:1px solid var(--line);border-radius:8px;background:#f8fafc;cursor:zoom-in}.figure figcaption{color:var(--muted);font-size:13px;margin-top:7px}.gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.gallery .figure{margin:0}.toc{position:sticky;top:76px;height:calc(100vh - 76px);padding:44px 24px;border-left:1px solid var(--line);overflow:auto}.toc-title{font-size:12px;color:var(--muted);margin-bottom:12px}.toc a{display:block;color:#6b7280;text-decoration:none;font-size:13px;padding:4px 0}.toc a:hover{color:var(--purple)}.muted{color:var(--muted)}.footer{border-top:1px solid var(--line);color:var(--muted);padding-top:28px;margin-top:70px;font-size:13px}.lightbox{display:none;position:fixed;inset:0;z-index:20;background:rgba(15,23,42,.82);padding:5vh 5vw;align-items:center;justify-content:center}.lightbox.open{display:flex}.lightbox img{max-width:92vw;max-height:90vh;object-fit:contain;background:#fff}.close{position:fixed;right:24px;top:20px;border:0;background:#fff;color:#111;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:22px}
+    @media(max-width:1050px){.shell{grid-template-columns:220px minmax(0,1fr)}.toc{display:none}.content{padding-inline:clamp(24px,5vw,70px)}}
+    @media(max-width:720px){.shell{display:block}.sidebar{position:static;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:14px 16px}.brand{margin-bottom:12px}.nav{display:flex;gap:5px;overflow:auto}.nav a{white-space:nowrap}.eyebrow{display:none}.topbar{position:sticky;height:62px;padding:0 16px}.topbar h1{font-size:16px}.search{width:42px}.search input{width:42px;padding-left:12px;color:transparent;cursor:pointer}.search span{left:13px}.content{padding:42px 20px 70px}.hero h2{font-size:32px}.grid,.gallery{grid-template-columns:1fr}.section h2{font-size:24px}}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">20</span><span>Chinanhd CRM</span></div>
+      <div class="eyebrow">一、认识 CRM</div>
+      <nav class="nav" id="nav">
+        <a href="#overview">认识 CRM</a><a href="#navigation">页面导航</a><a href="#login">登录 CRM</a>
+      </nav>
+      <div class="eyebrow">二、功能介绍</div>
+      <nav class="nav"><a href="#workbench">对话工作台</a><a href="#email">邮箱</a><a href="#leads">线索</a><a href="#customers">客户</a><a href="#projects">项目</a><a href="#status">沟通状态</a><a href="#settings">设置</a></nav>
+      <div class="eyebrow">三、常见问题</div>
+      <nav class="nav"><a href="#faq">常见问题</a><a href="#maintenance">手册维护</a></nav>
+    </aside>
+    <main class="main">
+      <header class="topbar"><h1>CRM 功能与操作手册</h1><div class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索本页内容"></div></header>
+      <article class="content" id="content">
+        <section class="hero"><div class="kicker">NHD CRM · 用户指南</div><h2>从登录开始，快速完成一次客户跟进</h2><p>这份手册介绍 CRM 有哪些板块、每个板块能做什么，以及销售最常用的操作路径。按左侧顺序阅读即可。</p></section>
+
+        <section class="section" id="login"><h2>一、登录 CRM</h2><p>CRM 账号由管理员邀请。管理员先向你的企业邮箱发送邀请邮件，你点击邮件中的邀请链接，按页面提示设置登录密码并完成账号激活，之后使用受邀邮箱和新密码登录 <strong>https://crm.chinanhd.com</strong>。</p><ol class="steps"><li>打开管理员发送的邀请邮件。</li><li>点击邀请链接，进入账号激活页面。</li><li>设置登录密码并完成激活。</li><li>返回 CRM，使用受邀邮箱和新密码登录。</li></ol><figure class="figure"><img src="../assets/crm-user-guide/login/01-login.png" alt="CRM 登录页"><figcaption>邀请链接打开后进入登录/激活页面；首次使用需要先设置密码。</figcaption></figure></section>
+        <section class="section" id="overview"><h2>二、认识 CRM</h2><p>CRM 用来集中管理客户资料、线索、项目和沟通记录。日常工作主要围绕接收消息、整理线索、维护客户和追踪项目展开。</p><div class="grid"><div class="tile"><strong>接收沟通</strong><span>官网客服、WhatsApp 和企业邮箱</span></div><div class="tile"><strong>整理线索</strong><span>补充客户资料、识别重复、分配负责人</span></div><div class="tile"><strong>维护客户</strong><span>统一管理公司、联系人和联系方式</span></div><div class="tile"><strong>跟进项目</strong><span>记录阶段、需求和后续动作</span></div></div></section>
+        <section class="section" id="navigation"><h2>二、页面导航</h2><p>左侧菜单是日常工作入口。页面导航先按工作场景分成四个重点区域：</p><figure class="figure"><img src="../assets/crm-user-guide/navigation/01-lead-navigation.png" alt="CRM 左侧导航和线索列表"><figcaption>左侧菜单可以在对话工作台、邮箱、线索、客户、项目、沟通状态和设置之间切换。</figcaption></figure><div class="grid"><div class="tile"><strong>对话工作台</strong><span>处理官网、WhatsApp 等即时消息和人工接待</span></div><div class="tile"><strong>邮箱</strong><span>区分收件、发件并整理邮件</span></div><div class="tile"><strong>线索 / 客户 / 项目</strong><span>按漏斗关系管理潜在客户、客户主数据和具体业务机会</span></div><div class="tile"><strong>沟通状态</strong><span>查看和复核历史沟通记录，不用于新增或发送消息</span></div></div></section>
+        <section class="section" id="workbench"><h2>四、对话工作台</h2><p>对话工作台由左侧会话清单、中间消息区和右侧客户资料组成。顶部可以按渠道和会话状态筛选。</p><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/conversation-workbench-1.png" alt="对话工作台"><figcaption>官网访客会话示例：左侧选择会话，中间查看消息，右侧补充客户资料。</figcaption></figure><h3>可以做什么</h3><ul><li>查看官网访客和 WhatsApp 消息、时间、附件和访客来源；</li><li>发送文字、图片或文件；</li><li>在 AI 接管和人工接待之间切换；</li><li>填写客户资料并转为线索；</li><li>查看疑似关联访客，判断是否存在重复访问。</li></ul><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/08-related-visitors.png" alt="疑似关联访客"><figcaption>疑似关联访客数量用于提醒销售交叉核实，不会自动合并会话。</figcaption></figure></section>
+        <section class="section" id="howto"><h2>五、常用操作方法</h2><h3>绑定 WhatsApp</h3><ol class="steps"><li>打开 <strong>设置 → 个人资料 → 渠道</strong>。</li><li>在 WhatsApp 区域生成或刷新二维码。</li><li>在手机 WhatsApp 的“已关联的设备”中扫码。</li><li>回到 CRM 刷新状态，确认显示已连接或工作中。</li><li>在对话工作台发送一条短文本测试。</li></ol><figure class="figure"><img src="../assets/crm-user-guide/settings/02-whatsapp-binding.png" alt="WhatsApp 绑定页面"><figcaption>绑定成功前会显示二维码、绑定号码和状态；二维码过期后可刷新。</figcaption></figure><h3>配置 AI 自动回复时间</h3><ol class="steps"><li>打开对话工作台，点击顶部 AI 配置按钮。</li><li>找到需要配置的渠道，例如官网。</li><li>打开或关闭 AI，选择“全天”或“按时段”。</li><li>按时段模式下填写开始和结束时间。</li><li>在“人工接待未回复时长”中填写 1–120 分钟。</li><li>点击保存，确认页面显示“配置已保存”。</li></ol><div class="gallery"><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/conversation-workbench-2.png" alt="AI 自动回复配置"><figcaption>AI 配置入口和时间设置。</figcaption></figure><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/conversation-workbench-3.png" alt="AI 配置已保存"><figcaption>保存成功提示。</figcaption></figure></div><div class="callout">短时未回复：AI 可以代答当前消息，但保留人工接待状态。连续 120 分钟没有销售人工消息时，会话会释放给 AI，并将销售状态切换为离线。</div><h3>人工接管官网会话</h3><ol class="steps"><li>选择官网会话并阅读最近消息。</li><li>点击人工接待或接管会话。</li><li>确认状态变为人工接待后，再发送消息。</li></ol><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/conversation-workbench-4.png" alt="离线状态下接管提示"><figcaption>离线时需要先选择切换在线并人工接入，或保持 AI 接管。</figcaption></figure><h3>转为线索</h3><ol class="steps"><li>在右侧填写客户姓名、公司、邮箱、WhatsApp、国家和需求。</li><li>检查重复提示。</li><li>点击转为线索或更新线索，选择负责人和协办人。</li><li>到线索板块确认记录已经建立。</li></ol><div class="gallery"><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/conversation-workbench-5.png" alt="确认更新线索"><figcaption>提交资料前确认更新线索。</figcaption></figure><figure class="figure"><img src="../assets/crm-user-guide/conversation-workbench/conversation-workbench-7.png" alt="右侧客户资料表单"><figcaption>右侧客户资料表单。</figcaption></figure></div></section>
+        <section class="section" id="email"><h2>六、功能介绍：邮箱</h2><p>邮箱用于查看已同步到 CRM 的企业邮箱记录。分类包括收件箱、发件箱、重点邮件、客户邮件、垃圾邮件和全部。</p><h3>区分收信和发信</h3><p>先用收件箱或发件箱分类，再打开详情确认发件人、收件人、抄送人和时间。引用历史会与本次内容分开显示。</p><div class="callout note"><strong>颜色怎么读：</strong>白色或中性色块通常是历史引用，不代表本次发送方；绿色背景表示当前收件邮件，蓝色背景表示当前发件邮件。颜色只是辅助提示，最终以邮件头部的“收件/发件”、发件人、收件人和时间为准。</div><div class="gallery"><figure class="figure"><img src="../assets/crm-user-guide/email/email-detail-1.png" alt="邮件重点和更多操作"><figcaption>重点标识和更多操作入口。</figcaption></figure><figure class="figure"><img src="../assets/crm-user-guide/email/email-detail-2.png" alt="收件邮件"><figcaption>绿色区域表示当前收件内容，白色/中性色区域是历史引用。</figcaption></figure><figure class="figure"><img src="../assets/crm-user-guide/email/email-detail-3.png" alt="发件邮件"><figcaption>蓝色区域表示当前发件内容，白色/中性色区域是历史引用。</figcaption></figure></div><h3>从邮件创建线索</h3><p>打开邮件后，在右侧填写客户姓名、公司和联系方式，再转为线索。抄送人可以作为客户姓名候选，候选列表只显示姓名。</p></section>
+        <section class="section" id="leads"><h2>七、功能介绍：线索</h2><p>线索是仍需要确认、跟进或转化的潜在客户记录，处于业务漏斗前段。重点是收集身份、需求和来源，判断是否值得继续跟进。</p><p>可以填写联系方式、来源、需求、负责人和协办人。保存或转化时，系统会检查 WhatsApp、手机号、邮箱和官网链接，发现相同标识会提示疑似重复，不会自动合并或删除。</p><figure class="figure"><img src="../assets/crm-user-guide/leads/01-duplicate-warning.png" alt="疑似重复线索"><figcaption>确认是否继续转化前，先核对已有线索。</figcaption></figure><div class="callout">未填写负责人和协办人时，销售可见范围更大；填写负责人后，普通销售通常只能看到自己负责或协办的记录。当前代码已实现负责人本人或管理员可以设置协办人；“只有销售主管可以填写负责人”需结合角色权限继续实测。</div></section>
+        <section class="section" id="customers"><h2>八、功能介绍：客户</h2><p>客户板块保存已经确认、需要长期维护的公司和联系人主数据，重点是稳定资料和去重。一个客户可以关联多个线索和项目；线索转为客户或关联已有客户，需要用户确认。</p></section>
+        <section class="section" id="projects"><h2>九、功能介绍：项目</h2><p>项目用于跟踪具体客户需求、订单或业务机会，是漏斗中进入实际业务推进后的管理维度。常见路径是：确认需求 → 建立项目 → 更新阶段 → 记录跟进。一个客户可以对应多个项目。</p></section>
+        <section class="section" id="status"><h2>十、功能介绍：沟通状态</h2><p>沟通状态是沟通历史记录板块，不是即时聊天发送窗口，也不是新增数据的表单。新消息和新会话应在对话工作台中产生；这里用于按记录查看和复核已经发生的沟通。</p><div class="callout">普通销售只能看到与自己相关的记录；自己是负责人或协办人时可以看到对应记录。管理员和销售主管可查看更大范围的历史沟通；老板角色按当前设计为只读。</div></section>
+        <section class="section" id="settings"><h2>十一、功能介绍：设置</h2><p>设置用于维护个人资料、个人渠道和界面偏好。绑定 WhatsApp 的具体步骤见上面的“对话工作台操作”。</p><figure class="figure"><img src="../assets/crm-user-guide/settings/01-account-channel-entry.png" alt="设置中的渠道入口"><figcaption>从设置的账户页面进入渠道设置。</figcaption></figure></section>
+        <section class="section" id="faq"><h2>十二、常见问题</h2><h3>为什么看不到某条会话或线索？</h3><p>先确认登录账号、角色、负责人和协办人。个人 WhatsApp 只属于绑定该账号的销售；线索和沟通状态还会受负责人、协办人和角色权限影响。</p><h3>为什么刚收到的消息没有马上出现？</h3><p>先刷新当前会话，再检查网络和渠道在线状态。网络中断、渠道掉线或源端延迟时，消息可能晚于实际到达时间。</p><h3>为什么附件发送慢或失败？</h3><p>大文件会受到浏览器、网络、服务器和 WhatsApp 源端处理速度影响。失败时先查看消息状态和错误提示，再重试。</p></section>
+        <section class="section" id="maintenance"><h2>手册维护规则</h2><p>每次 CRM 功能或界面迭代后，同步检查功能说明、操作步骤、按钮名称、权限规则和相关截图，并更新文档日期。网页端和 Markdown 版保持同一内容。</p></section>
+        <div class="footer">本手册面向 CRM 日常使用者。功能状态以当前 CRM 页面为准，截图只用于辅助理解。</div>
+      </article>
+    </main>
+    <aside class="toc"><div class="toc-title">本页目录</div><nav><a href="#overview">认识 CRM</a><a href="#navigation">页面导航</a><a href="#login">登录 CRM</a><a href="#workbench">对话工作台</a><a href="#email">邮箱</a><a href="#leads">线索</a><a href="#customers">客户</a><a href="#projects">项目</a><a href="#status">沟通状态</a><a href="#settings">设置</a><a href="#faq">常见问题</a><a href="#maintenance">手册维护</a></nav></aside>
+  </div>
+  <div class="lightbox" id="lightbox"><button class="close" aria-label="关闭">×</button><img alt="放大查看"></div>
+  <script>
+    // Keep the user-facing order and group all operational steps under Conversation Workbench.
+    const content=document.querySelector('#content'), overview=document.querySelector('#overview'), navigation=document.querySelector('#navigation'), login=document.querySelector('#login'), workbench=document.querySelector('#workbench'), howto=document.querySelector('#howto');
+    navigation.after(login);
+    overview.querySelector('h2').textContent='一、认识 CRM';
+    navigation.querySelector('h2').textContent='二、页面导航';
+    login.querySelector('h2').textContent='三、登录 CRM';
+    workbench.querySelector('h2').textContent='四、对话工作台';
+    document.querySelector('#email h2').textContent='五、邮箱';
+    document.querySelector('#leads h2').textContent='六、线索';
+    document.querySelector('#customers h2').textContent='七、客户';
+    document.querySelector('#projects h2').textContent='八、项目';
+    document.querySelector('#status h2').textContent='九、沟通状态';
+    document.querySelector('#settings h2').textContent='十、设置';
+    document.querySelector('#settings p').textContent='设置用于维护个人资料、个人渠道和界面偏好。WhatsApp 绑定的完整步骤见对话工作台。';
+    document.querySelector('a[href="#howto"]')?.remove();
+    if(howto&&workbench){
+      howto.querySelector('h2')?.remove();
+      workbench.insertAdjacentHTML('beforeend','<h3>右侧客户资料表单</h3><p>右侧表单用于补充客户信息和转线索。系统会根据当前会话渠道自动填写“客户来源”：WhatsApp 会填入 WhatsApp，官网会填入官网，其他已接入渠道同理。销售只需要补充姓名、公司、邮箱、WhatsApp 等字段；填写任意客户信息后，再检查重复提示并保存或转为线索。</p><h3>AI 接管与人工接待的规则</h3><p>AI 接管表示由 AI 自动回复；人工接待表示销售正在负责回复。销售要从 AI 接管切换为人工接待时，必须先把自己的状态切换为“在线”，再点击人工接待或接管会话。处于离线状态时不能直接接管，系统会先提示上线。</p><div class="callout">短时未回复：人工接待后，客户再次发消息，超过配置的 1–120 分钟未收到销售回复时，AI 可以代答该条消息，但销售仍保持在线和人工接待状态。长期无人回复：销售连续 120 分钟没有发送人工消息，会话转回 AI 接管，并将销售切换为离线。</div>');
+      Array.from(howto.children).forEach(node=>workbench.appendChild(node));
+      howto.remove();
+    }
+    const search=document.querySelector('#search');
+    search.addEventListener('input',()=>{const q=search.value.trim().toLowerCase();document.querySelectorAll('.section').forEach(s=>{s.hidden=!!q&&!s.textContent.toLowerCase().includes(q);});});
+    const box=document.querySelector('#lightbox'), big=box.querySelector('img');
+    document.querySelectorAll('.figure img').forEach(img=>img.addEventListener('click',()=>{big.src=img.src;big.alt=img.alt;box.classList.add('open');}));
+    box.addEventListener('click',e=>{if(e.target===box||e.target.classList.contains('close'))box.classList.remove('open');});
+  </script>
+</body>
+</html>

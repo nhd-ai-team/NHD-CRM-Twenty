@@ -135,6 +135,8 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/twenty-portal.conf:/etc/nginx/conf.d/default.conf:ro
       - ./nginx/inject:/etc/nginx/inject:ro
+      - ./docs/crm-user-guide:/usr/share/nginx/docs/crm-user-guide:ro
+      - ./docs/assets/crm-user-guide:/usr/share/nginx/docs/assets/crm-user-guide:ro
     depends_on:
       - server
     restart: always
