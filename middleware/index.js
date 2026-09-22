@@ -3566,7 +3566,7 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   const access = await requireConversationAccess(req, res, { historyView });
   if (!access) return;
   const workspaceSchema = await getWorkspaceSchema();
-  const result = await pool.query(`SELECT m.id, m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments,
+  const result = await pool.query(`SELECT m.id, m.external_msg_id AS "externalMessageId", m.owner_id AS "ownerId", m.sender_type AS "senderType", m.sender_role AS "senderRole", m.content, m.content_type AS "contentType", m.media_url AS "mediaUrl", m.subject, m.attachments,
       CASE WHEN c.channel = 'email' THEN COALESCE(m.mail_direction, CASE WHEN m.sender_type IN ('agent', 'ai') THEN 'outbound' ELSE 'inbound' END) ELSE NULL END AS "mailDirection",
       m.from_address AS "fromAddress", m.to_addresses AS "toAddresses", m.cc_addresses AS "ccAddresses", m.sent_at AS "sentAt",
       m.source_mailbox AS "sourceMailbox", m.source_uid AS "sourceUid", m.source_uid_validity AS "sourceUidValidity", m.source_flags AS "sourceFlags", COALESCE(m.crm_is_junk, m.source_is_junk, false) AS "sourceIsJunk", m.crm_is_junk AS "crmIsJunk", m.source_is_flagged AS "sourceIsFlagged", CASE WHEN COALESCE(m.crm_is_flagged_override, false) THEN COALESCE(m.crm_is_flagged, false) ELSE COALESCE(m.source_is_flagged, false) END AS "isFlagged", COALESCE(m.crm_is_customer, false) AS "isCustomerMail",
@@ -7674,6 +7674,70 @@ app.post('/api/conversations/:id/messages', requireSameSite, uploadSingleAttachm
   }
 
   res.status(400).json({ error: 'channel is not supported yet' });
+});
+
+function wahaChatIdFromMessageId(externalMessageId) {
+  const value = String(externalMessageId || '').trim();
+  const match = value.match(/^(?:true|false)_(.+)_[^_]+$/);
+  return match?.[1] || '';
+}
+
+// 只允许当前 WhatsApp 绑定账号撤回自己发送的消息；最终是否仍在 WhatsApp 可撤回时间窗内，
+// 由 WAHA/WhatsApp 判定，失败时不修改 CRM 历史记录。
+app.post('/api/conversations/:id/messages/:messageId/revoke', requireSameSite, async (req, res) => {
+  const access = await requireConversationAccess(req, res, { write: true });
+  if (!access) return;
+  const { conversation } = access;
+  if (conversation.channel !== 'whatsapp') return res.status(400).json({ error: '仅支持撤回 WhatsApp 消息' });
+
+  const messageResult = await pool.query(
+    `SELECT id, external_msg_id AS "externalMessageId", owner_id AS "ownerId", sender_type AS "senderType", content_type AS "contentType"
+       FROM conv.messages
+      WHERE id = $1 AND conversation_id = $2
+      LIMIT 1`,
+    [req.params.messageId, req.params.id],
+  );
+  const message = messageResult.rows[0];
+  if (!message) return res.status(404).json({ error: '消息不存在' });
+  if (message.senderType !== 'agent' || !message.externalMessageId) {
+    return res.status(400).json({ error: '只能撤回已发送的 WhatsApp 消息' });
+  }
+  if (message.contentType === 'revoked') return res.status(409).json({ error: '消息已经撤回' });
+  if (!message.ownerId || message.ownerId !== access.viewer.userId) {
+    return res.status(403).json({ error: '只能撤回当前账号发送的消息' });
+  }
+
+  const ownership = await requireBindingForSession(req, res, conversation.waha_session || WAHA_SESSION);
+  if (!ownership) return;
+  const sessionName = conversation.waha_session || WAHA_SESSION;
+  const externalMessageId = String(message.externalMessageId).trim();
+  const chatId = String(conversation.external_chat_id || '').trim() || wahaChatIdFromMessageId(externalMessageId);
+  if (!chatId) return res.status(400).json({ error: '消息缺少 WhatsApp 会话标识' });
+
+  try {
+    const response = await fetchWaha(
+      `/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(externalMessageId)}`,
+      { method: 'DELETE' },
+    );
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      return res.status(response.status === 404 ? 409 : 502).json({
+        error: response.status === 404 ? 'WhatsApp 消息不存在或已超过可撤回时间' : 'WhatsApp 撤回失败',
+        detail,
+      });
+    }
+
+    const persisted = await persistWhatsAppMessageRevoked({ before: { id: externalMessageId } }, sessionName);
+    await recordAuditEvent('message.revoked', {
+      channel: 'whatsapp', conversationId: req.params.id, messageId: message.id,
+      actor: access.viewer, requestSummary: auditRequestSummary(req),
+      payload: { externalMessageId, source: 'crm' },
+    });
+    res.json({ status: 'revoked', messageId: message.id, ...persisted });
+  } catch (error) {
+    console.error('[whatsapp-revoked] CRM revoke failed:', error.message);
+    res.status(502).json({ error: 'WhatsApp 撤回失败', detail: error.message });
+  }
 });
 
 app.use((error, _req, res, next) => {

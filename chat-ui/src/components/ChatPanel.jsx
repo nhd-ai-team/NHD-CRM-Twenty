@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import {
   UserCheck, Bot,
   Send, Paperclip,
-  Menu, X, FileText, History,
+  Menu, X, FileText, History, Trash2,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
@@ -126,7 +126,7 @@ function DeliveryStatus({ msg, channel }) {
   )
 }
 
-export function MessageBubble({ msg, channel }) {
+export function MessageBubble({ msg, channel, onContextMenu }) {
   if (msg.contentType === 'system') return (
     <div style={{ textAlign: 'center', padding: '6px 0' }}>
       <span style={{
@@ -137,7 +137,7 @@ export function MessageBubble({ msg, channel }) {
   )
 
   if (msg.contentType === 'revoked') return (
-    <div style={{
+    <div onContextMenu={onContextMenu} style={{
       display: 'flex', flexDirection: msg.senderType === 'customer' ? 'row' : 'row-reverse',
       marginBottom: 12,
     }}>
@@ -295,7 +295,7 @@ function btnStyle(variant, disabled = false) {
   return { ...base, background: 'transparent', color: 'var(--text-secondary)' }
 }
 
-export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNoticeSeen, onSelectConversation, layout, onToggleSidebar, presence }) {
+export function ChatPanel({ conv, onSend, onRevokeMessage, onTakeover, onRename, onMarkHandoffNoticeSeen, onSelectConversation, layout, onToggleSidebar, presence }) {
   const [input, setInput] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [pendingAction, setPendingAction] = useState(null)
@@ -307,6 +307,7 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
   const [handoffPromptId, setHandoffPromptId] = useState(null)
   const [dismissedHandoffId, setDismissedHandoffId] = useState(null)
   const [returnNoticeId, setReturnNoticeId] = useState(null)
+  const [messageMenu, setMessageMenu] = useState(null)
   const bottomRef = useRef(null)
   const fileInputRef = useRef(null)
   const composingRef = useRef(false)
@@ -326,7 +327,47 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
     setReturnNoticeId(conv?.returnNotice?.id || null)
   }, [conv?.id, conv?.returnNotice?.id])
 
+  useEffect(() => {
+    setMessageMenu(null)
+  }, [conv?.id])
+
+  useEffect(() => {
+    if (!messageMenu) return undefined
+    const close = () => setMessageMenu(null)
+    const onKeyDown = (event) => { if (event.key === 'Escape') close() }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [messageMenu])
+
   const aiMode = !!(conv?.aiControl || {}).enabled
+
+  function openMessageMenu(event, msg) {
+    if (conv?.channel !== 'whatsapp' || msg.senderType !== 'agent' || !msg.externalMessageId || msg.contentType === 'revoked') return
+    event.preventDefault()
+    event.stopPropagation()
+    setMessageMenu({
+      message: msg,
+      x: Math.min(event.clientX, Math.max(8, window.innerWidth - 190)),
+      y: Math.min(event.clientY, Math.max(8, window.innerHeight - 58)),
+    })
+  }
+
+  async function handleRevokeMessage() {
+    const target = messageMenu?.message
+    setMessageMenu(null)
+    if (!target) return
+    if (!window.confirm('确认撤回这条 WhatsApp 消息？最终结果受 WhatsApp 可撤回时间限制。')) return
+    setSendError('')
+    try {
+      await onRevokeMessage(conv.id, target.id)
+    } catch (error) {
+      setSendError(error.message)
+    }
+  }
 
   if (!conv) return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: 12 }}>
@@ -569,7 +610,12 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column' }}>
         {conv.messages.map((msg, i) => (
-          <MessageBubble key={msg.id ?? i} msg={msg} channel={conv.channel} />
+          <MessageBubble
+            key={msg.id ?? i}
+            msg={msg}
+            channel={conv.channel}
+            onContextMenu={(event) => openMessageMenu(event, msg)}
+          />
         ))}
         <div ref={bottomRef} />
       </div>
@@ -669,6 +715,32 @@ export function ChatPanel({ conv, onSend, onTakeover, onRename, onMarkHandoffNot
 
       {/* Action bar */}
       <ActionBar conv={conv} onRequestAction={requestAction} />
+
+      {messageMenu && (
+        <div
+          role="menu"
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: 'fixed', left: messageMenu.x, top: messageMenu.y, zIndex: 500,
+            minWidth: 164, padding: 4, border: '1px solid var(--border)', borderRadius: 7,
+            background: 'var(--bg-primary)', boxShadow: '0 8px 24px rgba(0,0,0,.18)',
+          }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={handleRevokeMessage}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 10px',
+              border: 'none', borderRadius: 5, background: 'transparent', color: 'var(--text-primary)',
+              cursor: 'pointer', fontSize: 12, textAlign: 'left',
+            }}
+          >
+            <Trash2 size={14} /> 撤回消息
+          </button>
+        </div>
+      )}
 
       {presencePromptOpen && (
         <div

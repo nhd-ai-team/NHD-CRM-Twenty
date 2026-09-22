@@ -213,7 +213,7 @@ export default function App() {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, markHandoffNoticeSeen, renameConversation, reload: reloadConversations,
+    sendMessage, revokeMessage, setTakeover, markHandoffNoticeSeen, renameConversation, reload: reloadConversations,
     loadMore: loadMoreConversations, hasMore, loadingMore, totalCount, channelCounts,
   } = useConversations()
 
@@ -306,6 +306,7 @@ export default function App() {
           <ChatPanel
             conv={selected}
             onSend={sendMessage}
+            onRevokeMessage={revokeMessage}
             onTakeover={(action) => setTakeover(selected?.id, action)}
             onMarkHandoffNoticeSeen={(noticeId) => markHandoffNoticeSeen(selected?.id, noticeId)}
             onRename={renameConversation}

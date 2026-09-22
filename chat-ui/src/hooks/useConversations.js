@@ -311,6 +311,25 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     }, 1000)
   }
 
+  async function revokeMessage(convId, messageId) {
+    await requireAccessToken()
+    const response = await fetch(`/conv-api/conversations/${convId}/messages/${messageId}/revoke`, {
+      method: 'POST',
+      headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({}),
+    })
+    if (!response.ok) {
+      if (response.status === 401) {
+        setAuthExpired(true)
+        notifyTwentyAuthExpired()
+      }
+      const data = await response.json().catch(() => ({}))
+      throw new Error([data.error, data.detail].filter(Boolean).join('：') || '消息撤回失败')
+    }
+    await loadMessages(convId)
+    await loadConversations()
+  }
+
   async function setTakeover(convId, action) {
     if (!convId) return
     await requireAccessToken()
@@ -447,7 +466,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     activeChannel, setActiveChannel,
     activeStatus, setActiveStatus,
     search, setSearch,
-    sendMessage, setTakeover, respondHandoff, markHandoffNoticeSeen, closeConversation, renameConversation,
+    sendMessage, revokeMessage, setTakeover, respondHandoff, markHandoffNoticeSeen, closeConversation, renameConversation,
     reload: loadConversations,
     loadMore: () => loadConversations({ append: true }),
     hasMore,
