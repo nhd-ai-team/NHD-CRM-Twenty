@@ -11,7 +11,7 @@ import { installTwentyAuthMessageListener } from './utils/twentyAuth'
 import { CHANNELS } from './data/mock'
 import { ChannelIcon } from './components/ChannelIcon'
 import { NewWhatsAppConversationModal } from './components/NewWhatsAppConversationModal'
-import { PanelRightOpen, PanelRightClose, Settings } from 'lucide-react'
+import { PanelRightOpen, PanelRightClose, Settings, Users } from 'lucide-react'
 
 // Layout breakpoints (iframe width)
 function getLayout(w) {
@@ -61,8 +61,16 @@ function PresenceSwitch({ status, disabled, onClick }) {
   )
 }
 
+function formatPresenceTime(value) {
+  if (!value) return '暂无记录'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '暂无记录'
+  return date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, setActiveChannel, contactOpen, onToggleContact, aiSettings, presence }) {
   const [aiOpen, setAiOpen] = useState(false)
+  const [presenceMembersOpen, setPresenceMembersOpen] = useState(false)
   const [pendingPresenceStatus, setPendingPresenceStatus] = useState(null)
   const gearRef = useRef(null)
   const confirmPresenceChange = async () => {
@@ -117,6 +125,51 @@ function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, s
           disabled={presence.loading || presence.saving}
           onClick={() => setPendingPresenceStatus(presence.status === 'online' ? 'offline' : 'online')}
         />
+        <button
+          type="button"
+          onClick={() => setPresenceMembersOpen(open => !open)}
+          title="查看销售在线状态"
+          aria-label="查看销售在线状态"
+          style={topIconButtonStyle(presenceMembersOpen)}
+        >
+          <Users size={16} />
+        </button>
+        {presenceMembersOpen && (
+          <div
+            role="dialog"
+            aria-label="销售在线状态"
+            onClick={event => event.stopPropagation()}
+            style={{
+              position: 'absolute', top: 40, right: 52, zIndex: 320, width: 260,
+              maxHeight: 360, overflowY: 'auto', padding: 10,
+              border: '1px solid var(--border)', borderRadius: 8,
+              background: 'var(--bg-primary)', boxShadow: '0 12px 28px rgba(0,0,0,.16)',
+            }}
+          >
+            <div style={{ padding: '2px 4px 8px', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
+              销售在线状态
+            </div>
+            {presence.members.length === 0 ? (
+              <div style={{ padding: '12px 4px', fontSize: 12, color: 'var(--text-muted)' }}>暂无销售成员</div>
+            ) : presence.members.map((member, index) => {
+              const online = member.status === 'online'
+              return (
+                <div key={`${member.name}-${index}`} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px',
+                  borderTop: index ? '1px solid var(--border-soft)' : 'none',
+                }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: online ? '#16a34a' : 'var(--text-muted)', flex: '0 0 auto' }} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 600 }}>{member.name}</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)' }}>
+                      {online ? '在线' : '离线'} · 最近活跃 {formatPresenceTime(member.updatedAt)}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
         <button
           ref={gearRef}
           onClick={() => setAiOpen(o => !o)}

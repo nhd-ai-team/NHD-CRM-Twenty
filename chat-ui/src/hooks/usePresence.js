@@ -6,6 +6,7 @@ export function usePresence() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [members, setMembers] = useState([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -32,7 +33,49 @@ export function usePresence() {
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  const loadMembers = useCallback(async () => {
+    try {
+      const token = await waitForTwentyAccessToken()
+      if (!token) return
+      const response = await fetch('/conv-api/presence/members', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: withTwentyAuthHeaders({}, token),
+      })
+      if (!response.ok) return
+      const data = await response.json().catch(() => ({}))
+      setMembers(Array.isArray(data.members) ? data.members : [])
+    } catch {
+      // 在线状态列表是辅助信息，不阻断当前账号的接待状态。
+    }
+  }, [])
+
+  useEffect(() => {
+    load()
+    loadMembers()
+    const timer = window.setInterval(loadMembers, 15000)
+    return () => window.clearInterval(timer)
+  }, [load, loadMembers])
+
+  // 在线状态需要持续更新时间，否则列表里的“最近活跃”只能反映上次手动切换状态的时间。
+  useEffect(() => {
+    if (status !== 'online') return undefined
+    const timer = window.setInterval(async () => {
+      try {
+        const token = await waitForTwentyAccessToken()
+        if (!token) return
+        await fetch('/conv-api/presence', {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: withTwentyAuthHeaders({ 'Content-Type': 'application/json' }, token),
+          body: JSON.stringify({ status: 'online' }),
+        })
+      } catch {
+        // 心跳失败不打断当前页面，下一次心跳继续尝试。
+      }
+    }, 30000)
+    return () => window.clearInterval(timer)
+  }, [status])
 
   const setPresenceStatus = useCallback(async (nextStatus) => {
     if (saving || loading) return false
@@ -65,5 +108,5 @@ export function usePresence() {
 
   const toggle = useCallback(() => setPresenceStatus(status === 'online' ? 'offline' : 'online'), [setPresenceStatus, status])
 
-  return { status, loading, saving, error, toggle, setPresenceStatus, reload: load }
+  return { status, loading, saving, error, members, toggle, setPresenceStatus, reload: load, reloadMembers: loadMembers }
 }

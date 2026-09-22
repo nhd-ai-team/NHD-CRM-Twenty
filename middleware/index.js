@@ -622,6 +622,36 @@ app.get('/api/presence', async (req, res) => {
   }
 });
 
+app.get('/api/presence/members', async (req, res) => {
+  const viewer = await resolveConversationViewer(req);
+  if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
+  try {
+    const schema = await getWorkspaceSchema();
+    const result = await pool.query(
+      `SELECT wm."userId" AS "userId",
+              NULLIF(TRIM(COALESCE(wm."nameFirstName", '') || ' ' || COALESCE(wm."nameLastName", '')), '') AS name,
+              COALESCE(p.status, 'offline') AS status,
+              p.updated_at AS "updatedAt"
+         FROM ${schema}."workspaceMember" wm
+         LEFT JOIN conv.agent_presence p
+           ON p.workspace_id = $1 AND p.user_id = wm."userId"
+        WHERE wm."deletedAt" IS NULL
+        ORDER BY CASE WHEN COALESCE(p.status, 'offline') = 'online' THEN 0 ELSE 1 END,
+                 name NULLS LAST,
+                 wm."userId"`,
+      [viewer.workspaceId],
+    );
+    res.json({ members: result.rows.map(member => ({
+      name: member.name || '未命名成员',
+      status: member.status === 'online' ? 'online' : 'offline',
+      updatedAt: member.updatedAt || null,
+    })) });
+  } catch (error) {
+    console.error('[presence] member list read failed:', error.message);
+    res.status(503).json({ error: '无法读取销售在线状态' });
+  }
+});
+
 app.patch('/api/presence', async (req, res) => {
   const viewer = await resolveConversationViewer(req);
   if (!viewer) return res.status(401).json({ error: '登录状态已失效，请刷新 CRM 后重试' });
