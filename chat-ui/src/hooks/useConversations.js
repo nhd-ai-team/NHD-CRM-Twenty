@@ -1,13 +1,20 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { waitForTwentyAccessToken, withTwentyAuthHeaders, notifyTwentyAuthExpired } from '../utils/twentyAuth'
 
-// 两批消息是否等价：条数、末条 id 与送达时间一致即视为没有新内容。
+// 两批消息是否等价：不仅比较条数和末条时间，还要比较内容状态；撤回会保留原消息 id/时间，
+// 只比较末条 id 会把「已撤回」误判成旧数据，导致界面必须手动刷新才更新。
 function sameMessageList(a = [], b = []) {
   if (a.length !== b.length) return false
   if (a.length === 0) return true
-  const prev = a[a.length - 1]
-  const next = b[b.length - 1]
-  return prev.id === next.id && Number(prev.sentAt) === Number(next.sentAt)
+  return a.every((prev, index) => {
+    const next = b[index]
+    return prev.id === next.id
+      && Number(prev.sentAt) === Number(next.sentAt)
+      && prev.contentType === next.contentType
+      && prev.content === next.content
+      && prev.mediaUrl === next.mediaUrl
+      && JSON.stringify(prev.attachments || []) === JSON.stringify(next.attachments || [])
+  })
 }
 
 export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
