@@ -637,6 +637,7 @@ app.get('/api/presence/members', async (req, res) => {
            ON p.workspace_id = $1 AND p.user_id = wm."userId"::text
         WHERE wm."deletedAt" IS NULL
         ORDER BY CASE WHEN COALESCE(p.status, 'offline') = 'online' THEN 0 ELSE 1 END,
+                 p.updated_at DESC NULLS LAST,
                  name NULLS LAST,
                  wm."userId"`,
       [viewer.workspaceId],
