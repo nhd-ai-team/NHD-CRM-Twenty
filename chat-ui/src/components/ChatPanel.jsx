@@ -162,7 +162,7 @@ export function MessageBubble({ msg, channel, onContextMenu }) {
   const textContent = mediaAttachments.length === 1 && msg.content === mediaAttachments[0]?.title ? '' : msg.content
 
   return (
-    <div style={{
+    <div onContextMenu={onContextMenu} style={{
       display: 'flex', flexDirection: isCustomer ? 'row' : 'row-reverse',
       gap: 8, marginBottom: 12, alignItems: 'flex-end',
     }}>
@@ -346,9 +346,10 @@ export function ChatPanel({ conv, onSend, onRevokeMessage, onTakeover, onRename,
   const aiMode = !!(conv?.aiControl || {}).enabled
 
   function openMessageMenu(event, msg) {
-    if (conv?.channel !== 'whatsapp' || msg.senderType !== 'agent' || !msg.externalMessageId || msg.contentType === 'revoked') return
+    if (conv?.channel !== 'whatsapp') return
     event.preventDefault()
     event.stopPropagation()
+    if (msg.senderType !== 'agent' || !msg.externalMessageId || msg.contentType === 'revoked') return
     setMessageMenu({
       message: msg,
       x: Math.min(event.clientX, Math.max(8, window.innerWidth - 190)),
