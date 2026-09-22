@@ -73,6 +73,15 @@ function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, s
   const [presenceMembersOpen, setPresenceMembersOpen] = useState(false)
   const [pendingPresenceStatus, setPendingPresenceStatus] = useState(null)
   const gearRef = useRef(null)
+  const presenceMembersRef = useRef(null)
+  useEffect(() => {
+    if (!presenceMembersOpen) return undefined
+    const closeOnOutsideClick = (event) => {
+      if (!presenceMembersRef.current?.contains(event.target)) setPresenceMembersOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnOutsideClick)
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick)
+  }, [presenceMembersOpen])
   const confirmPresenceChange = async () => {
     if (!pendingPresenceStatus) return
     const changed = await presence.setPresenceStatus(pendingPresenceStatus)
@@ -125,27 +134,28 @@ function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, s
           disabled={presence.loading || presence.saving}
           onClick={() => setPendingPresenceStatus(presence.status === 'online' ? 'offline' : 'online')}
         />
-        <button
-          type="button"
-          onClick={() => setPresenceMembersOpen(open => !open)}
-          title="查看销售在线状态"
-          aria-label="查看销售在线状态"
-          style={topIconButtonStyle(presenceMembersOpen)}
-        >
-          <Users size={16} />
-        </button>
-        {presenceMembersOpen && (
-          <div
-            role="dialog"
-            aria-label="销售在线状态"
-            onClick={event => event.stopPropagation()}
-            style={{
-              position: 'absolute', top: 40, right: 52, zIndex: 320, width: 260,
-              maxHeight: 360, overflowY: 'auto', padding: 10,
-              border: '1px solid var(--border)', borderRadius: 8,
-              background: 'var(--bg-primary)', boxShadow: '0 12px 28px rgba(0,0,0,.16)',
-            }}
+        <div ref={presenceMembersRef} style={{ position: 'relative', display: 'flex' }}>
+          <button
+            type="button"
+            onClick={() => setPresenceMembersOpen(open => !open)}
+            title="查看销售在线状态"
+            aria-label="查看销售在线状态"
+            style={topIconButtonStyle(presenceMembersOpen)}
           >
+            <Users size={16} />
+          </button>
+          {presenceMembersOpen && (
+            <div
+              role="dialog"
+              aria-label="销售在线状态"
+              onClick={event => event.stopPropagation()}
+              style={{
+                position: 'absolute', top: 40, right: 0, zIndex: 320, width: 260,
+                maxHeight: 360, overflowY: 'auto', padding: 10,
+                border: '1px solid var(--border)', borderRadius: 8,
+                background: 'var(--bg-primary)', boxShadow: '0 12px 28px rgba(0,0,0,.16)',
+              }}
+            >
             <div style={{ padding: '2px 4px 8px', fontSize: 12, fontWeight: 700, color: 'var(--text-primary)' }}>
               销售在线状态
             </div>
@@ -168,8 +178,9 @@ function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, s
                 </div>
               )
             })}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
         <button
           ref={gearRef}
           onClick={() => setAiOpen(o => !o)}
