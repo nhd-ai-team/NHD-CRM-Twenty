@@ -136,6 +136,20 @@ export function MessageBubble({ msg, channel }) {
     </div>
   )
 
+  if (msg.contentType === 'revoked') return (
+    <div style={{
+      display: 'flex', flexDirection: msg.senderType === 'customer' ? 'row' : 'row-reverse',
+      marginBottom: 12,
+    }}>
+      <span style={{
+        padding: '7px 12px', borderRadius: 10, color: 'var(--text-muted)',
+        background: 'var(--bg-active)', fontSize: 12, fontStyle: 'italic',
+      }}>
+        消息已撤回 · {format(msg.sentAt, 'MM-dd HH:mm')}
+      </span>
+    </div>
+  )
+
   const isCustomer = msg.senderType === 'customer'
   const isAI = msg.senderType === 'ai'
   const timeStr = format(msg.sentAt, 'MM-dd HH:mm')

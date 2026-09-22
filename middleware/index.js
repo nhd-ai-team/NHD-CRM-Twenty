@@ -2227,6 +2227,66 @@ async function persistWhatsAppMessageAck(payload, session) {
   return { updated: true, messageId: updated.rows[0].id, status: updated.rows[0].delivery_status };
 }
 
+// WAHA 的 message.revoked 事件使用 revokedMessageId 指向原消息；部分引擎
+// 只提供 before.id，因此同时兼容两种 payload，并保留原消息时间和发送方。
+async function persistWhatsAppMessageRevoked(payload, session) {
+  const data = payload.payload || payload;
+  const binding = await getActiveWhatsAppBindingBySession(session);
+  if (!binding) {
+    console.warn('[whatsapp-revoked] reject event for unknown/unbound session:', session);
+    return { ignored: true, reason: 'unbound_session' };
+  }
+
+  const before = data.before || {};
+  const revokedMessageId = String(
+    data.revokedMessageId || data._data?.revokedMessageId || ''
+  ).trim();
+  const beforeId = normalizeWahaMessageId(before);
+  const protocolKey = data.protocolMessageKey || data._data?.protocolMessageKey || {};
+  const protocolMessageId = String(
+    protocolKey._serialized || protocolKey.$1 || protocolKey.id || ''
+  ).trim();
+  const candidates = [...new Set([revokedMessageId, beforeId, protocolMessageId].filter(Boolean))];
+  if (!candidates.length) return { ignored: true, reason: 'missing_message_id' };
+
+  const updated = await pool.query(
+    `UPDATE conv.messages
+        SET content = '[消息已撤回]',
+            content_type = 'revoked',
+            media_url = NULL,
+            attachments = NULL,
+            raw_message_type = 'revoked',
+            message_summary = '消息已撤回'
+      WHERE external_msg_id = ANY($1::text[])
+         OR EXISTS (
+              SELECT 1 FROM unnest($1::text[]) AS candidate(id)
+               WHERE conv.messages.external_msg_id LIKE '%' || candidate.id
+            )
+      RETURNING id, conversation_id, sent_at`,
+    [candidates],
+  );
+
+  if (!updated.rowCount) {
+    console.warn('[whatsapp-revoked] no matching CRM message:', candidates.join(', '), 'session=', session);
+    return { ignored: true, reason: 'message_not_found' };
+  }
+  for (const row of updated.rows) {
+    await pool.query(
+      `UPDATE conv.conversations
+          SET last_message_preview = '[消息已撤回]', updated_at = now()
+        WHERE id = $1 AND last_message_at = $2`,
+      [row.conversation_id, row.sent_at],
+    );
+    publishConversationEvent({
+      type: 'message.updated',
+      channel: 'whatsapp',
+      conversationId: row.conversation_id,
+      messageId: row.id,
+    });
+  }
+  return { updated: true, count: updated.rowCount };
+}
+
 async function receiveWhatsAppWebhook(req, res) {
   res.status(200).json({ received: true });
   const event = req.body.event || req.params.event?.replace(/-/g, '.');
@@ -2242,6 +2302,11 @@ async function receiveWhatsAppWebhook(req, res) {
   if (event === 'message.ack') {
     persistWhatsAppMessageAck(req.body, session)
       .catch(error => console.error('[whatsapp-ack] webhook failed:', error.message));
+    return;
+  }
+  if (event === 'message.revoked') {
+    persistWhatsAppMessageRevoked(req.body, session)
+      .catch(error => console.error('[whatsapp-revoked] webhook failed:', error.message));
     return;
   }
   // WAHA 投递 `message`（入站+出站）/ `message.any`；只处理文本类消息事件。
@@ -4964,7 +5029,7 @@ function isWahaSessionNotFound(error) {
 }
 
 // 需求二：webhook 事件必须包含 message.ack，否则拿不到送达/已读回执。
-const WAHA_WEBHOOK_EVENTS = ['message', 'message.ack', 'session.status'];
+const WAHA_WEBHOOK_EVENTS = ['message', 'message.ack', 'message.revoked', 'session.status'];
 
 async function createWahaSession(sessionName = WAHA_SESSION) {
   const response = await fetchWaha('/api/sessions/start', {
