@@ -361,7 +361,7 @@ export function ChatPanel({ conv, onSend, onRevokeMessage, onTakeover, onRename,
     const target = messageMenu?.message
     setMessageMenu(null)
     if (!target) return
-    if (!window.confirm('确认撤回这条 WhatsApp 消息？最终结果受 WhatsApp 可撤回时间限制。')) return
+    if (!window.confirm('确认撤回这条 WhatsApp 消息？受 WhatsApp 时间限制（2天内）。')) return
     setSendError('')
     try {
       await onRevokeMessage(conv.id, target.id)
