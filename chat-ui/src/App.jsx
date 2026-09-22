@@ -172,7 +172,7 @@ function ChannelBar({ conversations, totalCount, channelCounts, activeChannel, s
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: 12.5, color: 'var(--text-primary)', fontWeight: 600 }}>{member.name}</div>
                     <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)' }}>
-                      {online ? '在线' : '离线'} · 最近心跳 {formatPresenceTime(member.updatedAt)}
+                      {online ? '在线' : '离线'} · 最后人工消息 {formatPresenceTime(member.lastHumanMessageAt)}
                     </div>
                   </div>
                 </div>

@@ -631,7 +631,13 @@ app.get('/api/presence/members', async (req, res) => {
       `SELECT wm."userId" AS "userId",
               NULLIF(TRIM(COALESCE(wm."nameFirstName", '') || ' ' || COALESCE(wm."nameLastName", '')), '') AS name,
               COALESCE(p.status, 'offline') AS status,
-              p.updated_at AS "updatedAt"
+              p.updated_at AS "updatedAt",
+              (
+                SELECT MAX(m.sent_at)
+                  FROM conv.messages m
+                 WHERE m.sender_type = 'agent'
+                   AND m.owner_id = wm."userId"::text
+              ) AS "lastHumanMessageAt"
          FROM ${schema}."workspaceMember" wm
          LEFT JOIN conv.agent_presence p
            ON p.workspace_id = $1 AND p.user_id = wm."userId"::text
@@ -645,7 +651,7 @@ app.get('/api/presence/members', async (req, res) => {
     res.json({ members: result.rows.map(member => ({
       name: member.name || '未命名成员',
       status: member.status === 'online' ? 'online' : 'offline',
-      updatedAt: member.updatedAt || null,
+      lastHumanMessageAt: member.lastHumanMessageAt || null,
     })) });
   } catch (error) {
     console.error('[presence] member list read failed:', error.message);
