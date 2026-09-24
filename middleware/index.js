@@ -1215,6 +1215,18 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE(event_key, recipient_user_id));
+    CREATE TABLE IF NOT EXISTS conv.whatsapp_calls (
+      session_name TEXT NOT NULL,
+      call_id TEXT NOT NULL,
+      conversation_id UUID REFERENCES conv.conversations(id),
+      message_id UUID REFERENCES conv.messages(id),
+      status TEXT NOT NULL DEFAULT 'received',
+      received_at TIMESTAMPTZ NOT NULL,
+      accepted_at TIMESTAMPTZ,
+      rejected_at TIMESTAMPTZ,
+      is_video BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (session_name, call_id));
     CREATE INDEX IF NOT EXISTS dingtalk_notification_outbox_due_idx
       ON conv.dingtalk_notification_outbox(status, next_attempt_at)
       WHERE status IN ('pending', 'retry_pending');
@@ -2324,11 +2336,89 @@ async function persistWhatsAppMessageRevoked(payload, session) {
   return { updated: true, count: updated.rowCount };
 }
 
+async function persistWhatsAppCall(body, session, event) {
+  const data = body.payload || body;
+  const callId = String(data.id || '').trim();
+  const callerJid = String(data.from || '').trim();
+  if (!callId || !callerJid || callerJid.endsWith('@g.us') || data.isGroup) return;
+  const binding = await getActiveWhatsAppBindingBySession(session);
+  if (!binding) return;
+  const chatKey = await resolveWhatsAppChatKey(callerJid, session);
+  const phone = chatKey.endsWith('@c.us') ? phoneFromJid(chatKey) : null;
+  const displayName = phone ? `+${phone}` : chatKey;
+  const receivedAt = wahaMessageTimestampMs(data) || Date.now();
+  const client = await pool.connect();
+  let conversationId;
+  let messageId;
+  let isNew = false;
+  try {
+    await client.query('BEGIN');
+    if (event === 'call.received') {
+      const contact = await client.query(`INSERT INTO conv.contacts(channel, external_id, display_name, phone, owner_id)
+        VALUES ('whatsapp', $1, $2, $3, $4) ON CONFLICT(channel, external_id)
+        DO UPDATE SET phone = COALESCE(conv.contacts.phone, EXCLUDED.phone), updated_at = now()
+        RETURNING id`, [chatKey, displayName, phone ? `+${phone}` : null, binding.user_id]);
+      const conversation = await client.query(`INSERT INTO conv.conversations(channel, external_chat_id, contact_id, owner_id, channel_owner_id, waha_session)
+        VALUES ('whatsapp', $1, $2, $3, $3, $4)
+        ON CONFLICT (channel, (COALESCE(waha_session, '')), external_chat_id)
+        DO UPDATE SET updated_at = now() RETURNING id`, [chatKey, contact.rows[0].id, binding.user_id, session]);
+      conversationId = conversation.rows[0].id;
+      const message = await client.query(`INSERT INTO conv.messages(external_msg_id, conversation_id, sender_type, content, content_type, sent_at, owner_id)
+        VALUES ($1, $2, 'system', $3, 'call', to_timestamp($4 / 1000.0), $5)
+        ON CONFLICT(external_msg_id) DO NOTHING RETURNING id`,
+      [`call:${session}:${callId}`, conversationId, data.isVideo ? 'WhatsApp 视频来电' : 'WhatsApp 语音来电', receivedAt, binding.user_id]);
+      isNew = Boolean(message.rowCount);
+      if (isNew) {
+        messageId = message.rows[0].id;
+        await client.query(`INSERT INTO conv.whatsapp_calls(session_name, call_id, conversation_id, message_id, received_at, is_video)
+          VALUES ($1, $2, $3, $4, to_timestamp($5 / 1000.0), $6)
+          ON CONFLICT (session_name, call_id) DO NOTHING`, [session, callId, conversationId, messageId, receivedAt, Boolean(data.isVideo)]);
+        await client.query(`UPDATE conv.conversations SET last_message_at = to_timestamp($2 / 1000.0), last_message_preview = $3, updated_at = now()
+          WHERE id = $1`, [conversationId, receivedAt, data.isVideo ? 'WhatsApp 视频来电' : 'WhatsApp 语音来电']);
+      }
+    } else {
+      const nextStatus = event === 'call.accepted' ? 'accepted' : 'rejected';
+      const call = await client.query(`UPDATE conv.whatsapp_calls SET status = $3,
+          accepted_at = CASE WHEN $3 = 'accepted' THEN now() ELSE accepted_at END,
+          rejected_at = CASE WHEN $3 = 'rejected' THEN now() ELSE rejected_at END,
+          updated_at = now()
+        WHERE session_name = $1 AND call_id = $2 AND status <> $3
+        RETURNING conversation_id, message_id, is_video`, [session, callId, nextStatus]);
+      if (call.rowCount) {
+        conversationId = call.rows[0].conversation_id;
+        messageId = call.rows[0].message_id;
+        const kind = call.rows[0].is_video ? '视频' : '语音';
+        const status = nextStatus === 'accepted' ? '已接听' : '已结束或拒接';
+        await client.query(`UPDATE conv.messages SET content = $2 WHERE id = $1`, [messageId, `WhatsApp ${kind}来电 · ${status}`]);
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+  if (conversationId && messageId) publishConversationEvent({
+    type: isNew ? 'message.received' : 'message.updated', channel: 'whatsapp', conversationId, messageId,
+  });
+  if (!isNew || !DINGTALK_ENABLED) return;
+  const member = await pool.query(`SELECT "userId", "userEmail" FROM ${await getWorkspaceSchema()}."workspaceMember"
+    WHERE id::text = $1 AND "deletedAt" IS NULL LIMIT 1`, [binding.workspace_member_id]);
+  const recipient = dingtalkMappedUserId(member.rows[0]?.userId || binding.user_id, member.rows[0]?.userEmail);
+  if (!recipient) return;
+  const title = 'WhatsApp 收到来电';
+  const content = `### ${title}\n\n来电号码：${displayName}\n\n类型：${data.isVideo ? '视频' : '语音'}\n\n请在手机 WhatsApp 上接听。`;
+  await pool.query(`INSERT INTO conv.dingtalk_notification_outbox(event_key, recipient_user_id, title, content, crm_url, provider)
+    VALUES ($1, $2, $3, $4, NULL, $5) ON CONFLICT(event_key, recipient_user_id) DO NOTHING`,
+  [`whatsapp-call:${session}:${callId}`, recipient, title, content, DINGTALK_DELIVERY_MODE]);
+}
+
 async function receiveWhatsAppWebhook(req, res) {
   res.status(200).json({ received: true });
   const event = req.body.event || req.params.event?.replace(/-/g, '.');
   // WAHA 在 webhook body 中携带 session（WAHA session 名），用于归属到对应销售。
   const session = String(req.body?.session || WAHA_SESSION);
+  if (['call.received', 'call.accepted', 'call.rejected'].includes(event)) {
+    persistWhatsAppCall(req.body, session, event)
+      .catch(error => console.error('[whatsapp-call] webhook failed:', error.message));
+    return;
+  }
   if (event === 'session.status') {
     const normalized = normalizeWahaSessionStatusPayload(req.body, session);
     syncWahaBindingStatus(session, normalized, 'webhook')
@@ -3326,6 +3416,16 @@ app.get('/api/conversations', async (req, res) => {
       ? `AND c.id = $${requestedConversationParamIndex}::uuid`
       : '';
     if (requestedConversationId) listParams.push(requestedConversationId);
+    const searchQuery = String(req.query?.search || '').trim().slice(0, 120);
+    const searchSql = searchQuery
+      ? `AND (ct.display_name ILIKE $${listParams.length + 1}
+          OR ct.channel_display_name ILIKE $${listParams.length + 1}
+          OR ct.phone ILIKE $${listParams.length + 1}
+          OR ct.email ILIKE $${listParams.length + 1}
+          OR c.external_chat_id ILIKE $${listParams.length + 1}
+          OR c.last_message_preview ILIKE $${listParams.length + 1})`
+      : '';
+    if (searchQuery) listParams.push(`%${searchQuery.replace(/[\\%_]/g, '\\$&')}%`);
     const emailCategory = ['inbox', 'outbound', 'flagged', 'customer', 'junk', 'all'].includes(String(req.query?.emailCategory || '').trim())
       ? String(req.query.emailCategory).trim()
       : 'inbox';
@@ -3503,6 +3603,7 @@ app.get('/api/conversations', async (req, res) => {
       ${requestedConversationSql}
       ${channelScopeSql}
     ${emailCategorySql}
+    ${searchSql}
     ${cursorSql}
     ORDER BY c.last_message_at DESC NULLS LAST, c.id::text DESC
     LIMIT ${pageSize + 1}`, listParams);
@@ -3595,6 +3696,53 @@ app.post('/api/conversations/:id/read', async (req, res) => {
   } catch (error) {
     console.error('[conversations] mark read failed:', error.message);
     res.status(502).json({ error: '标记已读失败' });
+  }
+});
+
+const contactExtractionCache = new Map();
+
+app.post('/api/conversations/:id/extract-contact', async (req, res) => {
+  const access = await requireConversationAccess(req, res);
+  if (!access) return;
+  if (!['website', 'whatsapp', 'instagram', 'facebook'].includes(access.conversation.channel)) {
+    return res.json({ fields: {} });
+  }
+  if (!AI_SERVICE_URL || !AI_SERVICE_API_KEY) return res.status(503).json({ error: 'AI 服务未配置' });
+  try {
+    const rows = await pool.query(`SELECT id, content FROM conv.messages
+      WHERE conversation_id = $1 AND sender_type = 'customer' AND content_type = 'text'
+        AND length(trim(content)) > 0
+      ORDER BY sent_at DESC, id DESC LIMIT 30`, [access.conversation.id]);
+    if (!rows.rowCount) return res.json({ fields: {} });
+    const cacheKey = `${access.conversation.id}:${rows.rows[0].id}`;
+    if (contactExtractionCache.has(cacheKey)) {
+      return res.json({ fields: await contactExtractionCache.get(cacheKey) });
+    }
+    const messages = rows.rows.reverse().map(row => String(row.content).slice(0, 1000));
+    const extraction = (async () => {
+      const response = await fetch(`${AI_SERVICE_URL}/api/v1/ai/extract-contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AI_SERVICE_API_KEY}` },
+        body: JSON.stringify({ tenantId: AI_SERVICE_TENANT_ID, messages }),
+        signal: AbortSignal.timeout(25000),
+      });
+      if (!response.ok) throw new Error(`AI service returned ${response.status}`);
+      const data = await response.json();
+      return Object.fromEntries(['name', 'company', 'phone', 'email', 'country']
+        .filter(key => typeof data.fields?.[key] === 'string' && data.fields[key].trim())
+        .map(key => [key, data.fields[key].trim()]));
+    })();
+    contactExtractionCache.set(cacheKey, extraction);
+    if (contactExtractionCache.size > 500) contactExtractionCache.delete(contactExtractionCache.keys().next().value);
+    try {
+      res.json({ fields: await extraction });
+    } catch (error) {
+      contactExtractionCache.delete(cacheKey);
+      throw error;
+    }
+  } catch (error) {
+    console.error('[contact-extraction] failed:', error.message);
+    res.status(502).json({ error: '客户信息提取暂不可用' });
   }
 });
 
@@ -4096,7 +4244,7 @@ async function checkWhatsAppRecipientForUser(authenticated, phone) {
   const canonicalChatId = `${phone}@c.us`;
 
   const existing = await pool.query(
-    `SELECT id, status, last_message_at, last_message_preview
+    `SELECT c.id, c.status, c.last_message_at, c.last_message_preview
        FROM conv.conversations c
        LEFT JOIN conv.contacts ct ON ct.id = c.contact_id
       WHERE c.channel = 'whatsapp'
@@ -5066,7 +5214,7 @@ function isWahaSessionNotFound(error) {
 }
 
 // 需求二：webhook 事件必须包含 message.ack，否则拿不到送达/已读回执。
-const WAHA_WEBHOOK_EVENTS = ['message', 'message.ack', 'message.revoked', 'session.status'];
+const WAHA_WEBHOOK_EVENTS = ['message', 'message.ack', 'message.revoked', 'session.status', 'call.received', 'call.accepted', 'call.rejected'];
 
 async function createWahaSession(sessionName = WAHA_SESSION) {
   const response = await fetchWaha('/api/sessions/start', {

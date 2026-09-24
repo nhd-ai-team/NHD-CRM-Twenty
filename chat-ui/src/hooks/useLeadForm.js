@@ -11,6 +11,9 @@ export function useLeadForm({ selected, selectedId, onConverted, onNameChanged, 
   const [duplicateLead, setDuplicateLead] = useState(null)
   const [toast, setToast] = useState(null) // { type: 'ok' | 'err', msg }
   const nameDirtyRef = useRef(false)
+  const draftRef = useRef(draft)
+
+  useEffect(() => { draftRef.current = draft }, [draft])
 
   useEffect(() => {
     nameDirtyRef.current = false
@@ -57,6 +60,31 @@ export function useLeadForm({ selected, selectedId, onConverted, onNameChanged, 
       return next
     })
   }, [saveDraft])
+
+  useEffect(() => {
+    if (!selectedId || !['website', 'whatsapp', 'instagram', 'facebook'].includes(selected?.channel)) return
+    if (['name', 'company', 'phone', 'email', 'country'].every(key => String(draftRef.current[key] || '').trim())) return
+    let active = true
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/conv-api/conversations/${selectedId}/extract-contact`, {
+          method: 'POST', headers: withTwentyAuthHeaders(), cache: 'no-store',
+        })
+        if (!response.ok) return
+        const { fields } = await response.json()
+        if (!active || !fields || typeof fields !== 'object') return
+        const patch = Object.fromEntries(['name', 'company', 'phone', 'email', 'country']
+          .filter(key => !String(draftRef.current[key] || '').trim() && typeof fields[key] === 'string' && fields[key].trim())
+          .map(key => [key, fields[key].trim()]))
+        if (!Object.keys(patch).length) return
+        const next = applyContactMethodStage({ ...draftRef.current, ...patch })
+        draftRef.current = next
+        setDraft(next)
+        await saveDraft(next)
+      } catch { /* 提取不可用时不影响人工填写 */ }
+    }, 500)
+    return () => { active = false; clearTimeout(timer) }
+  }, [selectedId, selected?.channel, selected?.lastMessageAt, saveDraft])
 
   const requestConvertLead = useCallback(() => {
     if (!selected || converting) return

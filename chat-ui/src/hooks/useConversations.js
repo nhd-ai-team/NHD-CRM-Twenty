@@ -22,9 +22,11 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
   const [activeChannel, setActiveChannel] = useState('all')
   const [activeStatus, setActiveStatus] = useState('all')
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [selectedId, setSelectedId] = useState(null)
   const [authExpired, setAuthExpired] = useState(false)
   const listRequestRef = useRef(0)
+  const lastLoadedSearchRef = useRef('')
   const readInFlightRef = useRef(new Set())
   const nextCursorRef = useRef('')
   const hasMoreRef = useRef(true)
@@ -57,6 +59,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       // 附时间戳绕开 Cloudflare/浏览器对实时会话 API 的缓存
       const params = new URLSearchParams({ _: String(Date.now()), limit: '30', includeEmail: String(includeEmail) })
       if (view === 'history') params.set('view', 'history')
+      if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim())
       if (conversationId) params.set('conversationId', conversationId)
       if (append && nextCursorRef.current) params.set('cursor', nextCursorRef.current)
       const response = await fetch(`/conv-api/conversations?${params.toString()}`, {
@@ -82,6 +85,8 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       setHasMore(hasMore)
       if (Number.isFinite(responseTotalCount)) setTotalCount(responseTotalCount)
       if (responseChannelCounts && typeof responseChannelCounts === 'object') setChannelCounts(responseChannelCounts)
+      const searchChanged = lastLoadedSearchRef.current !== debouncedSearch.trim()
+      lastLoadedSearchRef.current = debouncedSearch.trim()
       setConversations(current => {
         const withMessages = page.map(conv => ({
           ...conv,
@@ -89,6 +94,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
           unread: Number(conv.unreadCount || 0),
         }))
         if (!append) {
+          if (searchChanged) return withMessages
           const pageIds = new Set(page.map(conv => conv.id))
           return [...withMessages, ...current.filter(conv => !pageIds.has(conv.id))]
         }
@@ -97,6 +103,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       })
       if (!append) {
         setSelectedId(current => {
+          if (searchChanged) return page[0]?.id || null
           if (conversationId && page.some(conv => conv.id === conversationId)) return conversationId
           if (current && page.some(conv => conv.id === current)) return current
           return current || page[0]?.id || null
@@ -109,6 +116,11 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       }
     }
   }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 250)
+    return () => window.clearTimeout(timer)
+  }, [search])
 
   function resetConversationPaging() {
     nextCursorRef.current = ''
@@ -157,7 +169,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
     // SSE 是主通道；轮询只作为网络切换、代理断流时的兜底，避免每个标签页持续打列表查询。
     const timer = setInterval(() => loadConversations().catch(() => {}), 30000)
     return () => clearInterval(timer)
-  }, [includeEmail, view, authExpired])
+  }, [includeEmail, view, authExpired, debouncedSearch])
 
   useEffect(() => {
     if (authExpired) return undefined
@@ -221,7 +233,7 @@ export function useConversations({ includeEmail = false, view = 'chat' } = {}) {
       controller.abort()
       if (retryTimer) window.clearTimeout(retryTimer)
     }
-  }, [selectedId, authExpired, includeEmail, view])
+  }, [selectedId, authExpired, includeEmail, view, debouncedSearch])
 
   const filtered = useMemo(() => {
     return conversations.filter(c => {

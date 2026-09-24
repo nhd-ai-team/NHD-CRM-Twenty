@@ -3,7 +3,7 @@ import { format } from 'date-fns'
 import {
   UserCheck, Bot,
   Send, Paperclip,
-  Menu, X, FileText, History, Trash2,
+  Menu, X, FileText, History, Trash2, PhoneIncoming,
 } from 'lucide-react'
 import { ChannelIcon } from './ChannelIcon'
 import { InlineNameEditor } from './InlineNameEditor'
@@ -127,6 +127,14 @@ function DeliveryStatus({ msg, channel }) {
 }
 
 export function MessageBubble({ msg, channel, onContextMenu }) {
+  if (msg.contentType === 'call') return (
+    <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 12px',
+        border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 12 }}>
+        <PhoneIncoming size={15} /> {msg.content} · {format(msg.sentAt, 'MM-dd HH:mm')}
+      </span>
+    </div>
+  )
   if (msg.contentType === 'system') return (
     <div style={{ textAlign: 'center', padding: '6px 0' }}>
       <span style={{
